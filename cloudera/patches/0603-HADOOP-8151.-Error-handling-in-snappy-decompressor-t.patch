@@ -1,0 +1,85 @@
+From 9311fcc37c25ea46dcc91b178b247f78d188a06c Mon Sep 17 00:00:00 2001
+From: Harsh J <harsh@apache.org>
+Date: Sun, 23 Sep 2012 10:37:52 +0000
+Subject: [PATCH 0603/1023] HADOOP-8151. Error handling in snappy decompressor
+ throws invalid exceptions. Contributed by Matt
+ Foley. (harsh)
+
+git-svn-id: https://svn.apache.org/repos/asf/hadoop/common/trunk@1389006 13f79535-47bb-0310-9956-ffa450edef68
+(cherry picked from commit ac31d6a4485d7ff9074fb5dade7a6cf5292bb347)
+
+Conflicts:
+	hadoop-common-project/hadoop-common/CHANGES.txt
+---
+ .../apache/hadoop/io/compress/lz4/Lz4Compressor.c  |    2 +-
+ .../hadoop/io/compress/lz4/Lz4Decompressor.c       |    2 +-
+ .../hadoop/io/compress/snappy/SnappyCompressor.c   |    4 ++--
+ .../hadoop/io/compress/snappy/SnappyDecompressor.c |    6 +++---
+ 4 files changed, 7 insertions(+), 7 deletions(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/native/src/org/apache/hadoop/io/compress/lz4/Lz4Compressor.c b/hadoop-common-project/hadoop-common/src/main/native/src/org/apache/hadoop/io/compress/lz4/Lz4Compressor.c
+index 58544f5..9f14312 100644
+--- a/hadoop-common-project/hadoop-common/src/main/native/src/org/apache/hadoop/io/compress/lz4/Lz4Compressor.c
++++ b/hadoop-common-project/hadoop-common/src/main/native/src/org/apache/hadoop/io/compress/lz4/Lz4Compressor.c
+@@ -83,7 +83,7 @@ JNIEXPORT jint JNICALL Java_org_apache_hadoop_io_compress_lz4_Lz4Compressor_comp
+ 
+   compressed_direct_buf_len = LZ4_compress(uncompressed_bytes, compressed_bytes, uncompressed_direct_buf_len);
+   if (compressed_direct_buf_len < 0){
+-    THROW(env, "Ljava/lang/InternalError", "LZ4_compress failed");
++    THROW(env, "java/lang/InternalError", "LZ4_compress failed");
+   }
+ 
+   (*env)->SetIntField(env, thisj, Lz4Compressor_uncompressedDirectBufLen, 0);
+diff --git a/hadoop-common-project/hadoop-common/src/main/native/src/org/apache/hadoop/io/compress/lz4/Lz4Decompressor.c b/hadoop-common-project/hadoop-common/src/main/native/src/org/apache/hadoop/io/compress/lz4/Lz4Decompressor.c
+index 6570303..2b8c91c 100644
+--- a/hadoop-common-project/hadoop-common/src/main/native/src/org/apache/hadoop/io/compress/lz4/Lz4Decompressor.c
++++ b/hadoop-common-project/hadoop-common/src/main/native/src/org/apache/hadoop/io/compress/lz4/Lz4Decompressor.c
+@@ -80,7 +80,7 @@ JNIEXPORT jint JNICALL Java_org_apache_hadoop_io_compress_lz4_Lz4Decompressor_de
+ 
+   uncompressed_direct_buf_len = LZ4_decompress_safe(compressed_bytes, uncompressed_bytes, compressed_direct_buf_len, uncompressed_direct_buf_len);
+   if (uncompressed_direct_buf_len < 0) {
+-    THROW(env, "Ljava/lang/InternalError", "LZ4_uncompress_unknownOutputSize failed.");
++    THROW(env, "java/lang/InternalError", "LZ4_uncompress_unknownOutputSize failed.");
+   }
+ 
+   (*env)->SetIntField(env, thisj, Lz4Decompressor_compressedDirectBufLen, 0);
+diff --git a/hadoop-common-project/hadoop-common/src/main/native/src/org/apache/hadoop/io/compress/snappy/SnappyCompressor.c b/hadoop-common-project/hadoop-common/src/main/native/src/org/apache/hadoop/io/compress/snappy/SnappyCompressor.c
+index 65c978b..fe827f0 100644
+--- a/hadoop-common-project/hadoop-common/src/main/native/src/org/apache/hadoop/io/compress/snappy/SnappyCompressor.c
++++ b/hadoop-common-project/hadoop-common/src/main/native/src/org/apache/hadoop/io/compress/snappy/SnappyCompressor.c
+@@ -134,11 +134,11 @@ JNIEXPORT jint JNICALL Java_org_apache_hadoop_io_compress_snappy_SnappyCompresso
+   ret = dlsym_snappy_compress(uncompressed_bytes, uncompressed_direct_buf_len,
+         compressed_bytes, &buf_len);
+   if (ret != SNAPPY_OK){
+-    THROW(env, "Ljava/lang/InternalError", "Could not compress data. Buffer length is too small.");
++    THROW(env, "java/lang/InternalError", "Could not compress data. Buffer length is too small.");
+     return 0;
+   }
+   if (buf_len > JINT_MAX) {
+-    THROW(env, "Ljava/lang/InternalError", "Invalid return buffer length.");
++    THROW(env, "java/lang/InternalError", "Invalid return buffer length.");
+     return 0;
+   }
+ 
+diff --git a/hadoop-common-project/hadoop-common/src/main/native/src/org/apache/hadoop/io/compress/snappy/SnappyDecompressor.c b/hadoop-common-project/hadoop-common/src/main/native/src/org/apache/hadoop/io/compress/snappy/SnappyDecompressor.c
+index 022f2b0..d1fd13c 100644
+--- a/hadoop-common-project/hadoop-common/src/main/native/src/org/apache/hadoop/io/compress/snappy/SnappyDecompressor.c
++++ b/hadoop-common-project/hadoop-common/src/main/native/src/org/apache/hadoop/io/compress/snappy/SnappyDecompressor.c
+@@ -126,11 +126,11 @@ JNIEXPORT jint JNICALL Java_org_apache_hadoop_io_compress_snappy_SnappyDecompres
+   ret = dlsym_snappy_uncompress(compressed_bytes, compressed_direct_buf_len,
+         uncompressed_bytes, &uncompressed_direct_buf_len);
+   if (ret == SNAPPY_BUFFER_TOO_SMALL){
+-    THROW(env, "Ljava/lang/InternalError", "Could not decompress data. Buffer length is too small.");
++    THROW(env, "java/lang/InternalError", "Could not decompress data. Buffer length is too small.");
+   } else if (ret == SNAPPY_INVALID_INPUT){
+-    THROW(env, "Ljava/lang/InternalError", "Could not decompress data. Input is invalid.");
++    THROW(env, "java/lang/InternalError", "Could not decompress data. Input is invalid.");
+   } else if (ret != SNAPPY_OK){
+-    THROW(env, "Ljava/lang/InternalError", "Could not decompress data.");
++    THROW(env, "java/lang/InternalError", "Could not decompress data.");
+   }
+ 
+   (*env)->SetIntField(env, thisj, SnappyDecompressor_compressedDirectBufLen, 0);
+-- 
+1.7.9.5
+

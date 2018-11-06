@@ -1,0 +1,42 @@
+From 2f47dfb198ff2d731e193e24bbdea2eca35f052d Mon Sep 17 00:00:00 2001
+From: Colin Patrick Mccabe <cmccabe@cloudera.com>
+Date: Fri, 10 Oct 2014 13:03:29 -0700
+Subject: [PATCH 0637/1023] HDFS-7198. Fix "unchecked conversion" warning in
+ DFSClient#getPathTraceScope (cmccabe)
+
+(cherry picked from commit 1ceb3269337e321e352b7cd9f946c5c52dcfddfa)
+(cherry picked from commit 4c0bc459788c681c5387ada2096bd071a4c2e0ac)
+---
+ .../apache/hadoop/tracing/TraceSamplerFactory.java |    2 +-
+ .../java/org/apache/hadoop/hdfs/DFSClient.java     |    2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/tracing/TraceSamplerFactory.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/tracing/TraceSamplerFactory.java
+index 0de7d3e..54bcb81 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/tracing/TraceSamplerFactory.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/tracing/TraceSamplerFactory.java
+@@ -30,7 +30,7 @@
+   private static final Logger LOG =
+       LoggerFactory.getLogger(TraceSamplerFactory.class);
+ 
+-  public static Sampler createSampler(Configuration conf) {
++  public static Sampler<?> createSampler(Configuration conf) {
+     String samplerStr = conf.get(CommonConfigurationKeys.HADOOP_TRACE_SAMPLER,
+         CommonConfigurationKeys.HADOOP_TRACE_SAMPLER_DEFAULT);
+     if (samplerStr.equals("NeverSampler")) {
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSClient.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSClient.java
+index 75931c4..90aa9b4 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSClient.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSClient.java
+@@ -283,7 +283,7 @@
+   @VisibleForTesting
+   KeyProvider provider;
+   private final SpanReceiverHost spanReceiverHost;
+-  private final Sampler traceSampler;
++  private final Sampler<?> traceSampler;
+ 
+   /**
+    * DFSClient configuration 
+-- 
+1.7.9.5
+

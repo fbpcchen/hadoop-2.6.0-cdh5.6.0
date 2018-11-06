@@ -1,0 +1,49 @@
+From 532930e3cfad730e5d68107f6b8bcb929f981c9b Mon Sep 17 00:00:00 2001
+From: Xiaoyu Yao <xyao@apache.org>
+Date: Mon, 8 Jun 2015 21:57:26 -0700
+Subject: [PATCH 0801/1023] HDFS-8552. Fix hdfs CLI usage message for namenode
+ and zkfc. Contributed by Brahma Reddy Battula
+
+(cherry picked from commit 927577c87ca19e8b5b75722f78e2def6d9386576)
+(cherry picked from commit 116a72096d7cda577d774c228a1e9e594a6b9b23)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt
+
+Change-Id: I2cf10a6936a3f3a5c6fe3881471b925c6d66b55c
+(cherry picked from commit b8dd763d1f5a2a1b3614753bdeab53b288938410)
+(cherry picked from commit 92e6a57447faa79cd27cf9c5e400a994886b4944)
+---
+ .../org/apache/hadoop/ha/ZKFailoverController.java |    2 +-
+ .../hadoop/hdfs/server/namenode/NameNode.java      |    2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ha/ZKFailoverController.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ha/ZKFailoverController.java
+index dd8ca8a..f909702 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ha/ZKFailoverController.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ha/ZKFailoverController.java
+@@ -83,7 +83,7 @@
+   };
+   
+   protected static final String USAGE = 
+-      "Usage: java zkfc [ -formatZK [-force] [-nonInteractive] ]";
++      "Usage: hdfs zkfc [ -formatZK [-force] [-nonInteractive] ]";
+ 
+   /** Unable to format the parent znode in ZK */
+   static final int ERR_CODE_FORMAT_DENIED = 2;
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNode.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNode.java
+index 3e06756..1b199f1 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNode.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNode.java
+@@ -245,7 +245,7 @@
+     DFS_HA_AUTO_FAILOVER_ENABLED_KEY
+   };
+   
+-  private static final String USAGE = "Usage: java NameNode ["
++  private static final String USAGE = "Usage: hdfs namenode ["
+       + StartupOption.BACKUP.getName() + "] | \n\t["
+       + StartupOption.CHECKPOINT.getName() + "] | \n\t["
+       + StartupOption.FORMAT.getName() + " ["
+-- 
+1.7.9.5
+

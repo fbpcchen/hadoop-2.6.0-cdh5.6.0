@@ -1,0 +1,58 @@
+From f06189e4f776d6c9e1151d550cc98c85bb9169d5 Mon Sep 17 00:00:00 2001
+From: Colin Patrick Mccabe <cmccabe@cloudera.com>
+Date: Tue, 5 May 2015 17:40:31 -0700
+Subject: [PATCH 0649/1023] HADOOP-11912. Extra configuration key used in
+ TraceUtils should respect prefix (Masatake
+ Iwasaki via Colin P. McCabe)
+
+(cherry picked from commit 90b384564875bb353224630e501772b46d4ca9c5)
+(cherry picked from commit 606e4f4940a78af96411dc72900b195831d077a6)
+---
+ .../java/org/apache/hadoop/tracing/TraceUtils.java |   12 +++++-------
+ .../org/apache/hadoop/tracing/TestTraceUtils.java  |    2 +-
+ 2 files changed, 6 insertions(+), 8 deletions(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/tracing/TraceUtils.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/tracing/TraceUtils.java
+index fa52ac6..52b5d47 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/tracing/TraceUtils.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/tracing/TraceUtils.java
+@@ -47,18 +47,16 @@ public static HTraceConfiguration wrapHadoopConf(final String prefix,
+     return new HTraceConfiguration() {
+       @Override
+       public String get(String key) {
+-        if (extraMap.containsKey(key)) {
+-          return extraMap.get(key);
+-        }
+-        return conf.get(prefix + key, "");
++        return get(key, "");
+       }
+ 
+       @Override
+       public String get(String key, String defaultValue) {
+-        if (extraMap.containsKey(key)) {
+-          return extraMap.get(key);
++        String prefixedKey = prefix + key;
++        if (extraMap.containsKey(prefixedKey)) {
++          return extraMap.get(prefixedKey);
+         }
+-        return conf.get(prefix + key, defaultValue);
++        return conf.get(prefixedKey, defaultValue);
+       }
+     };
+   }
+diff --git a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/tracing/TestTraceUtils.java b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/tracing/TestTraceUtils.java
+index 80d64b1..400d003 100644
+--- a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/tracing/TestTraceUtils.java
++++ b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/tracing/TestTraceUtils.java
+@@ -46,7 +46,7 @@ public void testExtraConfig() {
+     conf.set(TEST_PREFIX + key, oldValue);
+     LinkedList<ConfigurationPair> extraConfig =
+         new LinkedList<ConfigurationPair>();
+-    extraConfig.add(new ConfigurationPair(key, newValue));
++    extraConfig.add(new ConfigurationPair(TEST_PREFIX + key, newValue));
+     HTraceConfiguration wrapped = TraceUtils.wrapHadoopConf(TEST_PREFIX, conf, extraConfig);
+     assertEquals(newValue, wrapped.get(key));
+   }
+-- 
+1.7.9.5
+

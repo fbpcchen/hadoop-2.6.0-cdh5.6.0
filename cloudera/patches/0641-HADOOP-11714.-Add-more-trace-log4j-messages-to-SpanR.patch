@@ -1,0 +1,50 @@
+From 27849ab1a579da3dd6547b35cee360e3502a4273 Mon Sep 17 00:00:00 2001
+From: Colin Patrick Mccabe <cmccabe@cloudera.com>
+Date: Mon, 16 Mar 2015 12:02:10 -0700
+Subject: [PATCH 0641/1023] HADOOP-11714. Add more trace log4j messages to
+ SpanReceiverHost (cmccabe)
+
+(cherry picked from commit bf3275dbaa99105d49520e25f5a6eadd6fd5b7ed)
+(cherry picked from commit eb4eb63de3b929d154360e20abb895f0e14134cf)
+---
+ .../apache/hadoop/tracing/SpanReceiverHost.java    |   13 ++++++++++---
+ 1 file changed, 10 insertions(+), 3 deletions(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/tracing/SpanReceiverHost.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/tracing/SpanReceiverHost.java
+index 9ec99a9..5d8436d 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/tracing/SpanReceiverHost.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/tracing/SpanReceiverHost.java
+@@ -132,20 +132,27 @@ public synchronized void loadSpanReceivers(Configuration conf) {
+     String[] receiverNames =
+         config.getTrimmedStrings(SPAN_RECEIVERS_CONF_KEY);
+     if (receiverNames == null || receiverNames.length == 0) {
++      if (LOG.isTraceEnabled()) {
++        LOG.trace("No span receiver names found in " +
++                  SPAN_RECEIVERS_CONF_KEY + ".");
++      }
+       return;
+     }
+     // It's convenient to have each daemon log to a random trace file when
+     // testing.
+     if (config.get(LOCAL_FILE_SPAN_RECEIVER_PATH) == null) {
+-      config.set(LOCAL_FILE_SPAN_RECEIVER_PATH,
+-          getUniqueLocalTraceFileName());
++      String uniqueFile = getUniqueLocalTraceFileName();
++      config.set(LOCAL_FILE_SPAN_RECEIVER_PATH, uniqueFile);
++      if (LOG.isTraceEnabled()) {
++        LOG.trace("Set " + LOCAL_FILE_SPAN_RECEIVER_PATH + " to " +  uniqueFile);
++      }
+     }
+     for (String className : receiverNames) {
+       try {
+         SpanReceiver rcvr = loadInstance(className, EMPTY);
+         Trace.addReceiver(rcvr);
+         receivers.put(highestId++, rcvr);
+-        LOG.info("SpanReceiver " + className + " was loaded successfully.");
++        LOG.info("Loaded SpanReceiver " + className + " successfully.");
+       } catch (IOException e) {
+         LOG.error("Failed to load SpanReceiver", e);
+       }
+-- 
+1.7.9.5
+

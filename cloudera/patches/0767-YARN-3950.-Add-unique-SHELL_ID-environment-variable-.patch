@@ -1,0 +1,179 @@
+From 30cd461d3c74bb2ddc18f8ff120c2ccd8aedd291 Mon Sep 17 00:00:00 2001
+From: Jason Lowe <jlowe@apache.org>
+Date: Wed, 29 Jul 2015 15:16:40 +0000
+Subject: [PATCH 0767/1023] YARN-3950. Add unique SHELL_ID environment
+ variable to DistributedShell. Contributed by
+ Robert Kanter (cherry picked from commit
+ 2b2bd9214604bc2e14e41e08d30bf86f512151bd)
+
+(cherry picked from commit 6f50a6a4565d89a886a240c459899692ed5807c3)
+
+Conflicts:
+	hadoop-yarn-project/CHANGES.txt
+
+Change-Id: I0922fec411c8fa00205b9705741fc6a8de6ed54b
+(cherry picked from commit 64aecbdd96691f531935ecb536c0f1dd0cc11555)
+---
+ .../distributedshell/ApplicationMaster.java        |   31 +++++++++++++++-----
+ .../distributedshell/TestDSAppMaster.java          |   11 ++++++-
+ 2 files changed, 33 insertions(+), 9 deletions(-)
+
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-applications/hadoop-yarn-applications-distributedshell/src/main/java/org/apache/hadoop/yarn/applications/distributedshell/ApplicationMaster.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-applications/hadoop-yarn-applications-distributedshell/src/main/java/org/apache/hadoop/yarn/applications/distributedshell/ApplicationMaster.java
+index c54c70f..ec163a7 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-applications/hadoop-yarn-applications-distributedshell/src/main/java/org/apache/hadoop/yarn/applications/distributedshell/ApplicationMaster.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-applications/hadoop-yarn-applications-distributedshell/src/main/java/org/apache/hadoop/yarn/applications/distributedshell/ApplicationMaster.java
+@@ -182,6 +182,8 @@
+     DS_APP_ATTEMPT, DS_CONTAINER
+   }
+ 
++  private static final String YARN_SHELL_ID = "YARN_SHELL_ID";
++
+   // Configuration
+   private Configuration conf;
+ 
+@@ -278,6 +280,8 @@
+   private final String linux_bash_command = "bash";
+   private final String windows_command = "cmd /c";
+ 
++  private int yarnShellIdCounter = 1;
++
+   @VisibleForTesting
+   protected final Set<ContainerId> launchedContainers =
+       Collections.newSetFromMap(new ConcurrentHashMap<ContainerId, Boolean>());
+@@ -770,8 +774,11 @@ public void onContainersAllocated(List<Container> allocatedContainers) {
+           + allocatedContainers.size());
+       numAllocatedContainers.addAndGet(allocatedContainers.size());
+       for (Container allocatedContainer : allocatedContainers) {
++        String yarnShellId = Integer.toString(yarnShellIdCounter);
++        yarnShellIdCounter++;
+         LOG.info("Launching shell command on a new container."
+             + ", containerId=" + allocatedContainer.getId()
++            + ", yarnShellId=" + yarnShellId
+             + ", containerNode=" + allocatedContainer.getNodeId().getHost()
+             + ":" + allocatedContainer.getNodeId().getPort()
+             + ", containerNodeURI=" + allocatedContainer.getNodeHttpAddress()
+@@ -782,7 +789,8 @@ public void onContainersAllocated(List<Container> allocatedContainers) {
+         // + ", containerToken"
+         // +allocatedContainer.getContainerToken().getIdentifier().toString());
+ 
+-        Thread launchThread = createLaunchContainerThread(allocatedContainer);
++        Thread launchThread = createLaunchContainerThread(allocatedContainer,
++            yarnShellId);
+ 
+         // launch and start the container on a separate thread to keep
+         // the main thread unblocked
+@@ -892,7 +900,8 @@ public void onStopContainerError(ContainerId containerId, Throwable t) {
+   private class LaunchContainerRunnable implements Runnable {
+ 
+     // Allocated container
+-    Container container;
++    private Container container;
++    private String shellId;
+ 
+     NMCallbackHandler containerListener;
+ 
+@@ -900,10 +909,11 @@ public void onStopContainerError(ContainerId containerId, Throwable t) {
+      * @param lcontainer Allocated container
+      * @param containerListener Callback handler of the container
+      */
+-    public LaunchContainerRunnable(
+-        Container lcontainer, NMCallbackHandler containerListener) {
++    public LaunchContainerRunnable(Container lcontainer,
++        NMCallbackHandler containerListener, String shellId) {
+       this.container = lcontainer;
+       this.containerListener = containerListener;
++      this.shellId = shellId;
+     }
+ 
+     @Override
+@@ -914,7 +924,7 @@ public LaunchContainerRunnable(
+      */
+     public void run() {
+       LOG.info("Setting up container launch container for containerid="
+-          + container.getId());
++          + container.getId() + " with shellid=" + shellId);
+ 
+       // Set the local resources
+       Map<String, LocalResource> localResources = new HashMap<String, LocalResource>();
+@@ -1003,8 +1013,11 @@ public void run() {
+       // download anyfiles in the distributed file-system. The tokens are
+       // otherwise also useful in cases, for e.g., when one is running a
+       // "hadoop dfs" command inside the distributed shell.
++      Map<String, String> myShellEnv = new HashMap<String, String>(shellEnv);
++      myShellEnv.put(YARN_SHELL_ID, shellId);
+       ContainerLaunchContext ctx = ContainerLaunchContext.newInstance(
+-        localResources, shellEnv, commands, null, allTokens.duplicate(), null);
++        localResources, myShellEnv, commands, null, allTokens.duplicate(),
++          null);
+       containerListener.addContainer(container.getId(), container);
+       nmClientAsync.startContainerAsync(container, ctx);
+     }
+@@ -1168,9 +1181,11 @@ boolean getDone() {
+   }
+ 
+   @VisibleForTesting
+-  Thread createLaunchContainerThread(Container allocatedContainer) {
++  Thread createLaunchContainerThread(Container allocatedContainer,
++      String shellId) {
+     LaunchContainerRunnable runnableLaunchContainer =
+-        new LaunchContainerRunnable(allocatedContainer, containerListener);
++        new LaunchContainerRunnable(allocatedContainer, containerListener,
++            shellId);
+     return new Thread(runnableLaunchContainer);
+   }
+ }
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-applications/hadoop-yarn-applications-distributedshell/src/test/java/org/apache/hadoop/yarn/applications/distributedshell/TestDSAppMaster.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-applications/hadoop-yarn-applications-distributedshell/src/test/java/org/apache/hadoop/yarn/applications/distributedshell/TestDSAppMaster.java
+index de51f05..7e4c591 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-applications/hadoop-yarn-applications-distributedshell/src/test/java/org/apache/hadoop/yarn/applications/distributedshell/TestDSAppMaster.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-applications/hadoop-yarn-applications-distributedshell/src/test/java/org/apache/hadoop/yarn/applications/distributedshell/TestDSAppMaster.java
+@@ -41,6 +41,7 @@
+ 
+ import java.io.IOException;
+ import java.util.ArrayList;
++import java.util.Arrays;
+ import java.util.List;
+ 
+ /**
+@@ -51,6 +52,7 @@
+ 
+   static class TestAppMaster extends ApplicationMaster {
+     private int threadsLaunched = 0;
++    public List<String> yarnShellIds = new ArrayList<String>();
+ 
+     public TestAppMaster() {
+       appSubmitterUgi =
+@@ -58,9 +60,11 @@ public TestAppMaster() {
+     }
+ 
+     @Override
+-    protected Thread createLaunchContainerThread(Container allocatedContainer) {
++    protected Thread createLaunchContainerThread(Container allocatedContainer,
++        String shellId) {
+       threadsLaunched++;
+       launchedContainers.add(allocatedContainer.getId());
++      yarnShellIds.add(shellId);
+       return new Thread();
+     }
+ 
+@@ -100,6 +104,8 @@ public void testDSAppMasterAllocateHandler() throws Exception {
+     Mockito.verifyZeroInteractions(mockClient);
+     Assert.assertEquals("Incorrect number of threads launched", 1,
+         master.threadsLaunched);
++    Assert.assertEquals("Incorrect YARN Shell IDs",
++        Arrays.asList("1"), master.yarnShellIds);
+ 
+     // now send 3 extra containers
+     containers.clear();
+@@ -116,6 +122,9 @@ public void testDSAppMasterAllocateHandler() throws Exception {
+     Assert.assertEquals("Incorrect number of threads launched", 4,
+         master.threadsLaunched);
+ 
++    Assert.assertEquals("Incorrect YARN Shell IDs",
++        Arrays.asList("1", "2", "3", "4"), master.yarnShellIds);
++
+     // make sure we handle completion events correctly
+     List<ContainerStatus> status = new ArrayList<>();
+     status.add(generateContainerStatus(id1, ContainerExitStatus.SUCCESS));
+-- 
+1.7.9.5
+

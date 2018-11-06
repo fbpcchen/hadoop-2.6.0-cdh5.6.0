@@ -1,0 +1,124 @@
+From 68f3383d0b2646e20a19f0aef0281dd9ca3d3b29 Mon Sep 17 00:00:00 2001
+From: Vinayakumar B <vinayakumarb@apache.org>
+Date: Fri, 27 Feb 2015 16:36:28 +0530
+Subject: [PATCH 0913/1023] HDFS-6753. Initialize checkDisk when
+ DirectoryScanner not able to get files list for
+ scanning (Contributed by J.Andreina)
+
+(cherry picked from commit 4f75b15628a76881efc39054612dc128e23d27be)
+(cherry picked from commit bc60404eaf6e5298c20a552685ec0b6c59b6fd0b)
+
+Change-Id: Ic75512b2ed7b65842454935ef9b2cbfc8b257cec
+---
+ .../hadoop/hdfs/server/datanode/DataNode.java      |    2 +-
+ .../hdfs/server/datanode/DirectoryScanner.java     |   12 +++++++++---
+ .../hdfs/server/datanode/TestDirectoryScanner.java |    9 ++++++---
+ 3 files changed, 16 insertions(+), 7 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java
+index 4d7b296..07cebe7 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java
+@@ -898,7 +898,7 @@ private synchronized void initDirectoryScanner(Configuration conf) {
+       reason = "verifcation is not supported by SimulatedFSDataset";
+     } 
+     if (reason == null) {
+-      directoryScanner = new DirectoryScanner(data, conf);
++      directoryScanner = new DirectoryScanner(this, data, conf);
+       directoryScanner.start();
+     } else {
+       LOG.info("Periodic Directory Tree Verification scan is disabled because " +
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DirectoryScanner.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DirectoryScanner.java
+index e2b0a22..ee8ff0f 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DirectoryScanner.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DirectoryScanner.java
+@@ -63,6 +63,7 @@
+   private final long scanPeriodMsecs;
+   private volatile boolean shouldRun = false;
+   private boolean retainDiffs = false;
++  private final DataNode datanode;
+ 
+   final ScanInfoPerBlockPool diffs = new ScanInfoPerBlockPool();
+   final Map<String, Stats> stats = new HashMap<String, Stats>();
+@@ -308,7 +309,8 @@ public long getGenStamp() {
+     }
+   }
+ 
+-  DirectoryScanner(FsDatasetSpi<?> dataset, Configuration conf) {
++  DirectoryScanner(DataNode datanode, FsDatasetSpi<?> dataset, Configuration conf) {
++    this.datanode = datanode;
+     this.dataset = dataset;
+     int interval = conf.getInt(DFSConfigKeys.DFS_DATANODE_DIRECTORYSCAN_INTERVAL_KEY,
+         DFSConfigKeys.DFS_DATANODE_DIRECTORYSCAN_INTERVAL_DEFAULT);
+@@ -551,7 +553,7 @@ private static boolean isValid(final FsDatasetSpi<?> dataset,
+     for (int i = 0; i < volumes.size(); i++) {
+       if (isValid(dataset, volumes.get(i))) {
+         ReportCompiler reportCompiler =
+-          new ReportCompiler(volumes.get(i));
++          new ReportCompiler(datanode,volumes.get(i));
+         Future<ScanInfoPerBlockPool> result = 
+           reportCompileThreadPool.submit(reportCompiler);
+         compilersInProgress.put(i, result);
+@@ -589,8 +591,10 @@ private static boolean isBlockMetaFile(String blockId, String metaFile) {
+   private static class ReportCompiler 
+   implements Callable<ScanInfoPerBlockPool> {
+     private final FsVolumeSpi volume;
++    private final DataNode datanode;
+ 
+-    public ReportCompiler(FsVolumeSpi volume) {
++    public ReportCompiler(DataNode datanode, FsVolumeSpi volume) {
++      this.datanode = datanode;
+       this.volume = volume;
+     }
+ 
+@@ -614,6 +618,8 @@ public ScanInfoPerBlockPool call() throws Exception {
+         files = FileUtil.listFiles(dir);
+       } catch (IOException ioe) {
+         LOG.warn("Exception occured while compiling report: ", ioe);
++        // Initiate a check on disk failure.
++        datanode.checkDiskErrorAsync();
+         // Ignore this directory and proceed.
+         return report;
+       }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestDirectoryScanner.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestDirectoryScanner.java
+index d16a831..9454c04 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestDirectoryScanner.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestDirectoryScanner.java
+@@ -294,10 +294,11 @@ public void testRetainBlockOnPersistentStorage() throws Exception {
+         .build();
+     try {
+       cluster.waitActive();
++      DataNode dataNode = cluster.getDataNodes().get(0);
+       bpid = cluster.getNamesystem().getBlockPoolId();
+       fds = DataNodeTestUtils.getFSDataset(cluster.getDataNodes().get(0));
+       client = cluster.getFileSystem().getClient();
+-      scanner = new DirectoryScanner(fds, CONF);
++      scanner = new DirectoryScanner(dataNode, fds, CONF);
+       scanner.setRetainDiffs(true);
+       FsDatasetTestUtil.stopLazyWriter(cluster.getDataNodes().get(0));
+ 
+@@ -335,9 +336,10 @@ public void testDeleteBlockOnTransientStorage() throws Exception {
+     try {
+       cluster.waitActive();
+       bpid = cluster.getNamesystem().getBlockPoolId();
++      DataNode dataNode = cluster.getDataNodes().get(0);
+       fds = DataNodeTestUtils.getFSDataset(cluster.getDataNodes().get(0));
+       client = cluster.getFileSystem().getClient();
+-      scanner = new DirectoryScanner(fds, CONF);
++      scanner = new DirectoryScanner(dataNode, fds, CONF);
+       scanner.setRetainDiffs(true);
+       FsDatasetTestUtil.stopLazyWriter(cluster.getDataNodes().get(0));
+ 
+@@ -384,7 +386,8 @@ public void runTest(int parallelism) throws Exception {
+       client = cluster.getFileSystem().getClient();
+       CONF.setInt(DFSConfigKeys.DFS_DATANODE_DIRECTORYSCAN_THREADS_KEY,
+                   parallelism);
+-      scanner = new DirectoryScanner(fds, CONF);
++      DataNode dataNode = cluster.getDataNodes().get(0);
++      scanner = new DirectoryScanner(dataNode, fds, CONF);
+       scanner.setRetainDiffs(true);
+ 
+       // Add files with 100 blocks
+-- 
+1.7.9.5
+

@@ -1,0 +1,130 @@
+From 5e7026c550b6ef89344c9ccd15b5668977c1bb17 Mon Sep 17 00:00:00 2001
+From: Lei Xu <lei@apache.org>
+Date: Fri, 25 Sep 2015 16:01:41 -0700
+Subject: [PATCH 0848/1023] HDFS-9133. ExternalBlockReader and ReplicaAccessor
+ need to return -1 on read when at EOF. (Colin
+ Patrick McCabe via Lei (Eddy) Xu)
+
+(cherry picked from commit 67b0e967f0e13eb6bed123fc7ba4cce0dcca198f)
+(cherry picked from commit 82d4c05b2dd668816da589a95257b289d52d96a9)
+
+Change-Id: Ic878f4dffac48b4449857baf3e5088a2369e6363
+---
+ .../apache/hadoop/hdfs/ExternalBlockReader.java    |    6 ++++++
+ .../org/apache/hadoop/hdfs/ReplicaAccessor.java    |   10 ++++++----
+ .../hadoop/hdfs/TestExternalBlockReader.java       |   19 +++++++++++++++----
+ 3 files changed, 27 insertions(+), 8 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/ExternalBlockReader.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/ExternalBlockReader.java
+index e135d8e..3711a9d 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/ExternalBlockReader.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/ExternalBlockReader.java
+@@ -45,6 +45,9 @@
+   @Override
+   public int read(byte[] buf, int off, int len) throws IOException {
+     int nread = accessor.read(pos, buf, off, len);
++    if (nread < 0) {
++      return nread;
++    }
+     pos += nread;
+     return nread;
+   }
+@@ -52,6 +55,9 @@ public int read(byte[] buf, int off, int len) throws IOException {
+   @Override
+   public int read(ByteBuffer buf) throws IOException {
+     int nread = accessor.read(pos, buf);
++    if (nread < 0) {
++      return nread;
++    }
+     pos += nread;
+     return nread;
+   }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/ReplicaAccessor.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/ReplicaAccessor.java
+index 720e6a1..e0b21e8 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/ReplicaAccessor.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/ReplicaAccessor.java
+@@ -40,8 +40,9 @@
+    *
+    * @return       The number of bytes read.  If the read extends past the end
+    *                  of the replica, a short read count will be returned.  We
+-   *                  will never return a negative number.  We will never
+-   *                  return a short read count unless EOF is reached.
++   *                  will should return -1 if EOF is reached and no bytes
++   *                  can be returned.  We will never return a short read
++   *                  count unless EOF is reached.
+    */
+   public abstract int read(long pos, byte[] buf, int off, int len)
+       throws IOException;
+@@ -58,8 +59,9 @@ public abstract int read(long pos, byte[] buf, int off, int len)
+    *
+    * @return       The number of bytes read.  If the read extends past the end
+    *                 of the replica, a short read count will be returned.  We
+-   *                 will never return a negative number.  We will never return
+-   *                 a short read count unless EOF is reached.
++   *                 should return -1 if EOF is reached and no bytes can be
++   *                 returned.  We will never return a short read count unless
++   *                 EOF is reached.
+    */
+   public abstract int read(long pos, ByteBuffer buf) throws IOException;
+ 
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestExternalBlockReader.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestExternalBlockReader.java
+index 4021bbf..cb9be75 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestExternalBlockReader.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestExternalBlockReader.java
+@@ -181,8 +181,8 @@ public synchronized int read(long pos, byte[] buf, int off, int len)
+             "than 0 at " + pos);
+         return 0;
+       }
+-      int i = 0, nread = 0;
+-      for (int ipos = (int)pos;
++      int i = 0, nread = 0, ipos;
++      for (ipos = (int)pos;
+            (ipos < contents.length) && (nread < len);
+            ipos++) {
+         buf[i++] = contents[ipos];
+@@ -190,6 +190,9 @@ public synchronized int read(long pos, byte[] buf, int off, int len)
+         totalRead++;
+         LOG.info("ipos = " + ipos + ", contents.length = " + contents.length + ", nread = " + nread + ", len = " + len);
+       }
++      if ((nread == 0) && (ipos >= contents.length)) {
++        return -1;
++      }
+       return nread;
+     }
+ 
+@@ -202,8 +205,8 @@ public synchronized int read(long pos, ByteBuffer buf) throws IOException {
+             "than 0 at " + pos);
+         return 0;
+       }
+-      int i = 0, nread = 0;
+-      for (int ipos = (int)pos;
++      int i = 0, nread = 0, ipos;
++      for (ipos = (int)pos;
+            ipos < contents.length; ipos++) {
+         try {
+           buf.put(contents[ipos]);
+@@ -213,6 +216,9 @@ public synchronized int read(long pos, ByteBuffer buf) throws IOException {
+         nread++;
+         totalRead++;
+       }
++      if ((nread == 0) && (ipos >= contents.length)) {
++        return -1;
++      }
+       return nread;
+     }
+ 
+@@ -289,6 +295,11 @@ public void testExternalBlockReader() throws Exception {
+       Assert.assertEquals(1024L, accessor.totalRead);
+       Assert.assertEquals("", accessor.getError());
+       Assert.assertEquals(1, accessor.numCloses);
++      byte[] tempBuf = new byte[5];
++      Assert.assertEquals(-1, accessor.read(TEST_LENGTH,
++            tempBuf, 0, 0));
++      Assert.assertEquals(-1, accessor.read(TEST_LENGTH,
++            tempBuf, 0, tempBuf.length));
+       accessors.remove(uuid);
+     } finally {
+       dfs.close();
+-- 
+1.7.9.5
+

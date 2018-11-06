@@ -1,0 +1,72 @@
+From 6fcd5fbae26446fdeb654d4c13e36bc8267de680 Mon Sep 17 00:00:00 2001
+From: cnauroth <cnauroth@apache.org>
+Date: Wed, 18 Feb 2015 11:47:45 -0800
+Subject: [PATCH 0590/1023] HDFS-7772. Document hdfs balancer
+ -exclude/-include option in HDFSCommands.html.
+ Contributed by Xiaoyu Yao.
+
+(cherry picked from commit b1b1e05e18c830ace9ad27d2c115196f79e8d0ad)
+---
+ .../hadoop/hdfs/server/balancer/Balancer.java      |    7 +++----
+ .../hadoop-hdfs/src/site/apt/HDFSCommands.apt.vm   |   15 ++++++++++++++-
+ 2 files changed, 17 insertions(+), 5 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/balancer/Balancer.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/balancer/Balancer.java
+index 1075861..b429abc 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/balancer/Balancer.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/balancer/Balancer.java
+@@ -171,15 +171,14 @@
+   private static final long GB = 1L << 30; //1GB
+   private static final long MAX_SIZE_TO_MOVE = 10*GB;
+ 
+-  private static final String USAGE = "Usage: java "
+-      + Balancer.class.getSimpleName()
++  private static final String USAGE = "Usage: hdfs balancer"
+       + "\n\t[-policy <policy>]\tthe balancing policy: "
+       + BalancingPolicy.Node.INSTANCE.getName() + " or "
+       + BalancingPolicy.Pool.INSTANCE.getName()
+       + "\n\t[-threshold <threshold>]\tPercentage of disk capacity"
+-      + "\n\t[-exclude [-f <hosts-file> | comma-sperated list of hosts]]"
++      + "\n\t[-exclude [-f <hosts-file> | <comma-separated list of hosts>]]"
+       + "\tExcludes the specified datanodes."
+-      + "\n\t[-include [-f <hosts-file> | comma-sperated list of hosts]]"
++      + "\n\t[-include [-f <hosts-file> | <comma-separated list of hosts>]]"
+       + "\tIncludes only the specified datanodes."
+       + "\n\t[-idleiterations <idleiterations>]"
+       + "\tNumber of consecutive idle iterations (-1 for Infinite) before exit.";
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/site/apt/HDFSCommands.apt.vm b/hadoop-hdfs-project/hadoop-hdfs/src/site/apt/HDFSCommands.apt.vm
+index bb436e7..3b5fccc 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/site/apt/HDFSCommands.apt.vm
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/site/apt/HDFSCommands.apt.vm
+@@ -136,7 +136,14 @@ HDFS Commands Guide
+    to stop the rebalancing process. See
+    {{{./HdfsUserGuide.html#Balancer}Balancer}} for more details.
+ 
+-   Usage: <<<hdfs balancer [-threshold <threshold>] [-policy <policy>] [-idleiterations <idleiterations>]>>>
+++------------------------------------------+
++   Usage: hdfs balancer
++           [-threshold <threshold>]
++           [-policy <policy>]
++           [-exclude [-f <hosts-file> | <comma-separated list of hosts>]]
++           [-include [-f <hosts-file> | <comma-separated list of hosts>]]
++           [-idleiterations <idleiterations>]
+++------------------------------------------+
+ 
+ *------------------------+----------------------------------------------------+
+ || COMMAND_OPTION        | Description
+@@ -149,6 +156,12 @@ HDFS Commands Guide
+ |                        | <<<blockpool>>>: Cluster is balanced if each block
+ |                        | pool in each datanode is balanced.
+ *------------------------+----------------------------------------------------+
++| -exclude -f \<hosts-file\> \|       | Excludes the specified datanodes from
++|   \<comma-separated list of hosts\> | being balanced by the balancer.
++*------------------------+----------------------------------------------------+
++| -include -f \<hosts-file\> \|       | Includes only the specified datanode
++|   \<comma-separated list of hosts\> | to be balanced by the balancer.
++*------------------------+----------------------------------------------------+
+ | -idleiterations <iterations> | Maximum number of idle iterations before exit.
+ |                              | This overwrites the default idleiterations(5).
+ *------------------------+----------------------------------------------------+
+-- 
+1.7.9.5
+

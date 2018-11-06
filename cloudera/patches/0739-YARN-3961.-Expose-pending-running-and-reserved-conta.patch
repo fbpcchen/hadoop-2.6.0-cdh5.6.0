@@ -1,0 +1,350 @@
+From fdfc80f93cce8b2c425b77eb692204575104c377 Mon Sep 17 00:00:00 2001
+From: Arun Suresh <asuresh@apache.org>
+Date: Wed, 5 Aug 2015 23:14:14 -0700
+Subject: [PATCH 0739/1023] YARN-3961. Expose pending, running and reserved
+ containers of a queue in REST api and yarn top
+ (adhoot via asuresh)
+
+(cherry picked from commit 154c9d2e421390c808dea3b2826cdaae492ea337)
+(cherry picked from commit 84ea7cd40883871caa657b154db9f6ab206b4ad3)
+
+Conflicts:
+	hadoop-yarn-project/CHANGES.txt
+	hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/webapp/dao/FairSchedulerQueueInfo.java
+	hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/webapp/TestRMWebServicesCapacitySched.java
+
+Change-Id: I2421bd2a237dbf51e268710cbb511aa74b6d8e73
+---
+ .../hadoop/yarn/api/records/QueueStatistics.java   |   36 ++++++++++++++++++++
+ .../src/main/proto/yarn_protos.proto               |    3 ++
+ .../org/apache/hadoop/yarn/client/cli/TopCLI.java  |   24 +++++++++----
+ .../api/records/impl/pb/QueueStatisticsPBImpl.java |   36 ++++++++++++++++++++
+ .../scheduler/capacity/AbstractCSQueue.java        |    3 ++
+ .../webapp/dao/CapacitySchedulerQueueInfo.java     |   18 ++++++++++
+ .../webapp/dao/FairSchedulerQueueInfo.java         |   28 ++++++++++++---
+ .../webapp/TestRMWebServicesCapacitySched.java     |    4 +--
+ 8 files changed, 140 insertions(+), 12 deletions(-)
+
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-api/src/main/java/org/apache/hadoop/yarn/api/records/QueueStatistics.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-api/src/main/java/org/apache/hadoop/yarn/api/records/QueueStatistics.java
+index a93047e..8087663 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-api/src/main/java/org/apache/hadoop/yarn/api/records/QueueStatistics.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-api/src/main/java/org/apache/hadoop/yarn/api/records/QueueStatistics.java
+@@ -263,6 +263,42 @@ public static QueueStatistics newInstance(long submitted, long running,
+   public abstract void setPendingVCores(long pendingVCores);
+ 
+   /**
++   * Get the number of pending containers.
++   * @return the number of pending containers.
++   */
++  public abstract long getPendingContainers();
++
++  /**
++   * Set the number of pending containers.
++   * @param pendingContainers the pending containers.
++   */
++  public abstract void setPendingContainers(long pendingContainers);
++
++  /**
++   * Get the number of allocated containers.
++   * @return the number of allocated containers.
++   */
++  public abstract long getAllocatedContainers();
++
++  /**
++   * Set the number of allocated containers.
++   * @param allocatedContainers the allocated containers.
++   */
++  public abstract void setAllocatedContainers(long allocatedContainers);
++
++  /**
++   * Get the number of reserved containers.
++   * @return the number of reserved containers.
++   */
++  public abstract long getReservedContainers();
++
++  /**
++   * Set the number of reserved containers.
++   * @param reservedContainers the reserved containers.
++   */
++  public abstract void setReservedContainers(long reservedContainers);
++
++  /**
+    * Get the reserved vcores
+    * 
+    * @return the reserved vcores
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-api/src/main/proto/yarn_protos.proto b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-api/src/main/proto/yarn_protos.proto
+index 4f844e9..9503586 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-api/src/main/proto/yarn_protos.proto
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-api/src/main/proto/yarn_protos.proto
+@@ -349,6 +349,9 @@ message QueueStatisticsProto {
+   optional int64 allocatedVCores = 13;
+   optional int64 pendingVCores = 14;
+   optional int64 reservedVCores = 15;
++  optional int64 allocatedContainers = 16;
++  optional int64 pendingContainers = 17;
++  optional int64 reservedContainers = 18;
+ }
+ 
+ message QueueInfoProto {
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-client/src/main/java/org/apache/hadoop/yarn/client/cli/TopCLI.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-client/src/main/java/org/apache/hadoop/yarn/client/cli/TopCLI.java
+index a502dd8..8bcbcf3 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-client/src/main/java/org/apache/hadoop/yarn/client/cli/TopCLI.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-client/src/main/java/org/apache/hadoop/yarn/client/cli/TopCLI.java
+@@ -71,7 +71,7 @@
+   private String SET_CURSOR_HOME = "\u001b[H";
+   private String CHANGE_BACKGROUND = "\u001b[7m";
+   private String RESET_BACKGROUND = "\u001b[0m";
+-  private String SET_CURSOR_LINE_6_COLUMN_0 = "\u001b[6;0f";
++  private String SET_CURSOR_LINE_7_COLUMN_0 = "\u001b[7;0f";
+ 
+   // guava cache for getapplications call
+   protected Cache<GetApplicationsRequest, List<ApplicationReport>>
+@@ -331,6 +331,9 @@ public ColumnInformation(String header, String format, boolean display,
+     long allocatedVCores;
+     long pendingVCores;
+     long reservedVCores;
++    long allocatedContainers;
++    long reservedContainers;
++    long pendingContainers;
+   }
+ 
+   private class KeyboardMonitor extends Thread {
+@@ -596,14 +599,14 @@ protected void setTerminalSequences() throws IOException,
+     String[] tput_cursor_home = { "tput", "cup", "0", "0" };
+     String[] tput_clear = { "tput", "clear" };
+     String[] tput_clear_line = { "tput", "el" };
+-    String[] tput_set_cursor_line_6_column_0 = { "tput", "cup", "5", "0" };
++    String[] tput_set_cursor_line_7_column_0 = { "tput", "cup", "6", "0" };
+     String[] tput_change_background = { "tput", "smso" };
+     String[] tput_reset_background = { "tput", "rmso" };
+     SET_CURSOR_HOME = getCommandOutput(tput_cursor_home);
+     CLEAR = getCommandOutput(tput_clear);
+     CLEAR_LINE = getCommandOutput(tput_clear_line);
+-    SET_CURSOR_LINE_6_COLUMN_0 =
+-        getCommandOutput(tput_set_cursor_line_6_column_0);
++    SET_CURSOR_LINE_7_COLUMN_0 =
++        getCommandOutput(tput_set_cursor_line_7_column_0);
+     CHANGE_BACKGROUND = getCommandOutput(tput_change_background);
+     RESET_BACKGROUND = getCommandOutput(tput_reset_background);
+   }
+@@ -712,6 +715,9 @@ protected QueueMetrics getQueueMetrics() {
+         queueMetrics.allocatedVCores += stats.getAllocatedVCores();
+         queueMetrics.pendingVCores += stats.getPendingVCores();
+         queueMetrics.reservedVCores += stats.getReservedVCores();
++        queueMetrics.allocatedContainers += stats.getAllocatedContainers();
++        queueMetrics.pendingContainers += stats.getPendingContainers();
++        queueMetrics.reservedContainers += stats.getReservedContainers();
+       }
+     }
+     queueMetrics.availableMemoryGB = queueMetrics.availableMemoryGB / 1024;
+@@ -793,12 +799,18 @@ String getHeader(QueueMetrics queueMetrics, NodesInformation nodes) {
+       queueMetrics.availableVCores, queueMetrics.allocatedVCores,
+       queueMetrics.pendingVCores, queueMetrics.reservedVCores), terminalWidth,
+       true));
++
++    ret.append(CLEAR_LINE);
++    ret.append(limitLineLength(String.format(
++        "Queue(s) Containers: %d allocated, %d pending, %d reserved%n",
++            queueMetrics.allocatedContainers, queueMetrics.pendingContainers,
++            queueMetrics.reservedContainers), terminalWidth, true));
+     return ret.toString();
+   }
+ 
+   String getPrintableAppInformation(List<ApplicationInformation> appsInfo) {
+     StringBuilder ret = new StringBuilder();
+-    int limit = terminalHeight - 8;
++    int limit = terminalHeight - 9;
+     List<String> columns = new ArrayList<>();
+     for (int i = 0; i < limit; ++i) {
+       ret.append(CLEAR_LINE);
+@@ -944,7 +956,7 @@ protected void showTopScreen() {
+     synchronized (lock) {
+       printHeader(header);
+       printApps(appsStr);
+-      System.out.print(SET_CURSOR_LINE_6_COLUMN_0);
++      System.out.print(SET_CURSOR_LINE_7_COLUMN_0);
+       System.out.print(CLEAR_LINE);
+     }
+   }
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/main/java/org/apache/hadoop/yarn/api/records/impl/pb/QueueStatisticsPBImpl.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/main/java/org/apache/hadoop/yarn/api/records/impl/pb/QueueStatisticsPBImpl.java
+index 9506a5f..ba394dc 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/main/java/org/apache/hadoop/yarn/api/records/impl/pb/QueueStatisticsPBImpl.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/main/java/org/apache/hadoop/yarn/api/records/impl/pb/QueueStatisticsPBImpl.java
+@@ -254,4 +254,40 @@ public void setReservedVCores(long reservedVCores) {
+     maybeInitBuilder();
+     builder.setReservedVCores(reservedVCores);
+   }
++
++  @Override
++  public long getPendingContainers() {
++    QueueStatisticsProtoOrBuilder p = viaProto ? proto : builder;
++    return (p.hasPendingContainers()) ? p.getPendingContainers() : -1;
++  }
++
++  @Override
++  public void setPendingContainers(long pendingContainers) {
++    maybeInitBuilder();
++    builder.setPendingContainers(pendingContainers);
++  }
++
++  @Override
++  public long getAllocatedContainers() {
++    QueueStatisticsProtoOrBuilder p = viaProto ? proto : builder;
++    return (p.hasAllocatedContainers()) ? p.getAllocatedContainers() : -1;
++  }
++
++  @Override
++  public void setAllocatedContainers(long allocatedContainers) {
++    maybeInitBuilder();
++    builder.setAllocatedContainers(allocatedContainers);
++  }
++
++  @Override
++  public long getReservedContainers() {
++    QueueStatisticsProtoOrBuilder p = viaProto ? proto : builder;
++    return (p.hasReservedContainers()) ? p.getReservedContainers() : -1;
++  }
++
++  @Override
++  public void setReservedContainers(long reservedContainers) {
++    maybeInitBuilder();
++    builder.setReservedContainers(reservedContainers);
++  }
+ }
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/capacity/AbstractCSQueue.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/capacity/AbstractCSQueue.java
+index fa75bc4..2875155 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/capacity/AbstractCSQueue.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/capacity/AbstractCSQueue.java
+@@ -352,6 +352,9 @@ public QueueStatistics getQueueStatistics() {
+     stats.setAllocatedVCores(getMetrics().getAllocatedVirtualCores());
+     stats.setPendingVCores(getMetrics().getPendingVirtualCores());
+     stats.setReservedVCores(getMetrics().getReservedVirtualCores());
++    stats.setPendingContainers(getMetrics().getPendingContainers());
++    stats.setAllocatedContainers(getMetrics().getAllocatedContainers());
++    stats.setReservedContainers(getMetrics().getReservedContainers());
+     return stats;
+   }
+   
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/webapp/dao/CapacitySchedulerQueueInfo.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/webapp/dao/CapacitySchedulerQueueInfo.java
+index 40dddea..ec38517 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/webapp/dao/CapacitySchedulerQueueInfo.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/webapp/dao/CapacitySchedulerQueueInfo.java
+@@ -55,6 +55,9 @@
+   protected ResourceInfo resourcesUsed;
+   private boolean hideReservationQueues = false;
+   protected ArrayList<String> nodeLabels = new ArrayList<String>();
++  protected long allocatedContainers;
++  protected long reservedContainers;
++  protected long pendingContainers;
+ 
+   CapacitySchedulerQueueInfo() {
+   };
+@@ -73,6 +76,9 @@
+     absoluteMaxCapacity = cap(q.getAbsoluteMaximumCapacity(), 0f, 1f) * 100;
+     absoluteUsedCapacity = cap(q.getAbsoluteUsedCapacity(), 0f, 1f) * 100;
+     numApplications = q.getNumApplications();
++    allocatedContainers = q.getMetrics().getAllocatedContainers();
++    pendingContainers = q.getMetrics().getPendingContainers();
++    reservedContainers = q.getMetrics().getReservedContainers();
+     queueName = q.getQueueName();
+     state = q.getState();
+     resourcesUsed = new ResourceInfo(q.getUsedResources());
+@@ -117,6 +123,18 @@ public int getNumApplications() {
+     return numApplications;
+   }
+ 
++  public long getAllocatedContainers() {
++    return allocatedContainers;
++  }
++
++  public long getReservedContainers() {
++    return reservedContainers;
++  }
++
++  public long getPendingContainers() {
++    return pendingContainers;
++  }
++
+   public String getQueueName() {
+     return this.queueName;
+   }
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/webapp/dao/FairSchedulerQueueInfo.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/webapp/dao/FairSchedulerQueueInfo.java
+index c62aaf0..2c02395 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/webapp/dao/FairSchedulerQueueInfo.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/webapp/dao/FairSchedulerQueueInfo.java
+@@ -57,7 +57,11 @@
+   private ResourceInfo steadyFairResources;
+   private ResourceInfo fairResources;
+   private ResourceInfo clusterResources;
+-  
++
++  private long pendingContainers;
++  private long allocatedContainers;
++  private long reservedContainers;
++
+   private String queueName;
+   private String schedulingPolicy;
+   
+@@ -94,7 +98,11 @@ public FairSchedulerQueueInfo(FSQueue queue, FairScheduler scheduler) {
+     fractionMemMaxShare = (float)maxResources.getMemory() / clusterResources.getMemory();
+     
+     maxApps = allocConf.getQueueMaxApps(queueName);
+-    
++
++    pendingContainers = queue.getMetrics().getPendingContainers();
++    allocatedContainers = queue.getMetrics().getAllocatedContainers();
++    reservedContainers = queue.getMetrics().getReservedContainers();
++
+     Collection<FSQueue> children = queue.getChildQueues();
+     childQueues = new ArrayList<FairSchedulerQueueInfo>();
+     for (FSQueue child : children) {
+@@ -105,7 +113,19 @@ public FairSchedulerQueueInfo(FSQueue queue, FairScheduler scheduler) {
+       }
+     }
+   }
+-  
++
++  public long getPendingContainers() {
++    return pendingContainers;
++  }
++
++  public long getAllocatedContainers() {
++    return allocatedContainers;
++  }
++
++  public long getReservedContainers() {
++    return reservedContainers;
++  }
++
+   /**
+    * Returns the steady fair share as a fraction of the entire cluster capacity.
+    */
+@@ -153,7 +173,7 @@ public String getQueueName() {
+   public ResourceInfo getUsedResources() {
+     return usedResources;
+   }
+-  
++
+   /**
+    * Returns the queue's min share in as a fraction of the entire
+    * cluster capacity.
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/webapp/TestRMWebServicesCapacitySched.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/webapp/TestRMWebServicesCapacitySched.java
+index 3e62c3c..c95ceb7 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/webapp/TestRMWebServicesCapacitySched.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/webapp/TestRMWebServicesCapacitySched.java
+@@ -357,10 +357,10 @@ private void verifyClusterSchedulerGeneric(String type, float usedCapacity,
+   private void verifySubQueue(JSONObject info, String q, 
+       float parentAbsCapacity, float parentAbsMaxCapacity)
+       throws JSONException, Exception {
+-    int numExpectedElements = 13;
++    int numExpectedElements = 16;
+     boolean isParentQueue = true;
+     if (!info.has("queues")) {
+-      numExpectedElements = 23;
++      numExpectedElements = 26;
+       isParentQueue = false;
+     }
+     assertEquals("incorrect number of elements", numExpectedElements, info.length());
+-- 
+1.7.9.5
+

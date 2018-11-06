@@ -1,0 +1,84 @@
+From 1432b2b285082b6d04fc2dd1382f805f7ef3f58b Mon Sep 17 00:00:00 2001
+From: Zhe Zhang <zhz@apache.org>
+Date: Thu, 3 Dec 2015 23:19:17 -0800
+Subject: [PATCH 0999/1023] HDFS-9313. Possible NullPointerException in
+ BlockManager if no excess replica can be chosen.
+ Contributed by Ming Ma. Branch-2.7 patch
+ contributed by Xiao Chen.
+
+(cherry picked from commit 089169e4e571c16ebce0ce59801833bca3d5c7c3)
+
+Change-Id: I23f7942e4f15d5408ff69852ff91b7837c308da5
+---
+ .../BlockPlacementPolicyDefault.java               |    5 ++++
+ .../blockmanagement/TestReplicationPolicy.java     |   31 ++++++++++++++++++++
+ 2 files changed, 36 insertions(+)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlockPlacementPolicyDefault.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlockPlacementPolicyDefault.java
+index bde846e..136d03e 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlockPlacementPolicyDefault.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlockPlacementPolicyDefault.java
+@@ -971,6 +971,11 @@ public DatanodeStorageInfo chooseReplicaToDelete(short replicationFactor,
+                 excessTypes);
+       }
+       firstOne = false;
++      if (cur == null) {
++        LOG.warn("No excess replica can be found. excessTypes: "+excessTypes+
++            ". moreThanOne: "+moreThanOne+". exactlyOne: "+exactlyOne+".");
++        break;
++      }
+ 
+       // adjust rackmap, moreThanOne, and exactlyOne
+       adjustSetsWithChosenReplica(rackMap, moreThanOne, exactlyOne, cur);
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/blockmanagement/TestReplicationPolicy.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/blockmanagement/TestReplicationPolicy.java
+index e25011b..9d51215 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/blockmanagement/TestReplicationPolicy.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/blockmanagement/TestReplicationPolicy.java
+@@ -1058,6 +1058,14 @@ public void testChooseReplicasToDelete() throws Exception {
+     BlockStoragePolicySuite POLICY_SUITE = BlockStoragePolicySuite
+         .createDefaultSuite();
+     BlockStoragePolicy storagePolicy = POLICY_SUITE.getDefaultPolicy();
++    DatanodeStorageInfo excessSSD = DFSTestUtil.createDatanodeStorageInfo(
++        "Storage-excess-SSD-ID", "localhost",
++        storages[0].getDatanodeDescriptor().getNetworkLocation(),
++        "foo.com", StorageType.SSD);
++    updateHeartbeatWithUsage(excessSSD.getDatanodeDescriptor(),
++        2* HdfsConstants.MIN_BLOCKS_FOR_WRITE*BLOCK_SIZE, 0L,
++        2* HdfsConstants.MIN_BLOCKS_FOR_WRITE*BLOCK_SIZE, 0L, 0L, 0L, 0,
++        0);
+ 
+     // use delete hint case.
+ 
+@@ -1080,6 +1088,29 @@ public void testChooseReplicasToDelete() throws Exception {
+     excessReplicas = replicator.chooseReplicasToDelete(nonExcess, 3,
+         excessTypes, storages[3].getDatanodeDescriptor(), null);
+     assertTrue(excessReplicas.contains(excessStorage));
++
++
++    // The block was initially created on excessSSD(rack r1),
++    // storages[4](rack r3) and storages[5](rack r3) with
++    // ONESSD_STORAGE_POLICY_NAME storage policy.
++    // Right after balancer moves the block from storages[5] to
++    // storages[3](rack r2), the application changes the storage policy from
++    // ONESSD_STORAGE_POLICY_NAME to HOT_STORAGE_POLICY_ID. In this case,
++    // no replica can be chosen as the excessive replica as
++    // chooseReplicasToDelete only considers storages[4] and storages[5] that
++    // are the same rack. But neither's storage type is SSD.
++    // TODO BlockPlacementPolicyDefault should be able to delete excessSSD.
++    nonExcess.clear();
++    nonExcess.add(excessSSD);
++    nonExcess.add(storages[3]);
++    nonExcess.add(storages[4]);
++    nonExcess.add(storages[5]);
++    excessTypes = storagePolicy.chooseExcess((short) 3,
++        DatanodeStorageInfo.toStorageTypes(nonExcess));
++    excessReplicas = replicator.chooseReplicasToDelete(nonExcess, 3,
++        excessTypes, storages[3].getDatanodeDescriptor(),
++        storages[5].getDatanodeDescriptor());
++    assertTrue(excessReplicas.size() == 0);
+   }
+ 
+  @Test
+-- 
+1.7.9.5
+

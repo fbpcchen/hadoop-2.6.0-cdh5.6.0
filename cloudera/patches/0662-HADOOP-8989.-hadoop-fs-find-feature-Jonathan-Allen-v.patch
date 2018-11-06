@@ -1,0 +1,453 @@
+From 4788537750e2023bbe840a58202e9e8fd8d35280 Mon Sep 17 00:00:00 2001
+From: Allen Wittenauer <aw@apache.org>
+Date: Thu, 15 Jan 2015 11:56:16 -0800
+Subject: [PATCH 0662/1023] HADOOP-8989. hadoop fs -find feature (Jonathan
+ Allen via aw) (cherry picked from commit
+ c060d60a4016afe71ba7650b92733c3089ba973c)
+
+---
+ .../java/org/apache/hadoop/fs/shell/Command.java   |   28 ++-
+ .../org/apache/hadoop/fs/shell/CommandFactory.java |    1 +
+ .../java/org/apache/hadoop/fs/shell/FsCommand.java |    2 +
+ .../src/site/apt/FileSystemShell.apt.vm            |   43 ++++
+ .../hadoop-common/src/test/resources/testConf.xml  |   44 ++++
+ .../src/test/resources/testHDFSConf.xml            |  223 ++++++++++++++++++++
+ 6 files changed, 340 insertions(+), 1 deletion(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/Command.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/Command.java
+index 47a1dc2..fff07aa 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/Command.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/Command.java
+@@ -64,6 +64,8 @@
+   public PrintStream out = System.out;
+   /** allows stderr to be captured if necessary */
+   public PrintStream err = System.err;
++  /** allows the command factory to be used if necessary */
++  private CommandFactory commandFactory = null;
+ 
+   /** Constructor */
+   protected Command() {
+@@ -120,6 +122,15 @@ public int runAll() {
+     return exitCode;
+   }
+ 
++  /** sets the command factory for later use */
++  public void setCommandFactory(CommandFactory factory) {
++    this.commandFactory = factory;
++  }
++  /** retrieves the command factory */
++  protected CommandFactory getCommandFactory() {
++    return this.commandFactory;
++  }
++
+   /**
+    * Invokes the command handler.  The default behavior is to process options,
+    * expand arguments, and then process each argument.
+@@ -304,7 +315,7 @@ protected void processPaths(PathData parent, PathData ... items)
+     for (PathData item : items) {
+       try {
+         processPath(item);
+-        if (recursive && item.stat.isDirectory()) {
++        if (recursive && isPathRecursable(item)) {
+           recursePath(item);
+         }
+         postProcessPath(item);
+@@ -315,6 +326,21 @@ protected void processPaths(PathData parent, PathData ... items)
+   }
+ 
+   /**
++   * Determines whether a {@link PathData} item is recursable. Default
++   * implementation is to recurse directories but can be overridden to recurse
++   * through symbolic links.
++   *
++   * @param item
++   *          a {@link PathData} object
++   * @return true if the item is recursable, false otherwise
++   * @throws IOException
++   *           if anything goes wrong in the user-implementation
++   */
++  protected boolean isPathRecursable(PathData item) throws IOException {
++    return item.stat.isDirectory();
++  }
++
++  /**
+    * Hook for commands to implement an operation to be applied on each
+    * path for the command.  Note implementation of this method is optional
+    * if earlier methods in the chain handle the operation.
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/CommandFactory.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/CommandFactory.java
+index dec8373..9b128cf 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/CommandFactory.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/CommandFactory.java
+@@ -124,6 +124,7 @@ public Command getInstance(String cmdName, Configuration conf) {
+       if (cmdClass != null) {
+         instance = ReflectionUtils.newInstance(cmdClass, conf);
+         instance.setName(cmdName);
++        instance.setCommandFactory(this);
+       }
+     }
+     return instance;
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/FsCommand.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/FsCommand.java
+index 08cc71d..b5544fc 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/FsCommand.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/FsCommand.java
+@@ -26,6 +26,7 @@
+ import org.apache.hadoop.conf.Configuration;
+ import org.apache.hadoop.fs.FsShellPermissions;
+ import org.apache.hadoop.fs.Path;
++import org.apache.hadoop.fs.shell.find.Find;
+ 
+ import static org.apache.hadoop.fs.CommonConfigurationKeysPublic.FS_DEFAULT_NAME_DEFAULT;
+ import static org.apache.hadoop.fs.CommonConfigurationKeysPublic.FS_DEFAULT_NAME_KEY;
+@@ -54,6 +55,7 @@ public static void registerCommands(CommandFactory factory) {
+     factory.registerCommands(Count.class);
+     factory.registerCommands(Delete.class);
+     factory.registerCommands(Display.class);
++    factory.registerCommands(Find.class);
+     factory.registerCommands(FsShellPermissions.class);
+     factory.registerCommands(FsUsage.class);
+     factory.registerCommands(Ls.class);
+diff --git a/hadoop-common-project/hadoop-common/src/site/apt/FileSystemShell.apt.vm b/hadoop-common-project/hadoop-common/src/site/apt/FileSystemShell.apt.vm
+index abc4643..1a9618c 100644
+--- a/hadoop-common-project/hadoop-common/src/site/apt/FileSystemShell.apt.vm
++++ b/hadoop-common-project/hadoop-common/src/site/apt/FileSystemShell.apt.vm
+@@ -232,6 +232,49 @@ expunge
+    Empty the Trash. Refer to the {{{../hadoop-hdfs/HdfsDesign.html}
+    HDFS Architecture Guide}} for more information on the Trash feature.
+ 
++find
++
++   Usage: <<<hdfs dfs -find <path> ... <expression> ... >>>
++
++   Finds all files that match the specified expression and applies selected
++   actions to them. If no <path> is specified then defaults to the current
++   working directory. If no expression is specified then defaults to -print.
++
++   The following primary expressions are recognised:
++
++     * -name pattern \
++       -iname pattern
++
++       Evaluates as true if the basename of the file matches the pattern using
++       standard file system globbing. If -iname is used then the match is case
++       insensitive.
++
++     * -print \
++       -print0
++
++       Always evaluates to true. Causes the current pathname to be written to
++       standard output. If the -print0 expression is used then an ASCII NULL
++       character is appended.
++
++   The following operators are recognised:
++
++     * expression -a expression \
++       expression -and expression \
++       expression expression
++
++       Logical AND operator for joining two expressions. Returns true if both
++       child expressions return true. Implied by the juxtaposition of two
++       expressions and so does not need to be explicitly specified. The second
++       expression will not be applied if the first fails.
++
++   Example:
++
++   <<<hdfs dfs -find / -name test -print>>>
++
++   Exit Code:
++
++     Returns 0 on success and -1 on error.
++
+ get
+ 
+    Usage: <<<hdfs dfs -get [-ignorecrc] [-crc] <src> <localdst> >>>
+diff --git a/hadoop-common-project/hadoop-common/src/test/resources/testConf.xml b/hadoop-common-project/hadoop-common/src/test/resources/testConf.xml
+index dcf8fb4..5196641 100644
+--- a/hadoop-common-project/hadoop-common/src/test/resources/testConf.xml
++++ b/hadoop-common-project/hadoop-common/src/test/resources/testConf.xml
+@@ -964,6 +964,50 @@
+     </test>
+ 
+     <test> <!-- TESTED -->
++      <description>help: help for find</description>
++      <test-commands>
++        <command>-help find</command>
++      </test-commands>
++      <cleanup-commands>
++      </cleanup-commands>
++      <comparators>
++        <comparator>
++          <type>RegexpAcrossOutputComparator</type>
++          <expected-output>-find &lt;path&gt; \.\.\. &lt;expression&gt; \.\.\. :
++  Finds all files that match the specified expression and
++  applies selected actions to them\. If no &lt;path&gt; is specified
++  then defaults to the current working directory\. If no
++  expression is specified then defaults to -print\.
++  
++  The following primary expressions are recognised:
++    -name pattern
++    -iname pattern
++      Evaluates as true if the basename of the file matches the
++      pattern using standard file system globbing\.
++      If -iname is used then the match is case insensitive\.
++  
++    -print
++    -print0
++      Always evaluates to true. Causes the current pathname to be
++      written to standard output followed by a newline. If the -print0
++      expression is used then an ASCII NULL character is appended rather
++      than a newline.
++  
++  The following operators are recognised:
++    expression -a expression
++    expression -and expression
++    expression expression
++      Logical AND operator for joining two expressions\. Returns
++      true if both child expressions return true\. Implied by the
++      juxtaposition of two expressions and so does not need to be
++      explicitly specified\. The second expression will not be
++      applied if the first fails\.
++</expected-output>	
++        </comparator>
++      </comparators>
++    </test>
++
++    <test> <!-- TESTED -->
+       <description>help: help for help</description>
+       <test-commands>
+         <command>-help help</command>
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/resources/testHDFSConf.xml b/hadoop-hdfs-project/hadoop-hdfs/src/test/resources/testHDFSConf.xml
+index 8f894cb..aef15da 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/resources/testHDFSConf.xml
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/resources/testHDFSConf.xml
+@@ -16841,5 +16841,228 @@
+         </comparator>
+       </comparators>
+     </test>
++
++    <!-- Tests for find -->
++    <test> <!-- TESTED -->
++      <description>find: default expression</description>
++      <test-commands>
++        <command>-fs NAMENODE -mkdir /donotfind</command>
++        <command>-fs NAMENODE -mkdir donotfind</command>
++        <command>-fs NAMENODE -mkdir /findtest</command>
++        <command>-fs NAMENODE -mkdir /findtest/item1</command>
++        <command>-fs NAMENODE -mkdir /findtest/item1/item1a</command>
++        <command>-fs NAMENODE -touchz /findtest/item1/item1a/item1aa</command>
++        <command>-fs NAMENODE -put CLITEST_DATA/data60bytes /findtest/item1/item1b</command>
++        <command>-fs NAMENODE -put CLITEST_DATA/data60bytes /findtest/item2</command>
++        <command>-fs NAMENODE -mkdir /findtest/item3</command>
++        <command>-fs NAMENODE -mkdir /findtest/item4</command>
++        <command>-fs NAMENODE -mkdir /findtest/item4/item4a</command>
++        <command>-fs NAMENODE -put CLITEST_DATA/data120bytes /findtest/item4/item4b</command>
++        <command>-fs NAMENODE -put CLITEST_DATA/data1k /findtest/item5</command>
++        <command>-fs NAMENODE -find /findtest</command>
++      </test-commands>
++      <cleanup-commands>
++        <command>-fs NAMENODE -rm -r /donotfind</command>
++        <command>-fs NAMENODE -rm -r donotfind</command>
++        <command>-fs NAMENODE -rm -r /findtest</command>
++      </cleanup-commands>
++      <comparators>
++        <comparator>
++          <type>RegexpAcrossOutputComparator</type>
++          <expected-output>^/findtest
++/findtest/item1
++/findtest/item1/item1a
++/findtest/item1/item1a/item1aa
++/findtest/item1/item1b
++/findtest/item2
++/findtest/item3
++/findtest/item4
++/findtest/item4/item4a
++/findtest/item4/item4b
++/findtest/item5
++$</expected-output>
++        </comparator>
++      </comparators>
++    </test>
++    <test> <!-- TESTED -->
++      <description>find: -print </description>
++      <test-commands>
++        <command>-fs NAMENODE -mkdir /donotfind</command>
++        <command>-fs NAMENODE -mkdir donotfind</command>
++        <command>-fs NAMENODE -mkdir /findtest</command>
++        <command>-fs NAMENODE -mkdir /findtest/item1</command>
++        <command>-fs NAMENODE -mkdir /findtest/item1/item1a</command>
++        <command>-fs NAMENODE -touchz /findtest/item1/item1a/item1aa</command>
++        <command>-fs NAMENODE -put CLITEST_DATA/data60bytes /findtest/item1/item1b</command>
++        <command>-fs NAMENODE -put CLITEST_DATA/data60bytes /findtest/item2</command>
++        <command>-fs NAMENODE -mkdir /findtest/item3</command>
++        <command>-fs NAMENODE -mkdir /findtest/item4</command>
++        <command>-fs NAMENODE -mkdir /findtest/item4/item4a</command>
++        <command>-fs NAMENODE -put CLITEST_DATA/data120bytes /findtest/item4/item4b</command>
++        <command>-fs NAMENODE -put CLITEST_DATA/data1k /findtest/item5</command>
++        <command>-fs NAMENODE -find /findtest -print</command>
++      </test-commands>
++      <cleanup-commands>
++        <command>-fs NAMENODE -rm -r /donotfind</command>
++        <command>-fs NAMENODE -rm -r donotfind</command>
++        <command>-fs NAMENODE -rm -r /findtest</command>
++      </cleanup-commands>
++      <comparators>
++        <comparator>
++          <type>RegexpAcrossOutputComparator</type>
++          <expected-output>^/findtest
++/findtest/item1
++/findtest/item1/item1a
++/findtest/item1/item1a/item1aa
++/findtest/item1/item1b
++/findtest/item2
++/findtest/item3
++/findtest/item4
++/findtest/item4/item4a
++/findtest/item4/item4b
++/findtest/item5
++$</expected-output>
++        </comparator>
++      </comparators>
++    </test>
++    <test> <!-- TESTED -->
++      <description>find: -print (relative path) </description>
++      <test-commands>
++        <command>-fs NAMENODE -mkdir /donotfind</command>
++        <command>-fs NAMENODE -mkdir -p donotfind</command>
++        <command>-fs NAMENODE -mkdir -p findtest</command>
++        <command>-fs NAMENODE -mkdir -p findtest/item1</command>
++        <command>-fs NAMENODE -mkdir -p findtest/item1/item1a</command>
++        <command>-fs NAMENODE -touchz findtest/item1/item1a/item1aa</command>
++        <command>-fs NAMENODE -put CLITEST_DATA/data60bytes findtest/item1/item1b</command>
++        <command>-fs NAMENODE -put CLITEST_DATA/data60bytes findtest/item2</command>
++        <command>-fs NAMENODE -mkdir -p findtest/item3</command>
++        <command>-fs NAMENODE -mkdir -p findtest/item4</command>
++        <command>-fs NAMENODE -mkdir -p findtest/item4/item4a</command>
++        <command>-fs NAMENODE -put CLITEST_DATA/data120bytes findtest/item4/item4b</command>
++        <command>-fs NAMENODE -put CLITEST_DATA/data1k findtest/item5</command>
++        <command>-fs NAMENODE -find findtest -print</command>
++      </test-commands>
++      <cleanup-commands>
++        <command>-fs NAMENODE -rm -r /donotfind</command>
++        <command>-fs NAMENODE -rm -r donotfind</command>
++        <command>-fs NAMENODE -rm -r findtest</command>
++      </cleanup-commands>
++      <comparators>
++        <comparator>
++          <type>RegexpAcrossOutputComparator</type>
++          <expected-output>^findtest
++findtest/item1
++findtest/item1/item1a
++findtest/item1/item1a/item1aa
++findtest/item1/item1b
++findtest/item2
++findtest/item3
++findtest/item4
++findtest/item4/item4a
++findtest/item4/item4b
++findtest/item5
++$</expected-output>
++        </comparator>
++      </comparators>
++    </test>
++    <test> <!-- TESTED -->
++      <description>find: -print (cwd) </description>
++      <test-commands>
++        <command>-fs NAMENODE -mkdir /donotfind</command>
++        <command>-fs NAMENODE -mkdir findtest</command>
++        <command>-fs NAMENODE -mkdir findtest/item1</command>
++        <command>-fs NAMENODE -mkdir findtest/item1/item1a</command>
++        <command>-fs NAMENODE -touchz findtest/item1/item1a/item1aa</command>
++        <command>-fs NAMENODE -put CLITEST_DATA/data60bytes findtest/item1/item1b</command>
++        <command>-fs NAMENODE -put CLITEST_DATA/data60bytes findtest/item2</command>
++        <command>-fs NAMENODE -mkdir findtest/item3</command>
++        <command>-fs NAMENODE -mkdir findtest/item4</command>
++        <command>-fs NAMENODE -mkdir findtest/item4/item4a</command>
++        <command>-fs NAMENODE -put CLITEST_DATA/data120bytes findtest/item4/item4b</command>
++        <command>-fs NAMENODE -put CLITEST_DATA/data1k findtest/item5</command>
++        <command>-fs NAMENODE -find -print</command>
++      </test-commands>
++      <cleanup-commands>
++        <command>-fs NAMENODE -rm -r findtest</command>
++        <command>-fs NAMENODE -rm -r /donotfind</command>
++      </cleanup-commands>
++      <comparators>
++        <comparator>
++          <type>RegexpAcrossOutputComparator</type>
++          <expected-output>^.
++findtest
++findtest/item1
++findtest/item1/item1a
++findtest/item1/item1a/item1aa
++findtest/item1/item1b
++findtest/item2
++findtest/item3
++findtest/item4
++findtest/item4/item4a
++findtest/item4/item4b
++findtest/item5
++$</expected-output>
++        </comparator>
++      </comparators>
++    </test>
++    <test> <!-- TESTED -->
++      <description>find: -name </description>
++      <test-commands>
++        <command>-fs NAMENODE -mkdir /findtest</command>
++        <command>-fs NAMENODE -mkdir /findtest/item1</command>
++        <command>-fs NAMENODE -mkdir /findtest/item1/item1a</command>
++        <command>-fs NAMENODE -touchz /findtest/item1/item1a/item1aa</command>
++        <command>-fs NAMENODE -put CLITEST_DATA/data60bytes /findtest/item1/item1b</command>
++        <command>-fs NAMENODE -put CLITEST_DATA/data60bytes /findtest/item2</command>
++        <command>-fs NAMENODE -mkdir /findtest/item3</command>
++        <command>-fs NAMENODE -mkdir /findtest/item4</command>
++        <command>-fs NAMENODE -mkdir /findtest/item4/item4a</command>
++        <command>-fs NAMENODE -put CLITEST_DATA/data120bytes /findtest/item4/item4b</command>
++        <command>-fs NAMENODE -put CLITEST_DATA/data1k /findtest/item5</command>
++        <command>-fs NAMENODE -find /findtest -name item*a</command>
++      </test-commands>
++      <cleanup-commands>
++        <command>-fs NAMENODE -rm -r /findtest</command>
++      </cleanup-commands>
++      <comparators>
++        <comparator>
++          <type>RegexpAcrossOutputComparator</type>
++          <expected-output>^/findtest/item1/item1a
++/findtest/item1/item1a/item1aa
++/findtest/item4/item4a
++$</expected-output>
++        </comparator>
++      </comparators>
++    </test>
++    <test> <!-- TESTED -->
++      <description>find: -iname </description>
++      <test-commands>
++        <command>-fs NAMENODE -mkdir /findtest</command>
++        <command>-fs NAMENODE -mkdir /findtest/item1</command>
++        <command>-fs NAMENODE -mkdir /findtest/item1/item1a</command>
++        <command>-fs NAMENODE -touchz /findtest/item1/item1a/item1aa</command>
++        <command>-fs NAMENODE -put CLITEST_DATA/data60bytes /findtest/item1/item1b</command>
++        <command>-fs NAMENODE -put CLITEST_DATA/data60bytes /findtest/item2</command>
++        <command>-fs NAMENODE -mkdir /findtest/item3</command>
++        <command>-fs NAMENODE -mkdir /findtest/item4</command>
++        <command>-fs NAMENODE -mkdir /findtest/item4/item4a</command>
++        <command>-fs NAMENODE -put CLITEST_DATA/data120bytes /findtest/item4/item4b</command>
++        <command>-fs NAMENODE -put CLITEST_DATA/data1k /findtest/item5</command>
++        <command>-fs NAMENODE -find /findtest -iname ITEM*a</command>
++      </test-commands>
++      <cleanup-commands>
++        <command>-fs NAMENODE -rm -r /findtest</command>
++      </cleanup-commands>
++      <comparators>
++        <comparator>
++          <type>RegexpAcrossOutputComparator</type>
++          <expected-output>^/findtest/item1/item1a
++/findtest/item1/item1a/item1aa
++/findtest/item4/item4a
++$</expected-output>
++        </comparator>
++      </comparators>
++    </test>
+   </tests>
+ </configuration>
+-- 
+1.7.9.5
+

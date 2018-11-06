@@ -1,0 +1,60 @@
+From 7223cc10d73cacba1f47be215d92100894e4cce6 Mon Sep 17 00:00:00 2001
+From: Andrew Wang <wang@apache.org>
+Date: Thu, 27 Aug 2015 10:17:00 -0700
+Subject: [PATCH 0726/1023] HADOOP-12362. Set hadoop.tmp.dir and
+ hadoop.log.dir in pom. Contributed by Charlie
+ Helin.
+
+(cherry picked from commit 90fe7bcc3b30f8497d7a5124c91c5aea28f2fccb)
+
+Change-Id: I2c6c10a4b4c87ae34e5c372791ba9da8b2b5f4ab
+---
+ hadoop-project/pom.xml                             |    4 ++--
+ .../hadoop-yarn/hadoop-yarn-registry/pom.xml       |    4 ++--
+ 2 files changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/hadoop-project/pom.xml b/hadoop-project/pom.xml
+index f78b517..43d049a 100644
+--- a/hadoop-project/pom.xml
++++ b/hadoop-project/pom.xml
+@@ -1143,14 +1143,14 @@
+           </environmentVariables>
+           <systemPropertyVariables>
+ 
++            <hadoop.log.dir>${project.build.directory}/log</hadoop.log.dir>
++            <hadoop.tmp.dir>${project.build.directory}/tmp</hadoop.tmp.dir>
+ 
+             <!-- TODO: all references in testcases should be updated to this default -->
+             <test.build.dir>${test.build.dir}</test.build.dir>
+-            <hadoop.tmp.dir>${hadoop.tmp.dir}</hadoop.tmp.dir>
+             <test.build.data>${test.build.data}</test.build.data>
+             <test.build.webapps>${test.build.webapps}</test.build.webapps>
+             <test.cache.data>${test.cache.data}</test.cache.data>
+-            <hadoop.log.dir>${hadoop.log.dir}</hadoop.log.dir>
+             <test.build.classes>${test.build.classes}</test.build.classes>
+ 
+             <java.net.preferIPv4Stack>true</java.net.preferIPv4Stack>
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-registry/pom.xml b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-registry/pom.xml
+index 4e5a9e0..df5194a 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-registry/pom.xml
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-registry/pom.xml
+@@ -187,14 +187,14 @@
+         </environmentVariables>
+         <systemPropertyVariables>
+ 
++          <hadoop.log.dir>${project.build.directory}/log</hadoop.log.dir>
++          <hadoop.tmp.dir>${project.build.directory}/tmp</hadoop.tmp.dir>
+ 
+           <!-- TODO: all references in testcases should be updated to this default -->
+           <test.build.dir>${test.build.dir}</test.build.dir>
+-          <hadoop.tmp.dir>${hadoop.tmp.dir}</hadoop.tmp.dir>
+           <test.build.data>${test.build.data}</test.build.data>
+           <test.build.webapps>${test.build.webapps}</test.build.webapps>
+           <test.cache.data>${test.cache.data}</test.cache.data>
+-          <hadoop.log.dir>${hadoop.log.dir}</hadoop.log.dir>
+           <test.build.classes>${test.build.classes}</test.build.classes>
+ 
+           <java.net.preferIPv4Stack>true</java.net.preferIPv4Stack>
+-- 
+1.7.9.5
+

@@ -1,0 +1,36 @@
+From e25021920ebd27590578c3060144cd4a5351a965 Mon Sep 17 00:00:00 2001
+From: Tsuyoshi Ozawa <ozawa@apache.org>
+Date: Mon, 6 Apr 2015 20:13:21 +0900
+Subject: [PATCH 0738/1023] YARN-2666.
+ TestFairScheduler.testContinuousScheduling fails
+ Intermittently. Contributed by Zhihai Xu.
+
+(cherry picked from commit 53959e69f7ef4442324627fbfb159012968a2092)
+
+Change-Id: I2c0191edc2c932faad2eabaf6b5bad3f4c7d71c6
+---
+ .../scheduler/fair/TestFairScheduler.java          |    7 ++-----
+ 1 file changed, 2 insertions(+), 5 deletions(-)
+
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/TestFairScheduler.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/TestFairScheduler.java
+index bcfb5c5..8905754 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/TestFairScheduler.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/TestFairScheduler.java
+@@ -4031,12 +4031,9 @@ public void testContinuousScheduling() throws Exception {
+             createResourceRequest(1024, 1, ResourceRequest.ANY, 2, 1, true);
+     ask.clear();
+     ask.add(request);
++    scheduler.stop();
+     scheduler.allocate(appAttemptId, ask, new ArrayList<ContainerId>(), null, null);
+-
+-    // Wait until app gets resources
+-    while (app.getCurrentConsumption()
+-            .equals(Resources.createResource(1024, 1))) { }
+-
++    scheduler.continuousSchedulingAttempt();
+     Assert.assertEquals(2048, app.getCurrentConsumption().getMemory());
+     Assert.assertEquals(2, app.getCurrentConsumption().getVirtualCores());
+ 
+-- 
+1.7.9.5
+

@@ -1,0 +1,166 @@
+From 669a5005e05f9a23beb2c815e65be842df0c6c54 Mon Sep 17 00:00:00 2001
+From: Robert Kanter <rkanter@apache.org>
+Date: Wed, 9 Dec 2015 14:32:20 -0800
+Subject: [PATCH 1002/1023] HADOOP-12625. Add a config to disable the /logs
+ endpoints (rkanter)
+
+(cherry picked from commit e27fffdb9036d9ed9759d59b964020423b982e22)
+(cherry picked from commit 8dfaa7ded639b49dea13836e5240bbe4f0113cbb)
+
+Conflicts:
+	hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/CommonConfigurationKeysPublic.java
+	hadoop-common-project/hadoop-common/src/main/resources/core-default.xml
+
+Change-Id: I5616062e267b015a0dcd290623d4ebd92b403b7c
+(cherry picked from commit ee19325e2ca554d162b248667baab43f66cb33f1)
+---
+ .../hadoop/fs/CommonConfigurationKeysPublic.java   |    6 ++
+ .../java/org/apache/hadoop/http/HttpServer2.java   |    8 +-
+ .../src/main/resources/core-default.xml            |    9 +++
+ .../org/apache/hadoop/http/TestHttpServerLogs.java |   80 ++++++++++++++++++++
+ 4 files changed, 101 insertions(+), 2 deletions(-)
+ create mode 100644 hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/http/TestHttpServerLogs.java
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/CommonConfigurationKeysPublic.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/CommonConfigurationKeysPublic.java
+index 01a732b..590b63d 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/CommonConfigurationKeysPublic.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/CommonConfigurationKeysPublic.java
+@@ -374,5 +374,11 @@
+   // CLOUDERA-BUILD: enable the shell warnings by default.
+   public static final boolean HADOOP_SHELL_MISSING_DEFAULT_FS_WARNING_DEFAULT =
+       true;
++
++  /** See <a href="{@docRoot}/../core-default.html">core-default.xml</a> */
++  public static final String HADOOP_HTTP_LOGS_ENABLED =
++      "hadoop.http.logs.enabled";
++  /** Defalt value for HADOOP_HTTP_LOGS_ENABLED */
++  public static final boolean HADOOP_HTTP_LOGS_ENABLED_DEFAULT = true;
+ }
+ 
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/http/HttpServer2.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/http/HttpServer2.java
+index 259fe8a..05c37c5 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/http/HttpServer2.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/http/HttpServer2.java
+@@ -568,9 +568,13 @@ public static Connector createDefaultChannelConnector() {
+    */
+   protected void addDefaultApps(ContextHandlerCollection parent,
+       final String appDir, Configuration conf) throws IOException {
+-    // set up the context for "/logs/" if "hadoop.log.dir" property is defined.
++    // set up the context for "/logs/" if "hadoop.log.dir" property is defined
++    // and it's enabled.
+     String logDir = System.getProperty("hadoop.log.dir");
+-    if (logDir != null) {
++    boolean logsEnabled = conf.getBoolean(
++        CommonConfigurationKeys.HADOOP_HTTP_LOGS_ENABLED,
++        CommonConfigurationKeys.HADOOP_HTTP_LOGS_ENABLED_DEFAULT);
++    if (logDir != null && logsEnabled) {
+       Context logContext = new Context(parent, "/logs");
+       logContext.setResourceBase(logDir);
+       logContext.addServlet(AdminAuthorizedServlet.class, "/*");
+diff --git a/hadoop-common-project/hadoop-common/src/main/resources/core-default.xml b/hadoop-common-project/hadoop-common/src/main/resources/core-default.xml
+index f2561db..a9888cb 100644
+--- a/hadoop-common-project/hadoop-common/src/main/resources/core-default.xml
++++ b/hadoop-common-project/hadoop-common/src/main/resources/core-default.xml
+@@ -1784,4 +1784,13 @@ for ldap providers in the same way as above does.
+   </description>
+ </property>
+ 
++  <property>
++    <description>
++      Enable the "/logs" endpoint on all Hadoop daemons, which serves local
++      logs, but may be considered a security risk due to it listing the contents
++      of a directory.
++    </description>
++    <name>hadoop.http.logs.enabled</name>
++    <value>true</value>
++  </property>
+ </configuration>
+diff --git a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/http/TestHttpServerLogs.java b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/http/TestHttpServerLogs.java
+new file mode 100644
+index 0000000..46ea095
+--- /dev/null
++++ b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/http/TestHttpServerLogs.java
+@@ -0,0 +1,80 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.apache.hadoop.http;
++
++import org.apache.commons.httpclient.HttpStatus;
++import org.apache.commons.logging.Log;
++import org.apache.commons.logging.LogFactory;
++import org.apache.hadoop.conf.Configuration;
++import org.apache.hadoop.fs.CommonConfigurationKeysPublic;
++import org.apache.hadoop.http.resource.JerseyResource;
++import org.apache.hadoop.net.NetUtils;
++import org.junit.AfterClass;
++import org.junit.BeforeClass;
++import org.junit.Test;
++
++import java.net.HttpURLConnection;
++import java.net.URL;
++
++public class TestHttpServerLogs extends HttpServerFunctionalTest {
++  static final Log LOG = LogFactory.getLog(TestHttpServerLogs.class);
++  private static HttpServer2 server;
++
++  @BeforeClass
++  public static void setup() throws Exception {
++  }
++
++  private void startServer(Configuration conf) throws Exception {
++    server = createTestServer(conf);
++    server.addJerseyResourcePackage(
++        JerseyResource.class.getPackage().getName(), "/jersey/*");
++    server.start();
++    baseUrl = getServerURL(server);
++    LOG.info("HTTP server started: "+ baseUrl);
++  }
++
++  @AfterClass
++  public static void cleanup() throws Exception {
++    if (server != null && server.isAlive()) {
++      server.stop();
++    }
++  }
++
++  @Test
++  public void testLogsEnabled() throws Exception {
++    Configuration conf = new Configuration();
++    conf.setBoolean(
++        CommonConfigurationKeysPublic.HADOOP_HTTP_LOGS_ENABLED, true);
++    startServer(conf);
++    URL url = new URL("http://"
++        + NetUtils.getHostPortString(server.getConnectorAddress(0)) + "/logs");
++    HttpURLConnection conn = (HttpURLConnection)url.openConnection();
++    assertEquals(HttpStatus.SC_OK, conn.getResponseCode());
++  }
++
++  @Test
++  public void testLogsDisabled() throws Exception {
++    Configuration conf = new Configuration();
++    conf.setBoolean(
++        CommonConfigurationKeysPublic.HADOOP_HTTP_LOGS_ENABLED, false);
++    startServer(conf);
++    URL url = new URL(baseUrl + "/logs");
++    HttpURLConnection conn = (HttpURLConnection)url.openConnection();
++    assertEquals(HttpStatus.SC_NOT_FOUND, conn.getResponseCode());
++  }
++}
+-- 
+1.7.9.5
+

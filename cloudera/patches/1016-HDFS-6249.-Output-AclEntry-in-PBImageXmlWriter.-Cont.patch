@@ -1,0 +1,140 @@
+From adfe238585699179044fd3ef32145d3cf5da93a8 Mon Sep 17 00:00:00 2001
+From: Akira Ajisaka <aajisaka@apache.org>
+Date: Wed, 17 Jun 2015 17:41:10 -0700
+Subject: [PATCH 1016/1023] HDFS-6249. Output AclEntry in PBImageXmlWriter.
+ Contributed by surendra singh lilhore.
+
+(cherry picked from commit cc432885adb0182c2c5b3bf92edde12231fd567c)
+(cherry picked from commit 998027652f75f1a423d48b14062a17eb1f7fcf2b)
+
+Change-Id: I5cd18992e7ff8cd700f4cd9b1f4cfea5e12df780
+---
+ .../tools/offlineImageViewer/PBImageXmlWriter.java |   20 +++++++++++++---
+ .../TestOfflineImageViewerForAcl.java              |   25 ++++++++++++++++++++
+ 2 files changed, 42 insertions(+), 3 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/tools/offlineImageViewer/PBImageXmlWriter.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/tools/offlineImageViewer/PBImageXmlWriter.java
+index 3e3f021..7db35f0 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/tools/offlineImageViewer/PBImageXmlWriter.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/tools/offlineImageViewer/PBImageXmlWriter.java
+@@ -29,6 +29,7 @@
+ 
+ import org.apache.hadoop.classification.InterfaceAudience;
+ import org.apache.hadoop.conf.Configuration;
++import org.apache.hadoop.fs.permission.AclEntry;
+ import org.apache.hadoop.hdfs.protocol.proto.ClientNamenodeProtocolProtos.CacheDirectiveInfoExpirationProto;
+ import org.apache.hadoop.hdfs.protocol.proto.ClientNamenodeProtocolProtos.CacheDirectiveInfoProto;
+ import org.apache.hadoop.hdfs.protocol.proto.ClientNamenodeProtocolProtos.CachePoolInfoProto;
+@@ -41,6 +42,7 @@
+ import org.apache.hadoop.hdfs.server.namenode.FsImageProto.FilesUnderConstructionSection.FileUnderConstructionEntry;
+ import org.apache.hadoop.hdfs.server.namenode.FsImageProto.INodeDirectorySection;
+ import org.apache.hadoop.hdfs.server.namenode.FsImageProto.INodeSection;
++import org.apache.hadoop.hdfs.server.namenode.FsImageProto.INodeSection.AclFeatureProto;
+ import org.apache.hadoop.hdfs.server.namenode.FsImageProto.INodeSection.INodeDirectory;
+ import org.apache.hadoop.hdfs.server.namenode.FsImageProto.INodeSection.INodeSymlink;
+ import org.apache.hadoop.hdfs.server.namenode.FsImageProto.INodeReferenceSection;
+@@ -52,7 +54,7 @@
+ import org.apache.hadoop.hdfs.util.XMLUtils;
+ import org.apache.hadoop.io.IOUtils;
+ import org.apache.hadoop.util.LimitInputStream;
+-
++import com.google.common.collect.ImmutableList;
+ import com.google.common.collect.Lists;
+ 
+ /**
+@@ -193,7 +195,7 @@ private void dumpFileUnderConstructionSection(InputStream in)
+   private void dumpINodeDirectory(INodeDirectory d) {
+     o("mtime", d.getModificationTime()).o("permission",
+         dumpPermission(d.getPermission()));
+-
++    dumpAcls(d.getAcl());
+     if (d.hasDsQuota() && d.hasNsQuota()) {
+       o("nsquota", d.getNsQuota()).o("dsquota", d.getDsQuota());
+     }
+@@ -247,7 +249,7 @@ private void dumpINodeFile(INodeSection.INodeFile f) {
+         .o("atime", f.getAccessTime())
+         .o("perferredBlockSize", f.getPreferredBlockSize())
+         .o("permission", dumpPermission(f.getPermission()));
+-
++    dumpAcls(f.getAcl());
+     if (f.getBlocksCount() > 0) {
+       out.print("<blocks>");
+       for (BlockProto b : f.getBlocksList()) {
+@@ -268,6 +270,18 @@ private void dumpINodeFile(INodeSection.INodeFile f) {
+     }
+   }
+ 
++  private void dumpAcls(AclFeatureProto aclFeatureProto) {
++    ImmutableList<AclEntry> aclEntryList = FSImageFormatPBINode.Loader
++        .loadAclEntries(aclFeatureProto, stringTable);
++    if (aclEntryList.size() > 0) {
++      out.print("<acls>");
++      for (AclEntry aclEntry : aclEntryList) {
++        o("acl", aclEntry.toString());
++      }
++      out.print("</acls>");
++    }
++  }
++
+   private void dumpINodeSection(InputStream in) throws IOException {
+     INodeSection s = INodeSection.parseDelimitedFrom(in);
+     out.print("<INodeSection>");
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/tools/offlineImageViewer/TestOfflineImageViewerForAcl.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/tools/offlineImageViewer/TestOfflineImageViewerForAcl.java
+index 56963a6..bb7e191 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/tools/offlineImageViewer/TestOfflineImageViewerForAcl.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/tools/offlineImageViewer/TestOfflineImageViewerForAcl.java
+@@ -17,14 +17,24 @@
+  */
+ package org.apache.hadoop.hdfs.tools.offlineImageViewer;
+ 
++import java.io.ByteArrayOutputStream;
+ import java.io.File;
++import java.io.FileNotFoundException;
+ import java.io.IOException;
++import java.io.PrintStream;
++import java.io.PrintWriter;
++import java.io.RandomAccessFile;
++import java.io.StringReader;
+ import java.net.HttpURLConnection;
+ import java.net.URI;
+ import java.net.URISyntaxException;
+ import java.net.URL;
+ import java.util.HashMap;
+ 
++import javax.xml.parsers.ParserConfigurationException;
++import javax.xml.parsers.SAXParser;
++import javax.xml.parsers.SAXParserFactory;
++
+ import org.apache.commons.logging.Log;
+ import org.apache.commons.logging.LogFactory;
+ import org.apache.hadoop.conf.Configuration;
+@@ -42,6 +52,9 @@
+ import org.junit.AfterClass;
+ import org.junit.BeforeClass;
+ import org.junit.Test;
++import org.xml.sax.InputSource;
++import org.xml.sax.SAXException;
++import org.xml.sax.helpers.DefaultHandler;
+ 
+ import static org.apache.hadoop.fs.permission.AclEntryScope.ACCESS;
+ import static org.apache.hadoop.fs.permission.AclEntryScope.DEFAULT;
+@@ -202,4 +215,16 @@ public void testWebImageViewerForAcl() throws Exception {
+       viewer.close();
+     }
+   }
++
++  @Test
++  public void testPBImageXmlWriterForAcl() throws Exception{
++    ByteArrayOutputStream output = new ByteArrayOutputStream();
++    PrintWriter o = new PrintWriter(output);
++    PBImageXmlWriter v = new PBImageXmlWriter(new Configuration(), o);
++    v.visit(new RandomAccessFile(originalFsimage, "r"));
++    SAXParserFactory spf = SAXParserFactory.newInstance();
++    SAXParser parser = spf.newSAXParser();
++    final String xml = output.toString();
++    parser.parse(new InputSource(new StringReader(xml)), new DefaultHandler());
++  }
+ }
+-- 
+1.7.9.5
+

@@ -1,0 +1,209 @@
+From c57f734692a7131e6b1f2d3ba09da2eb50bb2eb2 Mon Sep 17 00:00:00 2001
+From: Colin Patrick Mccabe <cmccabe@cloudera.com>
+Date: Thu, 9 Apr 2015 11:28:02 -0700
+Subject: [PATCH 0645/1023] HDFS-8063: Fix intermittent test failures in
+ TestTracing (Masatake Iwasaki via Colin P.
+ McCabe)
+
+(cherry picked from commit 61dc2ea3fee4085b19cd2d01de9eacdc4c42e21f)
+(cherry picked from commit 8dac245920f41709dd6343873682f172fdbeb0a1)
+---
+ .../org/apache/hadoop/tracing/TestTracing.java     |  125 +++++++-------------
+ 1 file changed, 42 insertions(+), 83 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracing.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracing.java
+index 01361b5..f6fef5a 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracing.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracing.java
+@@ -31,7 +31,7 @@
+ import org.apache.htrace.SpanReceiver;
+ import org.apache.htrace.Trace;
+ import org.apache.htrace.TraceScope;
+-import org.junit.AfterClass;
++import org.junit.After;
+ import org.junit.Assert;
+ import org.junit.Before;
+ import org.junit.BeforeClass;
+@@ -56,27 +56,26 @@
+   private static SpanReceiverHost spanReceiverHost;
+ 
+   @Test
+-  public void testGetSpanReceiverHost() throws Exception {
+-    Configuration c = new Configuration();
++  public void testTracing() throws Exception {
+     // getting instance already loaded.
+-    c.set(SpanReceiverHost.SPAN_RECEIVERS_CONF_KEY, "");
+-    SpanReceiverHost s = SpanReceiverHost.getInstance(c);
+-    Assert.assertEquals(spanReceiverHost, s);
++    Assert.assertEquals(spanReceiverHost,
++        SpanReceiverHost.getInstance(new Configuration()));
++
++    // write and read without tracing started
++    String fileName = "testTracingDisabled.dat";
++    writeTestFile(fileName);
++    Assert.assertTrue(SetSpanReceiver.SetHolder.size() == 0);
++    readTestFile(fileName);
++    Assert.assertTrue(SetSpanReceiver.SetHolder.size() == 0);
++
++    writeWithTracing();
++    readWithTracing();
+   }
+ 
+-  @Test
+-  public void testWriteTraceHooks() throws Exception {
++  public void writeWithTracing() throws Exception {
+     long startTime = System.currentTimeMillis();
+     TraceScope ts = Trace.startSpan("testWriteTraceHooks", Sampler.ALWAYS);
+-    Path file = new Path("traceWriteTest.dat");
+-    FSDataOutputStream stream = dfs.create(file);
+-
+-    for (int i = 0; i < 10; i++) {
+-      byte[] data = RandomStringUtils.randomAlphabetic(102400).getBytes();
+-      stream.write(data);
+-    }
+-    stream.hflush();
+-    stream.close();
++    writeTestFile("testWriteTraceHooks.dat");
+     long endTime = System.currentTimeMillis();
+     ts.close();
+ 
+@@ -125,55 +124,17 @@ public void testWriteTraceHooks() throws Exception {
+         Assert.assertEquals(ts.getSpan().getTraceId(), span.getTraceId());
+       }
+     }
++    SetSpanReceiver.SetHolder.spans.clear();
+   }
+ 
+-  @Test
+-  public void testWriteWithoutTraceHooks() throws Exception {
+-    Path file = new Path("withoutTraceWriteTest.dat");
+-    FSDataOutputStream stream = dfs.create(file);
+-    for (int i = 0; i < 10; i++) {
+-      byte[] data = RandomStringUtils.randomAlphabetic(102400).getBytes();
+-      stream.write(data);
+-    }
+-    stream.hflush();
+-    stream.close();
+-    Assert.assertTrue(SetSpanReceiver.SetHolder.size() == 0);
+-  }
+-
+-  @Test
+-  public void testReadTraceHooks() throws Exception {
+-    String fileName = "traceReadTest.dat";
+-    Path filePath = new Path(fileName);
+-
+-    // Create the file.
+-    FSDataOutputStream ostream = dfs.create(filePath);
+-    for (int i = 0; i < 50; i++) {
+-      byte[] data = RandomStringUtils.randomAlphabetic(10240).getBytes();
+-      ostream.write(data);
+-    }
+-    ostream.close();
+-
+-
++  public void readWithTracing() throws Exception {
++    String fileName = "testReadTraceHooks.dat";
++    writeTestFile(fileName);
+     long startTime = System.currentTimeMillis();
+     TraceScope ts = Trace.startSpan("testReadTraceHooks", Sampler.ALWAYS);
+-    FSDataInputStream istream = dfs.open(filePath, 10240);
+-    ByteBuffer buf = ByteBuffer.allocate(10240);
+-
+-    int count = 0;
+-    try {
+-      while (istream.read(buf) > 0) {
+-        count += 1;
+-        buf.clear();
+-        istream.seek(istream.getPos() + 5);
+-      }
+-    } catch (IOException ioe) {
+-      // Ignore this it's probably a seek after eof.
+-    } finally {
+-      istream.close();
+-    }
+-    ts.getSpan().addTimelineAnnotation("count: " + count);
+-    long endTime = System.currentTimeMillis();
++    readTestFile(fileName);
+     ts.close();
++    long endTime = System.currentTimeMillis();
+ 
+     String[] expectedSpanNames = {
+       "testReadTraceHooks",
+@@ -198,21 +159,22 @@ public void testReadTraceHooks() throws Exception {
+     for (Span span : SetSpanReceiver.SetHolder.spans.values()) {
+       Assert.assertEquals(ts.getSpan().getTraceId(), span.getTraceId());
+     }
++    SetSpanReceiver.SetHolder.spans.clear();
+   }
+ 
+-  @Test
+-  public void testReadWithoutTraceHooks() throws Exception {
+-    String fileName = "withoutTraceReadTest.dat";
+-    Path filePath = new Path(fileName);
+-
+-    // Create the file.
+-    FSDataOutputStream ostream = dfs.create(filePath);
+-    for (int i = 0; i < 50; i++) {
+-      byte[] data = RandomStringUtils.randomAlphabetic(10240).getBytes();
+-      ostream.write(data);
++  private void writeTestFile(String testFileName) throws Exception {
++    Path filePath = new Path(testFileName);
++    FSDataOutputStream stream = dfs.create(filePath);
++    for (int i = 0; i < 10; i++) {
++      byte[] data = RandomStringUtils.randomAlphabetic(102400).getBytes();
++      stream.write(data);
+     }
+-    ostream.close();
++    stream.hsync();
++    stream.close();
++  }
+ 
++  private void readTestFile(String testFileName) throws Exception {
++    Path filePath = new Path(testFileName);
+     FSDataInputStream istream = dfs.open(filePath, 10240);
+     ByteBuffer buf = ByteBuffer.allocate(10240);
+ 
+@@ -228,32 +190,29 @@ public void testReadWithoutTraceHooks() throws Exception {
+     } finally {
+       istream.close();
+     }
+-    Assert.assertTrue(SetSpanReceiver.SetHolder.size() == 0);
+-  }
+-
+-  @Before
+-  public void cleanSet() {
+-    SetSpanReceiver.SetHolder.spans.clear();
+   }
+ 
+   @BeforeClass
+-  public static void setupCluster() throws IOException {
++  public static void setup() throws IOException {
+     conf = new Configuration();
+     conf.setLong("dfs.blocksize", 100 * 1024);
+     conf.set(SpanReceiverHost.SPAN_RECEIVERS_CONF_KEY,
+         SetSpanReceiver.class.getName());
++    spanReceiverHost = SpanReceiverHost.getInstance(conf);
++  }
+ 
++  @Before
++  public void startCluster() throws IOException {
+     cluster = new MiniDFSCluster.Builder(conf)
+         .numDataNodes(3)
+         .build();
+     cluster.waitActive();
+-
+     dfs = cluster.getFileSystem();
+-    spanReceiverHost = SpanReceiverHost.getInstance(conf);
++    SetSpanReceiver.SetHolder.spans.clear();
+   }
+ 
+-  @AfterClass
+-  public static void shutDown() throws IOException {
++  @After
++  public void shutDown() throws IOException {
+     cluster.shutdown();
+   }
+ 
+-- 
+1.7.9.5
+

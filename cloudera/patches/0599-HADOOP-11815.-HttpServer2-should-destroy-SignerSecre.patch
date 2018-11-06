@@ -1,0 +1,45 @@
+From ab62d568f14e857cff11e86fc68b678a3f3ec551 Mon Sep 17 00:00:00 2001
+From: Haohui Mai <wheat9@apache.org>
+Date: Thu, 9 Apr 2015 10:58:12 -0700
+Subject: [PATCH 0599/1023] HADOOP-11815. HttpServer2 should destroy
+ SignerSecretProvider when it stops. Contributed
+ by Rohith.
+
+(cherry picked from commit f753e2043bd1fc7bfa17b40196eed14ffe075cff)
+---
+ .../java/org/apache/hadoop/http/HttpServer2.java   |    5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/http/HttpServer2.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/http/HttpServer2.java
+index 7acc1cc..9ecacf8 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/http/HttpServer2.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/http/HttpServer2.java
+@@ -152,6 +152,7 @@ private ListenerInfo(boolean isManaged, Connector listener) {
+   protected final List<String> filterNames = new ArrayList<String>();
+   static final String STATE_DESCRIPTION_ALIVE = " - alive";
+   static final String STATE_DESCRIPTION_NOT_LIVE = " - not live";
++  private final SignerSecretProvider secretProvider;
+ 
+   /**
+    * Class to construct instances of HTTP server with specific options.
+@@ -363,7 +364,7 @@ private HttpServer2(final Builder b) throws IOException {
+     this.adminsAcl = b.adminsAcl;
+     this.webAppContext = createWebAppContext(b.name, b.conf, adminsAcl, appDir);
+     try {
+-      SignerSecretProvider secretProvider =
++      this.secretProvider =
+           constructSecretProvider(b, webAppContext.getServletContext());
+       this.webAppContext.getServletContext().setAttribute
+           (AuthenticationFilter.SIGNER_SECRET_PROVIDER_ATTRIBUTE,
+@@ -974,6 +975,8 @@ public void stop() throws Exception {
+     }
+ 
+     try {
++      // explicitly destroy the secrete provider
++      secretProvider.destroy();
+       // clear & stop webAppContext attributes to avoid memory leaks.
+       webAppContext.clearAttributes();
+       webAppContext.stop();
+-- 
+1.7.9.5
+

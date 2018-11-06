@@ -1,0 +1,135 @@
+From dcae3fddfefd204298f42bf404a2d4dedc8992cf Mon Sep 17 00:00:00 2001
+From: Zhe Zhang <zhz@apache.org>
+Date: Tue, 10 Nov 2015 09:55:29 -0800
+Subject: [PATCH 0947/1023] HDFS-9364. Unnecessary DNS resolution attempts
+ when creating NameNodeProxies. Contributed by
+ Xiao Chen.
+
+(cherry picked from commit 73b94d789969354bb9a6872d99976763ca8470d7)
+
+Changes to be committed:
+	modified:   hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/NameNodeProxies.java
+	modified:   hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNode.java
+	modified:   hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDFSClientFailover.java
+
+Change-Id: I9e42f724f27924cf73891425a832de37ce014a1e
+---
+ .../org/apache/hadoop/hdfs/NameNodeProxies.java    |    2 +-
+ .../hadoop/hdfs/server/namenode/NameNode.java      |   22 +++++++++++-
+ .../apache/hadoop/hdfs/TestDFSClientFailover.java  |   36 ++++++++++++++++++++
+ 3 files changed, 58 insertions(+), 2 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/NameNodeProxies.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/NameNodeProxies.java
+index c7e2cf2..d535de0 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/NameNodeProxies.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/NameNodeProxies.java
+@@ -193,7 +193,7 @@ public InetSocketAddress getAddress() {
+             NameNode.getAddress(nameNodeUri));
+       }
+       return new ProxyAndInfo<T>(proxy, dtService,
+-          NameNode.getAddress(nameNodeUri));
++          NameNode.getAddressCheckLogical(conf, nameNodeUri));
+     }
+   }
+   
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNode.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNode.java
+index bac5fa3..36c3214 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNode.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNode.java
+@@ -463,7 +463,7 @@ public static InetSocketAddress getServiceAddress(Configuration conf,
+ 
+   public static InetSocketAddress getAddress(Configuration conf) {
+     URI filesystemURI = FileSystem.getDefaultUri(conf);
+-    return getAddress(filesystemURI);
++    return getAddressCheckLogical(conf, filesystemURI);
+   }
+ 
+ 
+@@ -487,6 +487,26 @@ public static InetSocketAddress getAddress(URI filesystemURI) {
+     return getAddress(authority);
+   }
+ 
++  /**
++   * Get the NN address from the URI. If the uri is logical, default address is
++   * returned. Otherwise return the DNS-resolved address of the URI.
++   *
++   * @param conf configuration
++   * @param filesystemURI URI of the file system
++   * @return address of file system
++   */
++  public static InetSocketAddress getAddressCheckLogical(Configuration conf,
++      URI filesystemURI) {
++    InetSocketAddress retAddr;
++    if (HAUtil.isLogicalUri(conf, filesystemURI)) {
++      retAddr = InetSocketAddress.createUnresolved(filesystemURI.getAuthority(),
++          DEFAULT_PORT);
++    } else {
++      retAddr = getAddress(filesystemURI);
++    }
++    return retAddr;
++  }
++
+   public static URI getUri(InetSocketAddress namenode) {
+     int port = namenode.getPort();
+     String portString = port == DEFAULT_PORT ? "" : (":"+port);
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDFSClientFailover.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDFSClientFailover.java
+index 5f136a9..b5f76ee 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDFSClientFailover.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDFSClientFailover.java
+@@ -43,10 +43,12 @@
+ import org.apache.hadoop.fs.FileSystem;
+ import org.apache.hadoop.fs.Path;
+ import org.apache.hadoop.hdfs.HAUtil;
++import org.apache.hadoop.hdfs.protocol.ClientProtocol;
+ import org.apache.hadoop.hdfs.server.namenode.NameNode;
+ import org.apache.hadoop.hdfs.server.namenode.ha.ConfiguredFailoverProxyProvider;
+ import org.apache.hadoop.hdfs.server.namenode.ha.IPFailoverProxyProvider;
+ import org.apache.hadoop.hdfs.server.namenode.ha.HATestUtil;
++import org.apache.hadoop.hdfs.server.protocol.NamenodeProtocol;
+ import org.apache.hadoop.io.IOUtils;
+ import org.apache.hadoop.io.retry.DefaultFailoverProxyProvider;
+ import org.apache.hadoop.io.retry.FailoverProxyProvider;
+@@ -290,6 +292,40 @@ public void testFileContextDoesntDnsResolveLogicalURI() throws Exception {
+     Mockito.verify(spyNS, Mockito.never()).lookupAllHostAddr(Mockito.eq(logicalHost));
+   }
+ 
++  /**
++   * Test that creating proxy doesn't ever try to DNS-resolve the logical URI.
++   * Regression test for HDFS-9364.
++   */
++  @Test(timeout=60000)
++  public void testCreateProxyDoesntDnsResolveLogicalURI() throws IOException {
++    final NameService spyNS = spyOnNameService();
++    final Configuration conf = new HdfsConfiguration();
++    final String service = "nameservice1";
++    final String namenode = "namenode113";
++    conf.set(DFSConfigKeys.DFS_NAMESERVICES, service);
++    conf.set(FileSystem.FS_DEFAULT_NAME_KEY, "hdfs://" + service);
++    conf.set(
++        DFSConfigKeys.DFS_CLIENT_FAILOVER_PROXY_PROVIDER_KEY_PREFIX + "." + service,
++        "org.apache.hadoop.hdfs.server.namenode.ha."
++            + "ConfiguredFailoverProxyProvider");
++    conf.set(DFSConfigKeys.DFS_HA_NAMENODES_KEY_PREFIX + "." + service,
++        namenode);
++    conf.set(DFSConfigKeys.DFS_NAMENODE_RPC_ADDRESS_KEY + "." + service + "."
++        + namenode, "localhost:8020");
++
++    // call createProxy implicitly and explicitly
++    Path p = new Path("/");
++    p.getFileSystem(conf);
++    NameNodeProxies.createProxy(conf, FileSystem.getDefaultUri(conf),
++        ClientProtocol.class, null);
++    NameNodeProxies.createProxy(conf, FileSystem.getDefaultUri(conf),
++        NamenodeProtocol.class, null);
++
++    // Ensure that the logical hostname was never resolved.
++    Mockito.verify(spyNS, Mockito.never()).lookupAllHostAddr(
++        Mockito.eq(service));
++  }
++
+   /** Dummy implementation of plain FailoverProxyProvider */
+   public static class DummyLegacyFailoverProxyProvider<T>
+       implements FailoverProxyProvider<T> {
+-- 
+1.7.9.5
+

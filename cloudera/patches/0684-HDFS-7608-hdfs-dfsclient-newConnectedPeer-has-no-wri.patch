@@ -1,0 +1,101 @@
+From c8562e7a141f0f02f899de3e61915502488be54d Mon Sep 17 00:00:00 2001
+From: Colin Patrick Mccabe <cmccabe@cloudera.com>
+Date: Tue, 14 Jul 2015 10:57:59 -0700
+Subject: [PATCH 0684/1023] HDFS-7608: hdfs dfsclient newConnectedPeer has no
+ write timeout (Xiaoyu Yao via Colin P. McCabe)
+
+(cherry picked from commit 1d74ccececaefffaa90c0c18b40a3645dbc819d9)
+(cherry picked from commit 471037883fb2ae297a76e8e551569236d3918a41)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSClient.java
+	hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDistributedFileSystem.java
+---
+ .../java/org/apache/hadoop/hdfs/DFSClient.java     |    1 +
+ .../hadoop/hdfs/TestDistributedFileSystem.java     |   43 +++++++++++++++++---
+ 2 files changed, 38 insertions(+), 6 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSClient.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSClient.java
+index 7e7c8fd..034de21 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSClient.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSClient.java
+@@ -3373,6 +3373,7 @@ public Peer newConnectedPeer(InetSocketAddress addr,
+       peer = TcpPeerServer.peerFromSocketAndKey(saslClient, sock, this,
+           blockToken, datanodeId);
+       peer.setReadTimeout(dfsClientConf.socketTimeout);
++      peer.setWriteTimeout(dfsClientConf.socketTimeout);
+       success = true;
+       return peer;
+     } finally {
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDistributedFileSystem.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDistributedFileSystem.java
+index 564c759..7c0a7d9 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDistributedFileSystem.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDistributedFileSystem.java
+@@ -996,10 +996,9 @@ public void testListFiles() throws IOException {
+       cluster.shutdown();
+     }
+   }
+-  
+-  
++
+   @Test(timeout=10000)
+-  public void testDFSClientPeerTimeout() throws IOException {
++  public void testDFSClientPeerReadTimeout() throws IOException {
+     final int timeout = 1000;
+     final Configuration conf = new HdfsConfiguration();
+     conf.setInt(DFSConfigKeys.DFS_CLIENT_SOCKET_TIMEOUT_KEY, timeout);
+@@ -1016,11 +1015,11 @@ public void testDFSClientPeerTimeout() throws IOException {
+       long start = Time.now();
+       try {
+         peer.getInputStream().read();
+-        Assert.fail("should timeout");
++        Assert.fail("read should timeout");
+       } catch (SocketTimeoutException ste) {
+         long delta = Time.now() - start;
+-        Assert.assertTrue("timedout too soon", delta >= timeout*0.9);
+-        Assert.assertTrue("timedout too late", delta <= timeout*1.1);
++        Assert.assertTrue("read timedout too soon", delta >= timeout*0.9);
++        Assert.assertTrue("read timedout too late", delta <= timeout*1.1);
+       } catch (Throwable t) {
+         Assert.fail("wrong exception:"+t);
+       }
+@@ -1028,4 +1027,36 @@ public void testDFSClientPeerTimeout() throws IOException {
+       cluster.shutdown();
+     }
+   }
++
++  @Test(timeout=10000)
++  public void testDFSClientPeerWriteTimeout() throws IOException {
++    final int timeout = 1000;
++    final Configuration conf = new HdfsConfiguration();
++    conf.setInt(DFSConfigKeys.DFS_CLIENT_SOCKET_TIMEOUT_KEY, timeout);
++
++    // only need cluster to create a dfs client to get a peer
++    final MiniDFSCluster cluster = new MiniDFSCluster.Builder(conf).build();
++    try {
++      cluster.waitActive();
++      DistributedFileSystem dfs = cluster.getFileSystem();
++      // Write 10 MB to a dummy socket to ensure the write times out
++      ServerSocket socket = new ServerSocket(0);
++      Peer peer = dfs.getClient().newConnectedPeer(
++        (InetSocketAddress) socket.getLocalSocketAddress(), null, null);
++      long start = Time.now();
++      try {
++        byte[] buf = new byte[10 * 1024 * 1024];
++        peer.getOutputStream().write(buf);
++        Assert.fail("write should timeout");
++      } catch (SocketTimeoutException ste) {
++        long delta = Time.now() - start;
++        Assert.assertTrue("write timedout too soon", delta >= timeout * 0.9);
++        Assert.assertTrue("write timedout too late", delta <= timeout * 1.1);
++      } catch (Throwable t) {
++        Assert.fail("wrong exception:" + t);
++      }
++    } finally {
++      cluster.shutdown();
++    }
++  }
+ }
+-- 
+1.7.9.5
+

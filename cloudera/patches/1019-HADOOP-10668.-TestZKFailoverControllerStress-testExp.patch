@@ -1,0 +1,50 @@
+From 64974c103c7e986febd1895e40e89bf8ec679b64 Mon Sep 17 00:00:00 2001
+From: cnauroth <cnauroth@apache.org>
+Date: Mon, 19 Jan 2015 11:28:30 -0800
+Subject: [PATCH 1019/1023] HADOOP-10668.
+ TestZKFailoverControllerStress#testExpireBackAndForth
+ occasionally fails. Contributed by Ming Ma.
+
+(cherry picked from commit 7fc1f2f5cf4312d72aeffb1a9cef497d00c60adb)
+(cherry picked from commit a70e2c15be29f861c3716e712233cd28a4751130)
+
+Change-Id: I2be0dc0e3c53e6e3f75a2b346b66acc8fc0a73be
+(cherry picked from commit 4e9788cafcbd21aab2d6d5b278d6b2c989b750e2)
+---
+ .../org/apache/hadoop/ha/ZKFailoverController.java |    4 +++-
+ .../java/org/apache/hadoop/ha/MiniZKFCCluster.java |    4 ++--
+ 2 files changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ha/ZKFailoverController.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ha/ZKFailoverController.java
+index 62fd76e..5d11707 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ha/ZKFailoverController.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ha/ZKFailoverController.java
+@@ -152,7 +152,9 @@ protected abstract void checkRpcAdminAccess()
+   public HAServiceTarget getLocalTarget() {
+     return localTarget;
+   }
+-  
++
++  HAServiceState getServiceState() { return serviceState; }
++
+   public int run(final String[] args) throws Exception {
+     if (!localTarget.isAutoFailoverEnabled()) {
+       LOG.fatal("Automatic failover is not enabled for " + localTarget + "." +
+diff --git a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/ha/MiniZKFCCluster.java b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/ha/MiniZKFCCluster.java
+index 1db7924..cab59a4 100644
+--- a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/ha/MiniZKFCCluster.java
++++ b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/ha/MiniZKFCCluster.java
+@@ -158,8 +158,8 @@ public void setUnreachable(int idx, boolean unreachable) {
+    */
+   public void waitForHAState(int idx, HAServiceState state)
+       throws Exception {
+-    DummyHAService svc = getService(idx);
+-    while (svc.state != state) {
++    DummyZKFC svc = getZkfc(idx);
++    while (svc.getServiceState() != state) {
+       ctx.checkException();
+       Thread.sleep(50);
+     }
+-- 
+1.7.9.5
+

@@ -1,0 +1,99 @@
+From 1d38153a0be61dbb04f639f16cd1145e9e911b92 Mon Sep 17 00:00:00 2001
+From: Lei Xu <lei@apache.org>
+Date: Wed, 4 Nov 2015 10:46:19 -0800
+Subject: [PATCH 0959/1023] HDFS-9363. Add fetchReplica to FsDatasetTestUtils
+ to return FsDataset-agnostic replica. (Tony Wu
+ via lei)
+
+(cherry picked from commit 4976a02841592b61f2d2b40d2aadd5146571322c)
+(cherry picked from commit 7a2a17cb5fe48e815cab7d288b80a2c7d17a40b1)
+
+Change-Id: I43517ee13e18de0a5cf4691ab87c5746946e9396
+---
+ .../java/org/apache/hadoop/hdfs/TestPipelines.java |    6 ++----
+ .../hdfs/server/datanode/FsDatasetTestUtils.java   |    7 +++++++
+ .../fsdataset/impl/FsDatasetImplTestUtils.java     |    5 +++++
+ .../fsdataset/impl/TestInterDatanodeProtocol.java  |    5 +++--
+ 4 files changed, 17 insertions(+), 6 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestPipelines.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestPipelines.java
+index a82f04f..382e546 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestPipelines.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestPipelines.java
+@@ -32,7 +32,6 @@
+ import org.apache.hadoop.hdfs.protocol.LocatedBlock;
+ import org.apache.hadoop.hdfs.server.common.HdfsServerConstants;
+ import org.apache.hadoop.hdfs.server.datanode.DataNode;
+-import org.apache.hadoop.hdfs.server.datanode.DataNodeTestUtils;
+ import org.apache.hadoop.hdfs.server.datanode.Replica;
+ import org.apache.hadoop.test.GenericTestUtils;
+ import org.apache.log4j.Level;
+@@ -101,10 +100,9 @@ public void pipeline_01() throws IOException {
+     List<LocatedBlock> lb = cluster.getNameNodeRpc().getBlockLocations(
+       filePath.toString(), FILE_SIZE - 1, FILE_SIZE).getLocatedBlocks();
+ 
+-    String bpid = cluster.getNamesystem().getBlockPoolId();
+     for (DataNode dn : cluster.getDataNodes()) {
+-      Replica r = DataNodeTestUtils.fetchReplicaInfo(dn, bpid, lb.get(0)
+-          .getBlock().getBlockId());
++      Replica r =
++          cluster.getFsDatasetTestUtils(dn).fetchReplica(lb.get(0).getBlock());
+ 
+       assertTrue("Replica on DN " + dn + " shouldn't be null", r != null);
+       assertEquals("Should be RBW replica on " + dn
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/FsDatasetTestUtils.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/FsDatasetTestUtils.java
+index 40c4438..02af467 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/FsDatasetTestUtils.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/FsDatasetTestUtils.java
+@@ -206,4 +206,11 @@ Replica createReplicaUnderRecovery(ExtendedBlock block, long recoveryId)
+    * @throws IOException on I/O error.
+    */
+   void injectCorruptReplica(ExtendedBlock block) throws IOException;
++
++  /**
++   * Get the replica of a block. Returns null if it does not exist.
++   * @param block the block whose replica will be returned.
++   * @return Replica for the block.
++   */
++  Replica fetchReplica(ExtendedBlock block);
+ }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetImplTestUtils.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetImplTestUtils.java
+index e8e4532..1ce6b11 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetImplTestUtils.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetImplTestUtils.java
+@@ -317,4 +317,9 @@ public void injectCorruptReplica(ExtendedBlock block) throws IOException {
+       }
+     }
+   }
++
++  @Override
++  public Replica fetchReplica(ExtendedBlock block) {
++    return dataset.fetchReplicaInfo(block.getBlockPoolId(), block.getBlockId());
++  }
+ }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/TestInterDatanodeProtocol.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/TestInterDatanodeProtocol.java
+index 3bea67f..1ed9a48 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/TestInterDatanodeProtocol.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/TestInterDatanodeProtocol.java
+@@ -46,6 +46,7 @@
+ import org.apache.hadoop.hdfs.server.datanode.DataNode;
+ import org.apache.hadoop.hdfs.server.datanode.DataNodeTestUtils;
+ import org.apache.hadoop.hdfs.server.datanode.FinalizedReplica;
++import org.apache.hadoop.hdfs.server.datanode.Replica;
+ import org.apache.hadoop.hdfs.server.datanode.ReplicaInfo;
+ import org.apache.hadoop.hdfs.server.datanode.ReplicaUnderRecovery;
+ import org.apache.hadoop.hdfs.server.datanode.fsdataset.FsDatasetSpi;
+@@ -353,8 +354,8 @@ public void testUpdateReplicaUnderRecovery() throws IOException {
+           new RecoveringBlock(b, null, recoveryid));
+ 
+       //check replica
+-      final ReplicaInfo replica = FsDatasetTestUtil.fetchReplicaInfo(
+-          fsdataset, bpid, b.getBlockId());
++      final Replica replica =
++          cluster.getFsDatasetTestUtils(datanode).fetchReplica(b);
+       Assert.assertEquals(ReplicaState.RUR, replica.getState());
+ 
+       //check meta data before update
+-- 
+1.7.9.5
+

@@ -1,0 +1,38 @@
+From 958ed8d48c187c233a1627dcdc47d40c3ff24925 Mon Sep 17 00:00:00 2001
+From: Vinayakumar B <vinayakumarb@apache.org>
+Date: Fri, 8 May 2015 11:25:24 +0530
+Subject: [PATCH 0821/1023] HDFS-6291. FSImage may be left unclosed in
+ BootstrapStandby#doRun() ( Contributed by
+ Sanghyun Yun)
+
+(cherry picked from commit e5e492a9631ff78302fccedcb64d7b64b9407991)
+(cherry picked from commit 089d420a824ced46b806d0e5156999f0abad66aa)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt
+
+Change-Id: I5a32ff71624009b2713f44e1d2c372a831913aa5
+(cherry picked from commit bb4cdf48b540842b37b08fb4cdbf51757da17f10)
+(cherry picked from commit 158c3f64c9c6b1d522333c5fbdda5f2c06c7e01d)
+---
+ .../hdfs/server/namenode/ha/BootstrapStandby.java  |    3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/ha/BootstrapStandby.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/ha/BootstrapStandby.java
+index 4bd53a5..24d3ede 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/ha/BootstrapStandby.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/ha/BootstrapStandby.java
+@@ -320,8 +320,9 @@ private int downloadImage(NNStorage storage, NamenodeProtocol proxy)
+       image.saveDigestAndRenameCheckpointImage(NameNodeFile.IMAGE, imageTxId,
+           hash);
+     } catch (IOException ioe) {
+-      image.close();
+       throw ioe;
++    } finally {
++      image.close();
+     }
+     return 0;
+   }
+-- 
+1.7.9.5
+

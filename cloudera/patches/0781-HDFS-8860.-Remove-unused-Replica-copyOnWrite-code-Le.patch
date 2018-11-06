@@ -1,0 +1,462 @@
+From 95bc732d9698b42246a8b0599ae9f72e84aa05ad Mon Sep 17 00:00:00 2001
+From: Colin Patrick Mccabe <cmccabe@cloudera.com>
+Date: Tue, 8 Sep 2015 18:12:47 -0700
+Subject: [PATCH 0781/1023] HDFS-8860. Remove unused Replica copyOnWrite code
+ (Lei (Eddy) Xu via Colin P. McCabe)
+
+(cherry picked from commit a153b9601ad8628fdd608d8696310ca8c1f58ff0)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/ReplicaInfo.java
+	hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetImpl.java
+	hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/TestDatanodeRestart.java
+
+Change-Id: Ie36d5ca591d23dd29f36938f533016d40a755494
+(cherry picked from commit 492485da98d198e07e01d786372ad8413fcaa223)
+---
+ .../hdfs/server/datanode/FinalizedReplica.java     |   15 +---
+ .../hadoop/hdfs/server/datanode/ReplicaInfo.java   |   82 --------------------
+ .../hdfs/server/datanode/ReplicaUnderRecovery.java |   10 ---
+ .../datanode/ReplicaWaitingToBeRecovered.java      |   15 +---
+ .../datanode/fsdataset/impl/FsDatasetImpl.java     |    3 -
+ .../org/apache/hadoop/hdfs/TestFileAppend.java     |   72 -----------------
+ .../hdfs/server/datanode/DataNodeTestUtils.java    |    5 --
+ .../datanode/fsdataset/impl/FsDatasetTestUtil.java |    6 --
+ .../fsdataset/impl/TestDatanodeRestart.java        |   72 -----------------
+ 9 files changed, 2 insertions(+), 278 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/FinalizedReplica.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/FinalizedReplica.java
+index cc32874..8daeb51 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/FinalizedReplica.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/FinalizedReplica.java
+@@ -27,7 +27,6 @@
+  * This class describes a replica that has been finalized.
+  */
+ public class FinalizedReplica extends ReplicaInfo {
+-  private boolean unlinked;      // copy-on-write done for block
+ 
+   /**
+    * Constructor
+@@ -58,7 +57,6 @@ public FinalizedReplica(Block block, FsVolumeSpi vol, File dir) {
+    */
+   public FinalizedReplica(FinalizedReplica from) {
+     super(from);
+-    this.unlinked = from.isUnlinked();
+   }
+ 
+   @Override  // ReplicaInfo
+@@ -66,16 +64,6 @@ public ReplicaState getState() {
+     return ReplicaState.FINALIZED;
+   }
+   
+-  @Override // ReplicaInfo
+-  public boolean isUnlinked() {
+-    return unlinked;
+-  }
+-
+-  @Override  // ReplicaInfo
+-  public void setUnlinked() {
+-    unlinked = true;
+-  }
+-  
+   @Override
+   public long getVisibleLength() {
+     return getNumBytes();       // all bytes are visible
+@@ -98,7 +86,6 @@ public int hashCode() {
+   
+   @Override
+   public String toString() {
+-    return super.toString()
+-        + "\n  unlinked          =" + unlinked;
++    return super.toString();
+   }
+ }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/ReplicaInfo.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/ReplicaInfo.java
+index 940d3eb..d0d4577 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/ReplicaInfo.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/ReplicaInfo.java
+@@ -197,93 +197,11 @@ public static ReplicaDirInfo parseBaseDir(File dir) {
+   }
+ 
+   /**
+-   * check if this replica has already been unlinked.
+-   * @return true if the replica has already been unlinked 
+-   *         or no need to be detached; false otherwise
+-   */
+-  public boolean isUnlinked() {
+-    return true;                // no need to be unlinked
+-  }
+-
+-  /**
+-   * set that this replica is unlinked
+-   */
+-  public void setUnlinked() {
+-    // no need to be unlinked
+-  }
+-
+-  /**
+    * Number of bytes reserved for this replica on disk.
+    */
+   public long getBytesReserved() {
+     return 0;
+   }
+-  
+-   /**
+-   * Copy specified file into a temporary file. Then rename the
+-   * temporary file to the original name. This will cause any
+-   * hardlinks to the original file to be removed. The temporary
+-   * files are created in the same directory. The temporary files will
+-   * be recovered (especially on Windows) on datanode restart.
+-   */
+-  private void unlinkFile(File file, Block b) throws IOException {
+-    File tmpFile = DatanodeUtil.createTmpFile(b, DatanodeUtil.getUnlinkTmpFile(file));
+-    try {
+-      FileInputStream in = new FileInputStream(file);
+-      try {
+-        FileOutputStream out = new FileOutputStream(tmpFile);
+-        try {
+-          IOUtils.copyBytes(in, out, 16*1024);
+-        } finally {
+-          out.close();
+-        }
+-      } finally {
+-        in.close();
+-      }
+-      if (file.length() != tmpFile.length()) {
+-        throw new IOException("Copy of file " + file + " size " + file.length()+
+-                              " into file " + tmpFile +
+-                              " resulted in a size of " + tmpFile.length());
+-      }
+-      FileUtil.replaceFile(tmpFile, file);
+-    } catch (IOException e) {
+-      boolean done = tmpFile.delete();
+-      if (!done) {
+-        DataNode.LOG.info("detachFile failed to delete temporary file " +
+-                          tmpFile);
+-      }
+-      throw e;
+-    }
+-  }
+-
+-  /**
+-   * Remove a hard link by copying the block to a temporary place and 
+-   * then moving it back
+-   * @param numLinks number of hard links
+-   * @return true if copy is successful; 
+-   *         false if it is already detached or no need to be detached
+-   * @throws IOException if there is any copy error
+-   */
+-  public boolean unlinkBlock(int numLinks) throws IOException {
+-    if (isUnlinked()) {
+-      return false;
+-    }
+-    File file = getBlockFile();
+-    if (file == null || getVolume() == null) {
+-      throw new IOException("detachBlock:Block not found. " + this);
+-    }
+-    File meta = getMetaFile();
+-
+-    if (HardLink.getLinkCount(file) > numLinks) {
+-      DataNode.LOG.info("CopyOnWrite for block " + this);
+-      unlinkFile(file, this);
+-    }
+-    if (HardLink.getLinkCount(meta) > numLinks) {
+-      unlinkFile(meta, this);
+-    }
+-    setUnlinked();
+-    return true;
+-  }
+ 
+   @Override  //Object
+   public String toString() {
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/ReplicaUnderRecovery.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/ReplicaUnderRecovery.java
+index 2cd8a01..558ee21 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/ReplicaUnderRecovery.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/ReplicaUnderRecovery.java
+@@ -85,16 +85,6 @@ public void setRecoveryID(long recoveryId) {
+   public ReplicaInfo getOriginalReplica() {
+     return original;
+   }
+-
+-  @Override //ReplicaInfo
+-  public boolean isUnlinked() {
+-    return original.isUnlinked();
+-  }
+-
+-  @Override //ReplicaInfo
+-  public void setUnlinked() {
+-    original.setUnlinked();
+-  }
+   
+   @Override //ReplicaInfo
+   public ReplicaState getState() {
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/ReplicaWaitingToBeRecovered.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/ReplicaWaitingToBeRecovered.java
+index 26ab3db..220649d 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/ReplicaWaitingToBeRecovered.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/ReplicaWaitingToBeRecovered.java
+@@ -33,7 +33,6 @@
+  * lease recovery.
+  */
+ public class ReplicaWaitingToBeRecovered extends ReplicaInfo {
+-  private boolean unlinked;      // copy-on-write done for block
+ 
+   /**
+    * Constructor
+@@ -64,7 +63,6 @@ public ReplicaWaitingToBeRecovered(Block block, FsVolumeSpi vol, File dir) {
+    */
+   public ReplicaWaitingToBeRecovered(ReplicaWaitingToBeRecovered from) {
+     super(from);
+-    this.unlinked = from.isUnlinked();
+   }
+ 
+   @Override //ReplicaInfo
+@@ -73,16 +71,6 @@ public ReplicaState getState() {
+   }
+   
+   @Override //ReplicaInfo
+-  public boolean isUnlinked() {
+-    return unlinked;
+-  }
+-
+-  @Override //ReplicaInfo
+-  public void setUnlinked() {
+-    unlinked = true;
+-  }
+-  
+-  @Override //ReplicaInfo
+   public long getVisibleLength() {
+     return -1;  //no bytes are visible
+   }
+@@ -104,7 +92,6 @@ public int hashCode() {
+ 
+   @Override
+   public String toString() {
+-    return super.toString()
+-        + "\n  unlinked=" + unlinked;
++    return super.toString();
+   }
+ }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetImpl.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetImpl.java
+index b6564a1..67cf787 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetImpl.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetImpl.java
+@@ -1043,8 +1043,6 @@ private synchronized ReplicaBeingWritten append(String bpid,
+       throws IOException {
+     // If the block is cached, start uncaching it.
+     cacheManager.uncacheBlock(bpid, replicaInfo.getBlockId());
+-    // unlink the finalized replica
+-    replicaInfo.unlinkBlock(1);
+     
+     // construct a RBW replica with the new GS
+     File blkfile = replicaInfo.getBlockFile();
+@@ -2346,7 +2344,6 @@ private FinalizedReplica updateReplicaUnderRecovery(
+           + ", rur=" + rur);
+     }
+     if (rur.getNumBytes() > newlength) {
+-      rur.unlinkBlock(1);
+       truncateBlock(replicafile, rur.getMetaFile(), rur.getNumBytes(), newlength);
+       // update RUR with the new length
+       rur.setNumBytes(newlength);
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestFileAppend.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestFileAppend.java
+index b5f9d3c..a1490d3 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestFileAppend.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestFileAppend.java
+@@ -107,78 +107,6 @@ private void checkFile(FileSystem fileSys, Path name, int repl)
+   }
+ 
+   /**
+-   * Test that copy on write for blocks works correctly
+-   * @throws IOException an exception might be thrown
+-   */
+-  @Test
+-  public void testCopyOnWrite() throws IOException {
+-    Configuration conf = new HdfsConfiguration();
+-    if (simulatedStorage) {
+-      SimulatedFSDataset.setFactory(conf);
+-    }
+-    MiniDFSCluster cluster = new MiniDFSCluster.Builder(conf).build();
+-    FileSystem fs = cluster.getFileSystem();
+-    InetSocketAddress addr = new InetSocketAddress("localhost",
+-                                                   cluster.getNameNodePort());
+-    DFSClient client = new DFSClient(addr, conf);
+-    try {
+-
+-      // create a new file, write to it and close it.
+-      //
+-      Path file1 = new Path("/filestatus.dat");
+-      FSDataOutputStream stm = AppendTestUtil.createFile(fs, file1, 1);
+-      writeFile(stm);
+-      stm.close();
+-
+-      // Get a handle to the datanode
+-      DataNode[] dn = cluster.listDataNodes();
+-      assertTrue("There should be only one datanode but found " + dn.length,
+-                  dn.length == 1);
+-
+-      LocatedBlocks locations = client.getNamenode().getBlockLocations(
+-                                  file1.toString(), 0, Long.MAX_VALUE);
+-      List<LocatedBlock> blocks = locations.getLocatedBlocks();
+-
+-      //
+-      // Create hard links for a few of the blocks
+-      //
+-      for (int i = 0; i < blocks.size(); i = i + 2) {
+-        ExtendedBlock b = blocks.get(i).getBlock();
+-        final File f = DataNodeTestUtils.getFile(dn[0],
+-            b.getBlockPoolId(), b.getLocalBlock().getBlockId());
+-        File link = new File(f.toString() + ".link");
+-        System.out.println("Creating hardlink for File " + f + " to " + link);
+-        HardLink.createHardLink(f, link);
+-      }
+-
+-      //
+-      // Detach all blocks. This should remove hardlinks (if any)
+-      //
+-      for (int i = 0; i < blocks.size(); i++) {
+-        ExtendedBlock b = blocks.get(i).getBlock();
+-        System.out.println("testCopyOnWrite detaching block " + b);
+-        assertTrue("Detaching block " + b + " should have returned true",
+-            DataNodeTestUtils.unlinkBlock(dn[0], b, 1));
+-      }
+-
+-      // Since the blocks were already detached earlier, these calls should
+-      // return false
+-      //
+-      for (int i = 0; i < blocks.size(); i++) {
+-        ExtendedBlock b = blocks.get(i).getBlock();
+-        System.out.println("testCopyOnWrite detaching block " + b);
+-        assertTrue("Detaching block " + b + " should have returned false",
+-            !DataNodeTestUtils.unlinkBlock(dn[0], b, 1));
+-      }
+-
+-    } finally {
+-      client.close();
+-      fs.close();
+-      cluster.shutdown();
+-    }
+-  }
+-
+-  /**
+    * Test a simple flush on a simple HDFS file.
+    * @throws IOException an exception might be thrown
+    */
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/DataNodeTestUtils.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/DataNodeTestUtils.java
+index 7df968a..acffd6e 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/DataNodeTestUtils.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/DataNodeTestUtils.java
+@@ -151,11 +151,6 @@ public static File getMetaFile(DataNode dn, String bpid, Block b)
+       throws IOException {
+     return FsDatasetTestUtil.getMetaFile(dn.getFSDataset(), bpid, b);
+   }
+-  
+-  public static boolean unlinkBlock(DataNode dn, ExtendedBlock bk, int numLinks
+-      ) throws IOException {
+-    return FsDatasetTestUtil.unlinkBlock(dn.getFSDataset(), bk, numLinks);
+-  }
+ 
+   public static long getPendingAsyncDeletions(DataNode dn) {
+     return FsDatasetTestUtil.getPendingAsyncDeletions(dn.getFSDataset());
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetTestUtil.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetTestUtil.java
+index 7ac9b65..164385e 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetTestUtil.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetTestUtil.java
+@@ -54,12 +54,6 @@ public static File getMetaFile(FsDatasetSpi<?> fsd, String bpid, Block b)
+     return FsDatasetUtil.getMetaFile(getBlockFile(fsd, bpid, b), b
+         .getGenerationStamp());
+   }
+-  
+-  public static boolean unlinkBlock(FsDatasetSpi<?> fsd,
+-      ExtendedBlock block, int numLinks) throws IOException {
+-    final ReplicaInfo info = ((FsDatasetImpl)fsd).getReplicaInfo(block);
+-    return info.unlinkBlock(numLinks);
+-  }
+ 
+   public static ReplicaInfo fetchReplicaInfo (final FsDatasetSpi<?> fsd,
+       final String bpid, final long blockId) {
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/TestDatanodeRestart.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/TestDatanodeRestart.java
+index a91baec..0a59303 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/TestDatanodeRestart.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/TestDatanodeRestart.java
+@@ -136,79 +136,7 @@ private void testRbwReplicas(MiniDFSCluster cluster, boolean isCorrupt)
+     }      
+   }
+ 
+-  // test recovering unlinked tmp replicas
+-  @Test public void testRecoverReplicas() throws Exception {
+-    Configuration conf = new HdfsConfiguration();
+-    conf.setLong(DFSConfigKeys.DFS_BLOCK_SIZE_KEY, 1024L);
+-    conf.setInt(DFSConfigKeys.DFS_CLIENT_WRITE_PACKET_SIZE_KEY, 512);
+-    MiniDFSCluster cluster = new MiniDFSCluster.Builder(conf).build();
+-    cluster.waitActive();
+-    try {
+-      FileSystem fs = cluster.getFileSystem();
+-      for (int i=0; i<4; i++) {
+-        Path fileName = new Path("/test"+i);
+-        DFSTestUtil.createFile(fs, fileName, 1, (short)1, 0L);
+-        DFSTestUtil.waitReplication(fs, fileName, (short)1);
+-      }
+-      String bpid = cluster.getNamesystem().getBlockPoolId();
+-      DataNode dn = cluster.getDataNodes().get(0);
+-      Iterator<ReplicaInfo> replicasItor = 
+-          dataset(dn).volumeMap.replicas(bpid).iterator();
+-      ReplicaInfo replica = replicasItor.next();
+-      createUnlinkTmpFile(replica, true, true); // rename block file
+-      createUnlinkTmpFile(replica, false, true); // rename meta file
+-      replica = replicasItor.next();
+-      createUnlinkTmpFile(replica, true, false); // copy block file
+-      createUnlinkTmpFile(replica, false, false); // copy meta file
+-      replica = replicasItor.next();
+-      createUnlinkTmpFile(replica, true, true); // rename block file
+-      createUnlinkTmpFile(replica, false, false); // copy meta file
+-
+-      cluster.restartDataNodes();
+-      cluster.waitActive();
+-      dn = cluster.getDataNodes().get(0);
+-
+-      // check volumeMap: 4 finalized replica
+-      Collection<ReplicaInfo> replicas = dataset(dn).volumeMap.replicas(bpid);
+-      Assert.assertEquals(4, replicas.size());
+-      replicasItor = replicas.iterator();
+-      while (replicasItor.hasNext()) {
+-        Assert.assertEquals(ReplicaState.FINALIZED, 
+-            replicasItor.next().getState());
+-      }
+-    } finally {
+-      cluster.shutdown();
+-    }
+-  }
+-
+   private static FsDatasetImpl dataset(DataNode dn) {
+     return (FsDatasetImpl)DataNodeTestUtils.getFSDataset(dn);
+   }
+-
+-  private static void createUnlinkTmpFile(ReplicaInfo replicaInfo, 
+-      boolean changeBlockFile, 
+-      boolean isRename) throws IOException {
+-    File src;
+-    if (changeBlockFile) {
+-      src = replicaInfo.getBlockFile();
+-    } else {
+-      src = replicaInfo.getMetaFile();
+-    }
+-    File dst = DatanodeUtil.getUnlinkTmpFile(src);
+-    if (isRename) {
+-      src.renameTo(dst);
+-    } else {
+-      FileInputStream in = new FileInputStream(src);
+-      try {
+-        FileOutputStream out = new FileOutputStream(dst);
+-        try {
+-          IOUtils.copyBytes(in, out, 1);
+-        } finally {
+-          out.close();
+-        }
+-      } finally {
+-        in.close();
+-      }
+-    }
+-  }
+ }
+-- 
+1.7.9.5
+

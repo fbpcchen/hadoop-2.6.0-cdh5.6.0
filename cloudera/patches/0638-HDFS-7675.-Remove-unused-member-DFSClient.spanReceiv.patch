@@ -1,0 +1,36 @@
+From fce9ffd49e32e3ad81d6ebe74aefb39be8e0c92a Mon Sep 17 00:00:00 2001
+From: Colin Patrick Mccabe <cmccabe@cloudera.com>
+Date: Tue, 27 Jan 2015 17:04:20 -0800
+Subject: [PATCH 0638/1023] HDFS-7675. Remove unused member
+ DFSClient.spanReceiverHost (cmccabe)
+
+(cherry picked from commit d12dd47f4516fe125221ae073f1bc88b702b122f)
+(cherry picked from commit ad865b1cd0526e39e190cf837629a2888a38478b)
+---
+ .../java/org/apache/hadoop/hdfs/DFSClient.java     |    3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSClient.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSClient.java
+index 90aa9b4..12d43ca 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSClient.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSClient.java
+@@ -282,7 +282,6 @@
+ 
+   @VisibleForTesting
+   KeyProvider provider;
+-  private final SpanReceiverHost spanReceiverHost;
+   private final Sampler<?> traceSampler;
+ 
+   /**
+@@ -635,7 +634,7 @@ public DFSClient(URI nameNodeUri, Configuration conf,
+   public DFSClient(URI nameNodeUri, ClientProtocol rpcNamenode,
+       Configuration conf, FileSystem.Statistics stats)
+     throws IOException {
+-    spanReceiverHost = SpanReceiverHost.getInstance(conf);
++    SpanReceiverHost.getInstance(conf);
+     traceSampler = TraceSamplerFactory.createSampler(conf);
+     // Copy only the required DFSClient configuration
+     this.dfsClientConf = new Conf(conf);
+-- 
+1.7.9.5
+

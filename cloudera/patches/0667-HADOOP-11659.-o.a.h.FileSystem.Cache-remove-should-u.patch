@@ -1,0 +1,46 @@
+From abae20ecdcfb78a61a9bad38c94964e9ac114beb Mon Sep 17 00:00:00 2001
+From: Akira Ajisaka <aajisaka@apache.org>
+Date: Wed, 18 Mar 2015 15:43:10 +0900
+Subject: [PATCH 0667/1023] HADOOP-11659. o.a.h.FileSystem.Cache#remove should
+ use a single hash map lookup. Contributed by
+ Brahma Reddy Battula.
+
+(cherry picked from commit 34117325b29f0f1bdbe21343e7fd07e9ad0af907)
+(cherry picked from commit 18740f9383858543f4390626e7bbec37ca450cce)
+---
+ .../main/java/org/apache/hadoop/fs/FileSystem.java |   11 +++++++----
+ 1 file changed, 7 insertions(+), 4 deletions(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/FileSystem.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/FileSystem.java
+index 411e552..0d77038 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/FileSystem.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/FileSystem.java
+@@ -2662,10 +2662,12 @@ private FileSystem getInternal(URI uri, Configuration conf, Key key) throws IOEx
+     }
+ 
+     synchronized void remove(Key key, FileSystem fs) {
+-      if (map.containsKey(key) && fs == map.get(key)) {
+-        map.remove(key);
++      FileSystem cachedFs = map.remove(key);
++      if (fs == cachedFs) {
+         toAutoClose.remove(key);
+-        }
++      } else if (cachedFs != null) {
++        map.put(key, cachedFs);
++      }
+     }
+ 
+     synchronized void closeAll() throws IOException {
+@@ -2692,7 +2694,8 @@ synchronized void closeAll(boolean onlyAutomatic) throws IOException {
+         }
+ 
+         //remove from cache
+-        remove(key, fs);
++        map.remove(key);
++        toAutoClose.remove(key);
+ 
+         if (fs != null) {
+           try {
+-- 
+1.7.9.5
+

@@ -1,0 +1,363 @@
+From b24f1b8530ef57b57ea4a41595dc963ba5125ea9 Mon Sep 17 00:00:00 2001
+From: Arpit Agarwal <arp@apache.org>
+Date: Thu, 23 Apr 2015 09:35:04 -0700
+Subject: [PATCH 0666/1023] HADOOP-10597. RPC Server signals backoff to
+ clients when all request queues are full.
+ (Contributed by Ming Ma)
+
+(cherry picked from commit edbeefdb052bffd0a3ba2f00c8a5a376017fbf33)
+
+Conflicts:
+	hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/ipc/TestRPC.java
+---
+ .../apache/hadoop/fs/CommonConfigurationKeys.java  |    2 +
+ .../org/apache/hadoop/ipc/CallQueueManager.java    |   20 ++-
+ .../main/java/org/apache/hadoop/ipc/Server.java    |   36 +++++-
+ .../org/apache/hadoop/ipc/metrics/RpcMetrics.java  |   10 ++
+ .../apache/hadoop/ipc/TestCallQueueManager.java    |    6 +-
+ .../test/java/org/apache/hadoop/ipc/TestRPC.java   |  127 ++++++++++++++++++++
+ 6 files changed, 194 insertions(+), 7 deletions(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/CommonConfigurationKeys.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/CommonConfigurationKeys.java
+index 7933828..8be0a43 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/CommonConfigurationKeys.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/CommonConfigurationKeys.java
+@@ -90,6 +90,8 @@
+   public static final String IPC_CALLQUEUE_NAMESPACE = "ipc";
+   public static final String IPC_CALLQUEUE_IMPL_KEY = "callqueue.impl";
+   public static final String IPC_CALLQUEUE_IDENTITY_PROVIDER_KEY = "identity-provider.impl";
++  public static final String IPC_BACKOFF_ENABLE = "backoff.enable";
++  public static final boolean IPC_BACKOFF_ENABLE_DEFAULT = false;
+ 
+   /** Internal buffer size for Lzo compressor/decompressors */
+   public static final String  IO_COMPRESSION_CODEC_LZO_BUFFERSIZE_KEY =
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/CallQueueManager.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/CallQueueManager.java
+index 27949d0..1568bd6 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/CallQueueManager.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/CallQueueManager.java
+@@ -38,16 +38,19 @@
+       Class<?> queneClass, Class<E> elementClass) {
+     return (Class<? extends BlockingQueue<E>>)queneClass;
+   }
+-  
++  private final boolean clientBackOffEnabled;
++
+   // Atomic refs point to active callQueue
+   // We have two so we can better control swapping
+   private final AtomicReference<BlockingQueue<E>> putRef;
+   private final AtomicReference<BlockingQueue<E>> takeRef;
+ 
+   public CallQueueManager(Class<? extends BlockingQueue<E>> backingClass,
+-      int maxQueueSize, String namespace, Configuration conf) {
++      boolean clientBackOffEnabled, int maxQueueSize, String namespace,
++      Configuration conf) {
+     BlockingQueue<E> bq = createCallQueueInstance(backingClass,
+       maxQueueSize, namespace, conf);
++    this.clientBackOffEnabled = clientBackOffEnabled;
+     this.putRef = new AtomicReference<BlockingQueue<E>>(bq);
+     this.takeRef = new AtomicReference<BlockingQueue<E>>(bq);
+     LOG.info("Using callQueue " + backingClass);
+@@ -89,6 +92,10 @@ public CallQueueManager(Class<? extends BlockingQueue<E>> backingClass,
+       " could not be constructed.");
+   }
+ 
++  boolean isClientBackoffEnabled() {
++    return clientBackOffEnabled;
++  }
++
+   /**
+    * Insert e into the backing queue or block until we can.
+    * If we block and the queue changes on us, we will insert while the
+@@ -99,6 +106,15 @@ public void put(E e) throws InterruptedException {
+   }
+ 
+   /**
++   * Insert e into the backing queue.
++   * Return true if e is queued.
++   * Return false if the queue is full.
++   */
++  public boolean offer(E e) throws InterruptedException {
++    return putRef.get().offer(e);
++  }
++
++  /**
+    * Retrieve an E from the backing queue or block until we can.
+    * Guaranteed to return an element from the current queue.
+    */
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/Server.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/Server.java
+index 9745563..82a5b70 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/Server.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/Server.java
+@@ -497,6 +497,17 @@ public synchronized void refreshCallQueue(Configuration conf) {
+     callQueue.swapQueue(getQueueClass(prefix, conf), maxQueueSize, prefix, conf);
+   }
+ 
++  /**
++   * Get from config if client backoff is enabled on that port.
++   */
++  static boolean getClientBackoffEnable(
++      String prefix, Configuration conf) {
++    String name = prefix + "." +
++        CommonConfigurationKeys.IPC_BACKOFF_ENABLE;
++    return conf.getBoolean(name,
++        CommonConfigurationKeys.IPC_BACKOFF_ENABLE_DEFAULT);
++  }
++
+   /** A call queued for handling. */
+   public static class Call implements Schedulable {
+     private final int callId;             // the client's call id
+@@ -1867,10 +1878,31 @@ private void processRpcRequest(RpcRequestHeaderProto header,
+           rpcRequest, this, ProtoUtil.convert(header.getRpcKind()),
+           header.getClientId().toByteArray(), traceSpan);
+ 
+-      callQueue.put(call);              // queue the call; maybe blocked here
++      if (callQueue.isClientBackoffEnabled()) {
++        // if RPC queue is full, we will ask the RPC client to back off by
++        // throwing RetriableException. Whether RPC client will honor
++        // RetriableException and retry depends on client ipc retry policy.
++        // For example, FailoverOnNetworkExceptionRetry handles
++        // RetriableException.
++        queueRequestOrAskClientToBackOff(call);
++      } else {
++        callQueue.put(call);              // queue the call; maybe blocked here
++      }
+       incRpcCount();  // Increment the rpc count
+     }
+ 
++    private void queueRequestOrAskClientToBackOff(Call call)
++        throws WrappedRpcServerException, InterruptedException {
++      // If rpc queue is full, we will ask the client to back off.
++      boolean isCallQueued = callQueue.offer(call);
++      if (!isCallQueued) {
++        rpcMetrics.incrClientBackoff();
++        RetriableException retriableException =
++            new RetriableException("Server is too busy.");
++        throw new WrappedRpcServerException(
++            RpcErrorCodeProto.ERROR_RPC_SERVER, retriableException);
++      }
++    }
+ 
+     /**
+      * Establish RPC connection setup by negotiating SASL if required, then
+@@ -2198,7 +2230,7 @@ protected Server(String bindAddress, int port,
+     // Setup appropriate callqueue
+     final String prefix = getQueueClassPrefix();
+     this.callQueue = new CallQueueManager<Call>(getQueueClass(prefix, conf),
+-        maxQueueSize, prefix, conf);
++        getClientBackoffEnable(prefix, conf), maxQueueSize, prefix, conf);
+ 
+     this.secretManager = (SecretManager<TokenIdentifier>) secretManager;
+     this.authorize = 
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/metrics/RpcMetrics.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/metrics/RpcMetrics.java
+index 5eba44a..e90e516 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/metrics/RpcMetrics.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/metrics/RpcMetrics.java
+@@ -95,6 +95,8 @@ public static RpcMetrics create(Server server, Configuration conf) {
+   MutableCounterLong rpcAuthorizationFailures;
+   @Metric("Number of authorization sucesses")
+   MutableCounterLong rpcAuthorizationSuccesses;
++  @Metric("Number of client backoff requests")
++  MutableCounterLong rpcClientBackoff;
+ 
+   @Metric("Number of open connections") public int numOpenConnections() {
+     return server.getNumOpenConnections();
+@@ -192,4 +194,12 @@ public void addRpcProcessingTime(int processingTime) {
+       }
+     }
+   }
++
++  /**
++   * One client backoff event
++   */
++  //@Override
++  public void incrClientBackoff() {
++    rpcClientBackoff.incr();
++  }
+ }
+diff --git a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/ipc/TestCallQueueManager.java b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/ipc/TestCallQueueManager.java
+index 1b618b1..6e1838e 100644
+--- a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/ipc/TestCallQueueManager.java
++++ b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/ipc/TestCallQueueManager.java
+@@ -143,21 +143,21 @@ public void assertCanPut(CallQueueManager<FakeCall> cq, int numberOfPuts,
+ 
+   @Test
+   public void testCallQueueCapacity() throws InterruptedException {
+-    manager = new CallQueueManager<FakeCall>(queueClass, 10, "", null);
++    manager = new CallQueueManager<FakeCall>(queueClass, false, 10, "", null);
+ 
+     assertCanPut(manager, 10, 20); // Will stop at 10 due to capacity
+   }
+ 
+   @Test
+   public void testEmptyConsume() throws InterruptedException {
+-    manager = new CallQueueManager<FakeCall>(queueClass, 10, "", null);
++    manager = new CallQueueManager<FakeCall>(queueClass, false, 10, "", null);
+ 
+     assertCanTake(manager, 0, 1); // Fails since it's empty
+   }
+ 
+   @Test(timeout=60000)
+   public void testSwapUnderContention() throws InterruptedException {
+-    manager = new CallQueueManager<FakeCall>(queueClass, 5000, "", null);
++    manager = new CallQueueManager<FakeCall>(queueClass, false, 5000, "", null);
+ 
+     ArrayList<Putter> producers = new ArrayList<Putter>();
+     ArrayList<Taker> consumers = new ArrayList<Taker>();
+diff --git a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/ipc/TestRPC.java b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/ipc/TestRPC.java
+index 5c57dbc..6b2d22d 100644
+--- a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/ipc/TestRPC.java
++++ b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/ipc/TestRPC.java
+@@ -38,9 +38,16 @@
+ import java.net.ConnectException;
+ import java.net.InetAddress;
+ import java.net.InetSocketAddress;
++import java.util.ArrayList;
+ import java.util.Arrays;
++import java.util.List;
++import java.util.concurrent.Callable;
+ import java.util.concurrent.CountDownLatch;
+ import java.util.concurrent.CyclicBarrier;
++import java.util.concurrent.ExecutionException;
++import java.util.concurrent.ExecutorService;
++import java.util.concurrent.Executors;
++import java.util.concurrent.Future;
+ import java.util.concurrent.atomic.AtomicBoolean;
+ import java.util.concurrent.atomic.AtomicReference;
+ 
+@@ -57,6 +64,7 @@
+ import org.apache.hadoop.io.retry.RetryPolicy;
+ import org.apache.hadoop.io.retry.RetryProxy;
+ import org.apache.hadoop.ipc.Client.ConnectionId;
++import org.apache.hadoop.ipc.protobuf.RpcHeaderProtos.RpcResponseHeaderProto.RpcErrorCodeProto;
+ import org.apache.hadoop.metrics2.MetricsRecordBuilder;
+ import org.apache.hadoop.net.NetUtils;
+ import org.apache.hadoop.security.AccessControlException;
+@@ -1006,6 +1014,125 @@ public void testRpcMetrics() throws Exception {
+     }
+   }
+ 
++  /**
++   *  Verify the RPC server can shutdown properly when callQueue is full.
++   */
++  @Test (timeout=30000)
++  public void testRPCServerShutdown() throws Exception {
++    final int numClients = 3;
++    final List<Future<Void>> res = new ArrayList<Future<Void>>();
++    final ExecutorService executorService =
++        Executors.newFixedThreadPool(numClients);
++    final Configuration conf = new Configuration();
++    conf.setInt(CommonConfigurationKeys.IPC_CLIENT_CONNECT_MAX_RETRIES_KEY, 0);
++    final Server server = new RPC.Builder(conf)
++        .setProtocol(TestProtocol.class).setInstance(new TestImpl())
++        .setBindAddress(ADDRESS).setPort(0)
++        .setQueueSizePerHandler(1).setNumHandlers(1).setVerbose(true)
++        .build();
++    server.start();
++
++    final TestProtocol proxy =
++        RPC.getProxy(TestProtocol.class, TestProtocol.versionID,
++            NetUtils.getConnectAddress(server), conf);
++    try {
++      // start a sleep RPC call to consume the only handler thread.
++      // Start another sleep RPC call to make callQueue full.
++      // Start another sleep RPC call to make reader thread block on CallQueue.
++      for (int i = 0; i < numClients; i++) {
++        res.add(executorService.submit(
++            new Callable<Void>() {
++              @Override
++              public Void call() throws IOException, InterruptedException {
++                proxy.sleep(100000);
++                return null;
++              }
++            }));
++      }
++      while (server.getCallQueueLen() != 1
++          && countThreads(CallQueueManager.class.getName()) != 1
++          && countThreads(TestProtocol.class.getName()) != 1) {
++        Thread.sleep(100);
++      }
++    } finally {
++      try {
++        server.stop();
++        assertEquals("Not enough clients", numClients, res.size());
++        for (Future<Void> f : res) {
++          try {
++            f.get();
++            fail("Future get should not return");
++          } catch (ExecutionException e) {
++            assertTrue("Unexpected exception: " + e,
++                e.getCause() instanceof IOException);
++            LOG.info("Expected exception", e.getCause());
++          }
++        }
++      } finally {
++        RPC.stopProxy(proxy);
++        executorService.shutdown();
++      }
++    }
++  }
++
++  /**
++   *  Test RPC backoff.
++   */
++  @Test (timeout=30000)
++  public void testClientBackOff() throws Exception {
++    boolean succeeded = false;
++    final int numClients = 2;
++    final List<Future<Void>> res = new ArrayList<Future<Void>>();
++    final ExecutorService executorService =
++        Executors.newFixedThreadPool(numClients);
++    final Configuration conf = new Configuration();
++    conf.setInt(CommonConfigurationKeys.IPC_CLIENT_CONNECT_MAX_RETRIES_KEY, 0);
++    conf.setBoolean(CommonConfigurationKeys.IPC_CALLQUEUE_NAMESPACE +
++        ".0." + CommonConfigurationKeys.IPC_BACKOFF_ENABLE, true);
++    final Server server = new RPC.Builder(conf)
++        .setProtocol(TestProtocol.class).setInstance(new TestImpl())
++        .setBindAddress(ADDRESS).setPort(0)
++        .setQueueSizePerHandler(1).setNumHandlers(1).setVerbose(true)
++        .build();
++    server.start();
++
++    final TestProtocol proxy =
++        RPC.getProxy(TestProtocol.class, TestProtocol.versionID,
++            NetUtils.getConnectAddress(server), conf);
++    try {
++      // start a sleep RPC call to consume the only handler thread.
++      // Start another sleep RPC call to make callQueue full.
++      // Start another sleep RPC call to make reader thread block on CallQueue.
++      for (int i = 0; i < numClients; i++) {
++        res.add(executorService.submit(
++            new Callable<Void>() {
++              @Override
++              public Void call() throws IOException, InterruptedException {
++                proxy.sleep(100000);
++                return null;
++              }
++            }));
++      }
++      while (server.getCallQueueLen() != 1
++          && countThreads(CallQueueManager.class.getName()) != 1) {
++        Thread.sleep(100);
++      }
++      try {
++        proxy.sleep(100);
++      } catch (RemoteException e) {
++        IOException unwrapExeption = e.unwrapRemoteException();
++        if (unwrapExeption instanceof RetriableException) {
++            succeeded = true;
++        }
++      }
++    } finally {
++      server.stop();
++      RPC.stopProxy(proxy);
++      executorService.shutdown();
++    }
++    assertTrue("RetriableException not received", succeeded);
++  }
++
+   public static void main(String[] args) throws Exception {
+     new TestRPC().testCallsInternal(conf);
+ 
+-- 
+1.7.9.5
+

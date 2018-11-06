@@ -1,0 +1,34 @@
+From 0aec86d500ae63412168bccb0d7d7782ee1abf71 Mon Sep 17 00:00:00 2001
+From: Robert Kanter <rkanter@apache.org>
+Date: Mon, 20 Apr 2015 14:14:08 -0700
+Subject: [PATCH 0741/1023] MAPREDUCE-6238. amend MR2 can't run local jobs
+ with -libjars command options which is a
+ regression from MR1 (zxu via rkanter)
+
+(cherry picked from commit d50e8f09287deeb51012d08e326a2ed71a6da869)
+
+Conflicts:
+	hadoop-mapreduce-project/CHANGES.txt
+	hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-jobclient/src/test/java/org/apache/hadoop/mapred/TestLocalJobSubmission.java
+
+Change-Id: I386455865f85f148729ee7e686ff9ca08fab9af1
+---
+ .../hadoop/mapreduce/JobResourceUploader.java      |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/java/org/apache/hadoop/mapreduce/JobResourceUploader.java b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/java/org/apache/hadoop/mapreduce/JobResourceUploader.java
+index 03758bc..f3e4d2f 100644
+--- a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/java/org/apache/hadoop/mapreduce/JobResourceUploader.java
++++ b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/java/org/apache/hadoop/mapreduce/JobResourceUploader.java
+@@ -127,7 +127,7 @@ public void uploadFiles(Job job, Path submitJobDir) throws IOException {
+         Path tmp = new Path(tmpjars);
+         Path newPath = copyRemoteFiles(libjarsDir, tmp, conf, replication);
+         DistributedCache.addFileToClassPath(
+-            new Path(newPath.toUri().getPath()), conf);
++            new Path(newPath.toUri().getPath()), conf, jtFs);
+       }
+     }
+ 
+-- 
+1.7.9.5
+

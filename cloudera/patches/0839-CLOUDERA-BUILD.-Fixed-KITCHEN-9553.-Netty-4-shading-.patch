@@ -1,0 +1,167 @@
+From d223642f3e803d298bd53f2ee1d1e573768ec1a8 Mon Sep 17 00:00:00 2001
+From: Lei Xu <lei@apache.org>
+Date: Wed, 23 Sep 2015 10:58:17 -0700
+Subject: [PATCH 0839/1023] CLOUDERA-BUILD. Fixed KITCHEN-9553. Netty 4
+ shading related build and compile issue.  -
+ Shaded netty in the hadoop-hdfs project in
+ prepare-package phase.  - Moved
+ hadoop-project-dist to package hase. Make sure to
+ shade before the assembly step.  - Excluded
+ netty-4 from modules (nfs, httpfs, distcp) that
+ depend on hadoop-hdfs. Used dependency-tree to
+ check that netty wasn't picked up transitively. 
+ - Tests done:    - Used `find . -name
+ 'netty-all*.jar'` to make sure netty 4 jars are
+ not presented.    - Used `jar -tf
+ /path/to/hadoop-hdfs*-SNAPSHOT.jar` to verify
+ that netty 4 classes are shaded and relocated to
+ com.cloudera.netty package.
+
+Change-Id: I57466ec589eaeffec46c8e08261aafc46f5395b9
+---
+ .../src/main/resources/assemblies/hadoop-dist.xml  |    1 +
+ hadoop-hdfs-project/hadoop-hdfs-httpfs/pom.xml     |    4 +++
+ hadoop-hdfs-project/hadoop-hdfs-nfs/pom.xml        |   12 +++++++++
+ hadoop-hdfs-project/hadoop-hdfs/pom.xml            |   26 ++++++++++++++++++++
+ hadoop-project-dist/pom.xml                        |    2 +-
+ hadoop-tools/hadoop-distcp/pom.xml                 |   12 +++++++++
+ 6 files changed, 56 insertions(+), 1 deletion(-)
+
+diff --git a/hadoop-assemblies/src/main/resources/assemblies/hadoop-dist.xml b/hadoop-assemblies/src/main/resources/assemblies/hadoop-dist.xml
+index 7128c75..007241b 100644
+--- a/hadoop-assemblies/src/main/resources/assemblies/hadoop-dist.xml
++++ b/hadoop-assemblies/src/main/resources/assemblies/hadoop-dist.xml
+@@ -141,6 +141,7 @@
+       <excludes>
+         <exclude>org.apache.ant:*:jar</exclude>
+         <exclude>jdiff:jdiff:jar</exclude>
++        <exclude>io.netty:netty-all:jar</exclude>
+       </excludes>
+     </dependencySet>
+   </dependencySets>
+diff --git a/hadoop-hdfs-project/hadoop-hdfs-httpfs/pom.xml b/hadoop-hdfs-project/hadoop-hdfs-httpfs/pom.xml
+index 04d744d..ac82ee9 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs-httpfs/pom.xml
++++ b/hadoop-hdfs-project/hadoop-hdfs-httpfs/pom.xml
+@@ -226,6 +226,10 @@
+           <groupId>commons-el</groupId>
+           <artifactId>commons-el</artifactId>
+         </exclusion>
++        <exclusion>
++          <groupId>io.netty</groupId>
++          <artifactId>netty-all</artifactId>
++        </exclusion>
+       </exclusions>
+     </dependency>
+     <dependency>
+diff --git a/hadoop-hdfs-project/hadoop-hdfs-nfs/pom.xml b/hadoop-hdfs-project/hadoop-hdfs-nfs/pom.xml
+index 66681f8..cfb9bb0 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs-nfs/pom.xml
++++ b/hadoop-hdfs-project/hadoop-hdfs-nfs/pom.xml
+@@ -55,12 +55,24 @@ http://maven.apache.org/xsd/maven-4.0.0.xsd">
+       <groupId>org.apache.hadoop</groupId>
+       <artifactId>hadoop-hdfs</artifactId>
+       <scope>compile</scope>
++      <exclusions>
++        <exclusion>
++          <groupId>io.netty</groupId>
++          <artifactId>netty-all</artifactId>
++        </exclusion>
++      </exclusions>
+     </dependency>
+     <dependency>
+       <groupId>org.apache.hadoop</groupId>
+       <artifactId>hadoop-hdfs</artifactId>
+       <scope>test</scope>
+       <type>test-jar</type>
++      <exclusions>
++        <exclusion>
++          <groupId>io.netty</groupId>
++          <artifactId>netty-all</artifactId>
++        </exclusion>
++      </exclusions>
+     </dependency>
+     <dependency>
+       <groupId>org.apache.hadoop</groupId>
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/pom.xml b/hadoop-hdfs-project/hadoop-hdfs/pom.xml
+index 8032494..b16694e 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/pom.xml
++++ b/hadoop-hdfs-project/hadoop-hdfs/pom.xml
+@@ -542,6 +542,32 @@ http://maven.apache.org/xsd/maven-4.0.0.xsd">
+           </excludes>
+         </configuration>
+       </plugin>
++      <plugin>
++        <groupId>org.apache.maven.plugins</groupId>
++        <artifactId>maven-shade-plugin</artifactId>
++        <executions>
++          <execution>
++            <phase>prepare-package</phase>
++            <goals>
++              <goal>shade</goal>
++            </goals>
++            <configuration>
++              <createDependencyReducedPom>false</createDependencyReducedPom>
++              <artifactSet>
++                <includes>
++                  <include>io.netty:netty-all:jar:*</include>
++                </includes>
++              </artifactSet>
++              <relocations>
++                <relocation>
++                  <pattern>io.netty</pattern>
++                  <shadedPattern>com.cloudera.io.netty</shadedPattern>
++                </relocation>
++              </relocations>
++            </configuration>
++          </execution>
++        </executions>
++      </plugin>
+     </plugins>
+   </build>
+ 
+diff --git a/hadoop-project-dist/pom.xml b/hadoop-project-dist/pom.xml
+index d936518..1cbdd81 100644
+--- a/hadoop-project-dist/pom.xml
++++ b/hadoop-project-dist/pom.xml
+@@ -418,7 +418,7 @@
+             <executions>
+               <execution>
+                 <id>dist</id>
+-                <phase>prepare-package</phase>
++                <phase>package</phase>
+                 <goals>
+                   <goal>single</goal>
+                 </goals>
+diff --git a/hadoop-tools/hadoop-distcp/pom.xml b/hadoop-tools/hadoop-distcp/pom.xml
+index cc0a60b..8f0ef87 100644
+--- a/hadoop-tools/hadoop-distcp/pom.xml
++++ b/hadoop-tools/hadoop-distcp/pom.xml
+@@ -81,12 +81,24 @@
+       <groupId>org.apache.hadoop</groupId>
+       <artifactId>hadoop-hdfs</artifactId>
+       <scope>provided</scope>
++      <exclusions>
++        <exclusion>
++          <groupId>io.netty</groupId>
++          <artifactId>netty-all</artifactId>
++        </exclusion>
++      </exclusions>
+     </dependency>
+     <dependency>
+       <groupId>org.apache.hadoop</groupId>
+       <artifactId>hadoop-hdfs</artifactId>
+       <scope>test</scope>
+       <type>test-jar</type>
++      <exclusions>
++        <exclusion>
++          <groupId>io.netty</groupId>
++          <artifactId>netty-all</artifactId>
++        </exclusion>
++      </exclusions>
+     </dependency>
+     <dependency>
+       <groupId>org.apache.hadoop</groupId>
+-- 
+1.7.9.5
+

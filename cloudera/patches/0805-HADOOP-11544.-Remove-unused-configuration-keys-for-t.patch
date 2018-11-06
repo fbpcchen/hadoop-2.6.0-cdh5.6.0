@@ -1,0 +1,61 @@
+From ea21e0a07a1c18e8b969b2c3eec87fddafaf563b Mon Sep 17 00:00:00 2001
+From: Akira Ajisaka <aajisaka@apache.org>
+Date: Wed, 4 Feb 2015 04:17:14 -0800
+Subject: [PATCH 0805/1023] HADOOP-11544. Remove unused configuration keys for
+ tracing. Contributed by Masatake Iwasaki.
+
+(cherry picked from commit 42548f4dc2b2e8ace891b970c2c6712c02bb43ea)
+(cherry picked from commit 5c5139d35f70c80306f2b0c8802a0dd6fc30a0f6)
+
+Conflicts:
+	hadoop-common-project/hadoop-common/src/main/resources/core-default.xml
+
+Change-Id: Icdacd153e3f57a0ec8e28d87c852b61e505413d5
+(cherry picked from commit acdee46e9813bc642d5ffc5571d6a86b327ecb2b)
+---
+ .../apache/hadoop/fs/CommonConfigurationKeys.java  |    3 ---
+ .../src/main/resources/core-default.xml            |   16 ++++++++--------
+ 2 files changed, 8 insertions(+), 11 deletions(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/CommonConfigurationKeys.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/CommonConfigurationKeys.java
+index 8be0a43..63b6d14 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/CommonConfigurationKeys.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/CommonConfigurationKeys.java
+@@ -283,7 +283,4 @@
+   public static final String NFS_EXPORTS_ALLOWED_HOSTS_SEPARATOR = ";";
+   public static final String NFS_EXPORTS_ALLOWED_HOSTS_KEY = "nfs.exports.allowed.hosts";
+   public static final String NFS_EXPORTS_ALLOWED_HOSTS_KEY_DEFAULT = "* rw";
+-
+-  public static final String  HADOOP_TRACE_SAMPLER = "hadoop.htrace.sampler";
+-  public static final String  HADOOP_TRACE_SAMPLER_DEFAULT = "NeverSampler";
+ }
+diff --git a/hadoop-common-project/hadoop-common/src/main/resources/core-default.xml b/hadoop-common-project/hadoop-common/src/main/resources/core-default.xml
+index f28e7fe..d2f65d9 100644
+--- a/hadoop-common-project/hadoop-common/src/main/resources/core-default.xml
++++ b/hadoop-common-project/hadoop-common/src/main/resources/core-default.xml
+@@ -1745,14 +1745,14 @@ for ldap providers in the same way as above does.
+   </property>
+ 
+ <property>
+-  <name>hadoop.htrace.sampler</name>
+-  <value>NeverSampler</value>
+-  <description>
+-    Configure the samplers for HTrace, the value can be NeverSampler,
+-    AlwaysSampler or ProbabilitySampler. NeverSampler: HTrace is OFF 
+-    for all spans; AlwaysSampler: HTrace is ON for all spans;
+-    ProbabilitySampler: HTrace is ON for some percentage% of top-level 
+-    spans.
++  <name>hadoop.htrace.spanreceiver.classes</name>
++  <value></value>
++  <description>
++    A comma separated list of the fully-qualified class name of classes 
++    implementing SpanReceiver. The tracing system works by collecting 
++    information in structs called 'Spans'. It is up to you to choose 
++    how you want to receive this information by implementing the 
++    SpanReceiver interface.
+   </description>
+ </property>
+ 
+-- 
+1.7.9.5
+

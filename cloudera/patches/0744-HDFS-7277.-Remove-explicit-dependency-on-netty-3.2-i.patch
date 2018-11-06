@@ -1,0 +1,50 @@
+From cf96fc9ff037809795cf27950ef4a37df1b8a478 Mon Sep 17 00:00:00 2001
+From: Haohui Mai <wheat9@apache.org>
+Date: Wed, 22 Oct 2014 14:45:35 -0700
+Subject: [PATCH 0744/1023] HDFS-7277. Remove explicit dependency on netty 3.2
+ in BKJournal. Contributed by Haohui Mai.
+
+(cherry picked from commit f729ecf9d2b858e9ee97419e788f1a2ac38b15bb)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt
+
+Change-Id: I7f8569c93a166defde6d8240632fa495db500218
+---
+ .../hadoop-hdfs/src/contrib/bkjournal/pom.xml      |   18 ------------------
+ 1 file changed, 18 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/contrib/bkjournal/pom.xml b/hadoop-hdfs-project/hadoop-hdfs/src/contrib/bkjournal/pom.xml
+index 7eefb10..a600766 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/contrib/bkjournal/pom.xml
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/contrib/bkjournal/pom.xml
+@@ -36,26 +36,8 @@ http://maven.apache.org/xsd/maven-4.0.0.xsd">
+     <hadoop.common.build.dir>${basedir}/../../../../../hadoop-common-project/hadoop-common/target</hadoop.common.build.dir>
+   </properties>
+ 
+-  <dependencyManagement>
+-    <dependencies>
+-      <!-- This is a really old version of netty, that gets privatized
+-           via shading and hence it is not managed via a parent pom -->
+-      <dependency>
+-        <groupId>org.jboss.netty</groupId>
+-        <artifactId>netty</artifactId>
+-        <version>3.2.4.Final</version>
+-      </dependency>
+-    </dependencies>
+-  </dependencyManagement>
+-
+   <dependencies>
+     <dependency>
+-      <groupId>org.jboss.netty</groupId>
+-      <artifactId>netty</artifactId>
+-      <scope>compile</scope>
+-    </dependency>
+-
+-    <dependency>
+       <groupId>commons-logging</groupId>
+       <artifactId>commons-logging</artifactId>
+       <scope>compile</scope>
+-- 
+1.7.9.5
+

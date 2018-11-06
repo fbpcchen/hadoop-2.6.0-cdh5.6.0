@@ -1,0 +1,47 @@
+From 7c8ed8723ba46131b35c09a9157a25cce7f72f19 Mon Sep 17 00:00:00 2001
+From: Akira Ajisaka <aajisaka@apache.org>
+Date: Wed, 27 May 2015 18:04:40 +0900
+Subject: [PATCH 0646/1023] HADOOP-11242. Record the time of calling in
+ tracing span of IPC server. Contributed by
+ Mastake Iwasaki.
+
+(cherry picked from commit bb1816328a36ec3f8c6bd9fdb950d9a4ec8388c8)
+(cherry picked from commit 9670762a82a3c63bdfe6cd4feb86025ad640a56e)
+---
+ .../main/java/org/apache/hadoop/ipc/Server.java    |    1 +
+ .../org/apache/hadoop/tracing/TestTracing.java     |    7 +++++++
+ 2 files changed, 8 insertions(+)
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/Server.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/Server.java
+index 36466ce..65f82e6 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/Server.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/Server.java
+@@ -2026,6 +2026,7 @@ public void run() {
+           CurCall.set(call);
+           if (call.traceSpan != null) {
+             traceScope = Trace.continueSpan(call.traceSpan);
++            traceScope.getSpan().addTimelineAnnotation("called");
+           }
+ 
+           try {
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracing.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracing.java
+index f6fef5a..267f9c2 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracing.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracing.java
+@@ -124,6 +124,13 @@ public void writeWithTracing() throws Exception {
+         Assert.assertEquals(ts.getSpan().getTraceId(), span.getTraceId());
+       }
+     }
++
++    // test for timeline annotation added by HADOOP-11242
++    Assert.assertEquals("called",
++        map.get("org.apache.hadoop.hdfs.protocol.ClientProtocol.create")
++           .get(0).getTimelineAnnotations()
++           .get(0).getMessage());
++
+     SetSpanReceiver.SetHolder.spans.clear();
+   }
+ 
+-- 
+1.7.9.5
+

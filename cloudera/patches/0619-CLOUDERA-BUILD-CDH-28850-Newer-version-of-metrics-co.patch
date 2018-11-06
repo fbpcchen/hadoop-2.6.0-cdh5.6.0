@@ -1,0 +1,27 @@
+From edb27d419357629344a5131cad3f696cd9f1288c Mon Sep 17 00:00:00 2001
+From: Arun Suresh <asuresh@cloudera.com>
+Date: Tue, 30 Jun 2015 15:44:16 -0700
+Subject: [PATCH 0619/1023] CLOUDERA-BUILD: CDH-28850 : Newer version of
+ metrics-core.jar, jackson-databind.jar etc
+ detected. Harmonize jars.
+
+---
+ hadoop-project/pom.xml |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/hadoop-project/pom.xml b/hadoop-project/pom.xml
+index 830c0f9..68e940b 100644
+--- a/hadoop-project/pom.xml
++++ b/hadoop-project/pom.xml
+@@ -858,7 +858,7 @@
+       <dependency>
+         <groupId>com.codahale.metrics</groupId>
+         <artifactId>metrics-core</artifactId>
+-        <version>3.0.1</version>
++        <version>3.0.2</version>
+       </dependency>
+       <dependency>
+         <groupId>org.apache.hadoop</groupId>
+-- 
+1.7.9.5
+

@@ -1,0 +1,61 @@
+From f28fe978dd960ad706d7674b19d7290acdf3f1d4 Mon Sep 17 00:00:00 2001
+From: Colin Patrick Mccabe <cmccabe@cloudera.com>
+Date: Fri, 8 May 2015 12:30:03 -0700
+Subject: [PATCH 0654/1023] CLOUDERA-BUILD. fix htrace configuration default
+ files.
+
+---
+ .../src/main/resources/core-default.xml            |   12 ------------
+ .../src/main/resources/hdfs-default.xml            |   17 +++++++++++++++++
+ 2 files changed, 17 insertions(+), 12 deletions(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/resources/core-default.xml b/hadoop-common-project/hadoop-common/src/main/resources/core-default.xml
+index 2badacb..26e08da 100644
+--- a/hadoop-common-project/hadoop-common/src/main/resources/core-default.xml
++++ b/hadoop-common-project/hadoop-common/src/main/resources/core-default.xml
+@@ -1756,16 +1756,4 @@ for ldap providers in the same way as above does.
+   </description>
+ </property>
+ 
+-<property>
+-  <name>hadoop.htrace.spanreceiver.classes</name>
+-  <value></value>
+-  <description>
+-    A comma separated list of the fully-qualified class name of classes 
+-    implementing SpanReceiver. The tracing system works by collecting 
+-    information in structs called 'Spans'. It is up to you to choose 
+-    how you want to receive this information by implementing the 
+-    SpanReceiver interface.
+-  </description>
+-</property>
+-
+ </configuration>
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/resources/hdfs-default.xml b/hadoop-hdfs-project/hadoop-hdfs/src/main/resources/hdfs-default.xml
+index 149395e..33c5934 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/resources/hdfs-default.xml
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/resources/hdfs-default.xml
+@@ -2266,4 +2266,21 @@
+   </description>
+ </property>
+ 
++<property>
++  <name>dfs.htrace.spanreceiver.classes</name>
++  <value></value>
++  <description>
++    The class name of the HTrace SpanReceiver for the NameNode and DataNode.
++  </description>
++</property>
++
++<property>
++  <name>dfs.client.htrace.spanreceiver.classes</name>
++  <value></value>
++  <description>
++    The class name of the HTrace SpanReceiver for the HDFS client. You do not
++    need to enable this if your client program has been modified to use HTrace.
++  </description>
++</property>
++
+ </configuration>
+-- 
+1.7.9.5
+

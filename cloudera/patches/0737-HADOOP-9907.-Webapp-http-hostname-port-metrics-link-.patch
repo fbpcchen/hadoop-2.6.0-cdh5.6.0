@@ -1,0 +1,82 @@
+From 26bc55e784f14e4d8f1fc771878770037f2fdd48 Mon Sep 17 00:00:00 2001
+From: Akira Ajisaka <aajisaka@apache.org>
+Date: Fri, 30 Jan 2015 02:49:10 +0900
+Subject: [PATCH 0737/1023] HADOOP-9907. Webapp http://hostname:port/metrics
+ link is not working. (aajisaka)
+
+(cherry picked from commit 342efa110af9989829b8a8caa699658a2ba01607)
+(cherry picked from commit 1081b4c4a73c88d057a5a2781d8e7e9a710ff32e)
+
+Change-Id: I5bd98cc0343f965fde45217c9bf63d758bb57ef7
+---
+ .../hadoop/mapreduce/v2/app/webapp/NavBlock.java   |    2 +-
+ .../hadoop/mapreduce/v2/hs/webapp/HsNavBlock.java  |    2 +-
+ .../apache/hadoop/yarn/webapp/view/NavBlock.java   |    2 +-
+ .../yarn/server/nodemanager/webapp/NavBlock.java   |    2 +-
+ .../server/resourcemanager/webapp/NavBlock.java    |    2 +-
+ 5 files changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/main/java/org/apache/hadoop/mapreduce/v2/app/webapp/NavBlock.java b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/main/java/org/apache/hadoop/mapreduce/v2/app/webapp/NavBlock.java
+index 0edeb16..4eed7e3 100644
+--- a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/main/java/org/apache/hadoop/mapreduce/v2/app/webapp/NavBlock.java
++++ b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/main/java/org/apache/hadoop/mapreduce/v2/app/webapp/NavBlock.java
+@@ -83,6 +83,6 @@
+         li().a("/conf", "Configuration")._().
+         li().a("/logs", "Local logs")._().
+         li().a("/stacks", "Server stacks")._().
+-        li().a("/metrics", "Server metrics")._()._()._();
++        li().a("/jmx?qry=Hadoop:*", "Server metrics")._()._()._();
+   }
+ }
+diff --git a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-hs/src/main/java/org/apache/hadoop/mapreduce/v2/hs/webapp/HsNavBlock.java b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-hs/src/main/java/org/apache/hadoop/mapreduce/v2/hs/webapp/HsNavBlock.java
+index 231e362..7e49d52 100644
+--- a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-hs/src/main/java/org/apache/hadoop/mapreduce/v2/hs/webapp/HsNavBlock.java
++++ b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-hs/src/main/java/org/apache/hadoop/mapreduce/v2/hs/webapp/HsNavBlock.java
+@@ -70,6 +70,6 @@
+           li().a("/conf", "Configuration")._().
+           li().a("/logs", "Local logs")._().
+           li().a("/stacks", "Server stacks")._().
+-          li().a("/metrics", "Server metrics")._()._()._();
++          li().a("/jmx?qry=Hadoop:*", "Server metrics")._()._()._();
+   }
+ }
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/main/java/org/apache/hadoop/yarn/webapp/view/NavBlock.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/main/java/org/apache/hadoop/yarn/webapp/view/NavBlock.java
+index febc818..cdc13eb 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/main/java/org/apache/hadoop/yarn/webapp/view/NavBlock.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/main/java/org/apache/hadoop/yarn/webapp/view/NavBlock.java
+@@ -36,6 +36,6 @@
+           li().a("/conf", "Configuration")._().
+           li().a("/stacks", "Thread dump")._().
+           li().a("/logs", "Logs")._().
+-          li().a("/metrics", "Metrics")._()._()._();
++          li().a("/jmx?qry=Hadoop:*", "Metrics")._()._()._();
+   }
+ }
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/webapp/NavBlock.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/webapp/NavBlock.java
+index 022d892..b8a10f1 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/webapp/NavBlock.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/webapp/NavBlock.java
+@@ -59,7 +59,7 @@ protected void render(Block html) {
+           .li().a("/conf", "Configuration")._()
+           .li().a("/logs", "Local logs")._()
+           .li().a("/stacks", "Server stacks")._()
+-          .li().a("/metrics", "Server metrics")._()._()._();
++          .li().a("/jmx?qry=Hadoop:*", "Server metrics")._()._()._();
+   }
+ 
+ }
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/webapp/NavBlock.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/webapp/NavBlock.java
+index ce8fd9e..e061b23 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/webapp/NavBlock.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/webapp/NavBlock.java
+@@ -50,6 +50,6 @@
+           li().a("/conf", "Configuration")._().
+           li().a("/logs", "Local logs")._().
+           li().a("/stacks", "Server stacks")._().
+-          li().a("/metrics", "Server metrics")._()._()._();
++          li().a("/jmx?qry=Hadoop:*", "Server metrics")._()._()._();
+   }
+ }
+-- 
+1.7.9.5
+

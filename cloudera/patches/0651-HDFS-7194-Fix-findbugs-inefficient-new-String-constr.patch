@@ -1,0 +1,30 @@
+From 1fd70ef615f436f48a415b767e5ac44d3d27184b Mon Sep 17 00:00:00 2001
+From: Colin Patrick Mccabe <cmccabe@cloudera.com>
+Date: Mon, 6 Oct 2014 15:29:09 -0700
+Subject: [PATCH 0651/1023] HDFS-7194 Fix findbugs "inefficient new String
+ constructor" warning in DFSClient#PATH (yzhang
+ via cmccabe)
+
+(cherry picked from commit 8dc6abf2f4218b2d84b2c2dc7d18623d897c362d)
+(cherry picked from commit eeb39dc21853f2e670d6be76d8fe3f002d559f42)
+---
+ .../java/org/apache/hadoop/hdfs/DFSClient.java     |    3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSClient.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSClient.java
+index c8f6cc2..b178d4a 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSClient.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSClient.java
+@@ -3470,8 +3470,7 @@ public SaslDataTransferClient getSaslDataTransferClient() {
+     return saslClient;
+   }
+ 
+-  private static final byte[] PATH =
+-      new String("path").getBytes(Charset.forName("UTF-8"));
++  private static final byte[] PATH = "path".getBytes(Charset.forName("UTF-8"));
+ 
+   TraceScope getPathTraceScope(String description, String path) {
+     TraceScope scope = Trace.startSpan(description, traceSampler);
+-- 
+1.7.9.5
+

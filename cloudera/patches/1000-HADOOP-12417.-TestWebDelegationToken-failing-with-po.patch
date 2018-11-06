@@ -1,0 +1,43 @@
+From 272ef57719cc39c8e2ccdaff74dc9fbdf2045805 Mon Sep 17 00:00:00 2001
+From: Haohui Mai <wheat9@apache.org>
+Date: Wed, 16 Sep 2015 18:38:37 -0700
+Subject: [PATCH 1000/1023] HADOOP-12417. TestWebDelegationToken failing with
+ port in use. Contributed by Mingliang Liu.
+
+(cherry picked from commit d5936aa48cafda43bab57578708d880fc68e405a)
+
+Change-Id: I34f571f4cd06a951a9dad9d854af9eff06a35ffd
+---
+ .../delegation/web/TestWebDelegationToken.java     |    7 +------
+ 1 file changed, 1 insertion(+), 6 deletions(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/security/token/delegation/web/TestWebDelegationToken.java b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/security/token/delegation/web/TestWebDelegationToken.java
+index d18f968..73562b5 100644
+--- a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/security/token/delegation/web/TestWebDelegationToken.java
++++ b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/security/token/delegation/web/TestWebDelegationToken.java
+@@ -176,13 +176,8 @@ protected void doPost(HttpServletRequest req, HttpServletResponse resp)
+ 
+   protected Server createJettyServer() {
+     try {
+-      InetAddress localhost = InetAddress.getLocalHost();
+-      ServerSocket ss = new ServerSocket(0, 50, localhost);
+-      int port = ss.getLocalPort();
+-      ss.close();
+       jetty = new Server(0);
+       jetty.getConnectors()[0].setHost("localhost");
+-      jetty.getConnectors()[0].setPort(port);
+       return jetty;
+     } catch (Exception ex) {
+       throw new RuntimeException("Could not setup Jetty: " + ex.getMessage(),
+@@ -192,7 +187,7 @@ protected Server createJettyServer() {
+ 
+   protected String getJettyURL() {
+     Connector c = jetty.getConnectors()[0];
+-    return "http://" + c.getHost() + ":" + c.getPort();
++    return "http://" + c.getHost() + ":" + c.getLocalPort();
+   }
+ 
+   @Before
+-- 
+1.7.9.5
+

@@ -1,0 +1,61 @@
+From e98d011a02d177504526d9140104bdc4a5e1c81c Mon Sep 17 00:00:00 2001
+From: Yongjun Zhang <yzhang@cloudera.com>
+Date: Sun, 14 Jun 2015 11:20:32 -0700
+Subject: [PATCH 0757/1023] HDFS-8596. TestDistributedFileSystem et al tests
+ are broken in branch-2 due to incorrect setting
+ of "datanode" attribute. Contributed by Yongjun
+ Zhang.
+
+(cherry picked from commit b0dc291961410b6ac2b275cdcff4b95d75727e8d)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/web/DatanodeHttpServer.java
+
+(cherry picked from commit cd578fa289252b0ae1e27f7e7b097cceeb2c30ff)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt
+
+Change-Id: I8507d95eec397a1f7bbac9bd9fd3ef5f8668aa2d
+---
+ .../hadoop/hdfs/server/datanode/DataNode.java      |    2 +-
+ .../server/datanode/web/DatanodeHttpServer.java    |    3 ++-
+ 2 files changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java
+index 37afc9a..f3b78ca 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java
+@@ -765,7 +765,7 @@ private void startInfoServer(Configuration conf)
+     ServerSocketChannel httpServerChannel = secureResources != null ?
+         secureResources.getHttpServerChannel() : null;
+ 
+-    this.httpServer = new DatanodeHttpServer(conf, httpServerChannel);
++    this.httpServer = new DatanodeHttpServer(conf, this, httpServerChannel);
+     httpServer.start();
+     if (httpServer.getHttpAddress() != null) {
+       infoPort = httpServer.getHttpAddress().getPort();
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/web/DatanodeHttpServer.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/web/DatanodeHttpServer.java
+index ddd5a48..f645c96 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/web/DatanodeHttpServer.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/web/DatanodeHttpServer.java
+@@ -76,6 +76,7 @@
+   static final Log LOG = LogFactory.getLog(DatanodeHttpServer.class);
+ 
+   public DatanodeHttpServer(final Configuration conf,
++      final DataNode datanode,
+       final ServerSocketChannel externalHttpChannel)
+     throws IOException {
+     this.conf = conf;
+@@ -96,7 +97,7 @@ public DatanodeHttpServer(final Configuration conf,
+     this.infoServer.addInternalServlet(null, "/getFileChecksum/*",
+         FileChecksumServlets.GetServlet.class);
+ 
+-    this.infoServer.setAttribute("datanode", this);
++    this.infoServer.setAttribute("datanode", datanode);
+     this.infoServer.setAttribute(JspHelper.CURRENT_CONF, conf);
+     this.infoServer.addServlet(null, "/blockScannerReport",
+                                BlockScanner.Servlet.class);
+-- 
+1.7.9.5
+

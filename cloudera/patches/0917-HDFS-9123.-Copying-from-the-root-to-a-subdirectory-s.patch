@@ -1,0 +1,62 @@
+From ffe82f4e2cf0bbf117510942c84d3cadaaecfbd5 Mon Sep 17 00:00:00 2001
+From: Yongjun Zhang <yzhang@cloudera.com>
+Date: Thu, 24 Sep 2015 21:36:38 -0700
+Subject: [PATCH 0917/1023] HDFS-9123. Copying from the root to a subdirectory
+ should be forbidden. (Wei-Chiu Chuang via Yongjun
+ Zhang) (Cherry picked from commit
+ 3187dbd7a8b6376134a00e5c9c4693d8eb762c9d)
+
+Change-Id: I39b2acd47a89744bd29bc6564b1668a881d75ce7
+(cherry picked from commit 4f87cc69c1fa15ae3fee2e6525f5c1129003b786)
+(cherry picked from commit 820d4e7165c58fc81376df5316d0dc42f17aa99a)
+---
+ .../hadoop/fs/shell/CommandWithDestination.java    |    8 +++++++-
+ .../java/org/apache/hadoop/hdfs/TestDFSShell.java  |   13 +++++++++++++
+ 2 files changed, 20 insertions(+), 1 deletion(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/CommandWithDestination.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/CommandWithDestination.java
+index 65e52fd..c8042ad 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/CommandWithDestination.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/CommandWithDestination.java
+@@ -233,7 +233,13 @@ protected void processPathArgument(PathData src)
+         e.setTargetPath(dstPath.toString());
+         throw e;
+       }
+-      if (dstPath.startsWith(srcPath+Path.SEPARATOR)) {
++      // When a path is normalized, all trailing slashes are removed
++      // except for the root
++      if(!srcPath.endsWith(Path.SEPARATOR)) {
++        srcPath += Path.SEPARATOR;
++      }
++
++      if(dstPath.startsWith(srcPath)) {
+         PathIOException e = new PathIOException(src.toString(),
+             "is a subdirectory of itself");
+         e.setTargetPath(target.toString());
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDFSShell.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDFSShell.java
+index 7973e3e..23f1cd1 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDFSShell.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDFSShell.java
+@@ -1312,6 +1312,19 @@ public void testDFSShell() throws IOException {
+                              e.getLocalizedMessage());
+         }
+         assertEquals(0, val);
++
++        // this should fail
++        args1[0] = "-cp";
++        args1[1] = "/";
++        args1[2] = "/test";
++        val = 0;
++        try {
++          val = shell.run(args1);
++        } catch (Exception e) {
++          System.err.println("Exception raised from DFSShell.run " +
++              e.getLocalizedMessage());
++        }
++        assertEquals(1, val);
+       }
+ 
+       // Verify -test -f negative case (missing file)
+-- 
+1.7.9.5
+

@@ -1,0 +1,376 @@
+From 07265f6e0cb0221cfc8cfa77496fe95cc7ecc1e9 Mon Sep 17 00:00:00 2001
+From: Jian He <jianhe@apache.org>
+Date: Tue, 17 Mar 2015 21:28:58 -0700
+Subject: [PATCH 0857/1023] CLOUDERA-BUILD Partial backport to get
+ dependancies needed for YARN-2005 changes
+
+Change-Id: I644978ac85bad541685c6b502d1a3ddc791b9022
+(cherry picked from commit 20b7b3a3b5443a92069b198a61cea4329099be1b)
+(cherry picked from commit 81c47e6078ef7bfc96712f252ba62df76e6adabd)
+---
+ .../server/resourcemanager/TestFifoScheduler.java  |   27 ++++++++++++++++-
+ .../scheduler/fair/FairSchedulerTestBase.java      |   31 +++++++++++++++----
+ .../scheduler/fair/TestContinuousScheduling.java   |    3 ++
+ .../scheduler/fair/TestFairScheduler.java          |   25 +++++++++++----
+ .../scheduler/fifo/TestFifoScheduler.java          |   32 +++++++++++++++++++-
+ 5 files changed, 104 insertions(+), 14 deletions(-)
+
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/TestFifoScheduler.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/TestFifoScheduler.java
+index 225e225..9faf858 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/TestFifoScheduler.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/TestFifoScheduler.java
+@@ -33,6 +33,7 @@
+ import org.apache.hadoop.yarn.api.protocolrecords.AllocateResponse;
+ import org.apache.hadoop.yarn.api.records.ApplicationAttemptId;
+ import org.apache.hadoop.yarn.api.records.ApplicationId;
++import org.apache.hadoop.yarn.api.records.ApplicationSubmissionContext;
+ import org.apache.hadoop.yarn.api.records.Container;
+ import org.apache.hadoop.yarn.api.records.ContainerId;
+ import org.apache.hadoop.yarn.api.records.ContainerState;
+@@ -45,9 +46,11 @@
+ import org.apache.hadoop.yarn.exceptions.YarnRuntimeException;
+ import org.apache.hadoop.yarn.server.api.protocolrecords.UpdateNodeResourceRequest;
+ import org.apache.hadoop.yarn.server.resourcemanager.rmapp.RMApp;
++import org.apache.hadoop.yarn.server.resourcemanager.rmapp.RMAppImpl;
+ import org.apache.hadoop.yarn.server.resourcemanager.rmapp.attempt.RMAppAttempt;
++import org.apache.hadoop.yarn.server.resourcemanager.rmapp.attempt.RMAppAttemptImpl;
++import org.apache.hadoop.yarn.server.resourcemanager.rmapp.attempt.RMAppAttemptMetrics;
+ import org.apache.hadoop.yarn.server.resourcemanager.rmnode.RMNode;
+-import org.apache.hadoop.yarn.server.resourcemanager.scheduler.AbstractYarnScheduler;
+ import org.apache.hadoop.yarn.server.resourcemanager.scheduler.Allocation;
+ import org.apache.hadoop.yarn.server.resourcemanager.scheduler.ResourceScheduler;
+ import org.apache.hadoop.yarn.server.resourcemanager.scheduler.SchedulerNodeReport;
+@@ -67,7 +70,9 @@
+ import org.junit.Assert;
+ import org.junit.BeforeClass;
+ import org.junit.Test;
++
+ import static org.mockito.Mockito.mock;
++import static org.mockito.Mockito.when;
+ 
+ public class TestFifoScheduler {
+   private static final Log LOG = LogFactory.getLog(TestFifoScheduler.class);
+@@ -373,6 +378,8 @@ public void testBlackListNodes() throws Exception {
+     ApplicationId appId1 = BuilderUtils.newApplicationId(100, 1);
+     ApplicationAttemptId appAttemptId1 = BuilderUtils.newApplicationAttemptId(
+         appId1, 1);
++    createMockRMApp(appAttemptId1, rm.getRMContext());
++
+     SchedulerEvent appEvent =
+         new AppAddedSchedulerEvent(appId1, "queue", "user");
+     fs.handle(appEvent);
+@@ -467,6 +474,7 @@ public void testHeadroom() throws Exception {
+     ApplicationId appId1 = BuilderUtils.newApplicationId(100, 1);
+     ApplicationAttemptId appAttemptId1 = BuilderUtils.newApplicationAttemptId(
+         appId1, 1);
++    createMockRMApp(appAttemptId1, rm.getRMContext());
+     SchedulerEvent appEvent =
+         new AppAddedSchedulerEvent(appId1, "queue", "user");
+     fs.handle(appEvent);
+@@ -477,6 +485,7 @@ public void testHeadroom() throws Exception {
+     ApplicationId appId2 = BuilderUtils.newApplicationId(200, 2);
+     ApplicationAttemptId appAttemptId2 = BuilderUtils.newApplicationAttemptId(
+         appId2, 1);
++    createMockRMApp(appAttemptId2, rm.getRMContext());
+     SchedulerEvent appEvent2 =
+         new AppAddedSchedulerEvent(appId2, "queue", "user");
+     fs.handle(appEvent2);
+@@ -603,4 +612,20 @@ public static void main(String[] args) throws Exception {
+     t.testNonDefaultMinimumAllocation();
+     t.testReconnectedNode();
+   }
++
++  private RMAppImpl createMockRMApp(ApplicationAttemptId attemptId,
++      RMContext context) {
++    RMAppImpl app = mock(RMAppImpl.class);
++    when(app.getApplicationId()).thenReturn(attemptId.getApplicationId());
++    RMAppAttemptImpl attempt = mock(RMAppAttemptImpl.class);
++    when(attempt.getAppAttemptId()).thenReturn(attemptId);
++    RMAppAttemptMetrics attemptMetric = mock(RMAppAttemptMetrics.class);
++    when(attempt.getRMAppAttemptMetrics()).thenReturn(attemptMetric);
++    when(app.getCurrentAppAttempt()).thenReturn(attempt);
++    ApplicationSubmissionContext submissionContext = mock(ApplicationSubmissionContext.class);
++    when(submissionContext.getUnmanagedAM()).thenReturn(false);
++    when(attempt.getSubmissionContext()).thenReturn(submissionContext);
++    context.getRMApps().putIfAbsent(attemptId.getApplicationId(), app);
++    return app;
++  }
+ }
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/FairSchedulerTestBase.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/FairSchedulerTestBase.java
+index d5a07d1..f95e8dc 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/FairSchedulerTestBase.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/FairSchedulerTestBase.java
+@@ -28,6 +28,7 @@
+ import org.apache.hadoop.yarn.api.records.ApplicationAttemptId;
+ import org.apache.hadoop.yarn.api.records.ApplicationId;
+ import org.apache.hadoop.yarn.api.records.ApplicationSubmissionContext;
++import org.apache.hadoop.yarn.api.records.Container;
+ import org.apache.hadoop.yarn.api.records.ContainerId;
+ import org.apache.hadoop.yarn.api.records.Priority;
+ import org.apache.hadoop.yarn.api.records.Resource;
+@@ -38,6 +39,8 @@
+ import org.apache.hadoop.yarn.server.resourcemanager.RMContext;
+ import org.apache.hadoop.yarn.server.resourcemanager.ResourceManager;
+ import org.apache.hadoop.yarn.server.resourcemanager.rmapp.RMApp;
++import org.apache.hadoop.yarn.server.resourcemanager.rmapp.RMAppEvent;
++import org.apache.hadoop.yarn.server.resourcemanager.rmapp.RMAppEventType;
+ import org.apache.hadoop.yarn.server.resourcemanager.rmapp.RMAppImpl;
+ import org.apache.hadoop.yarn.server.resourcemanager.rmapp.attempt.RMAppAttempt;
+ import org.apache.hadoop.yarn.server.resourcemanager.rmapp.attempt.RMAppAttemptImpl;
+@@ -146,14 +149,21 @@ protected ApplicationAttemptId createSchedulingRequest(
+     ResourceRequest request = createResourceRequest(memory, vcores, ResourceRequest.ANY,
+         priority, numContainers, true);
+     ask.add(request);
+-    scheduler.allocate(id, ask,  new ArrayList<ContainerId>(), null, null);
++
+     RMApp rmApp = mock(RMApp.class);
+     RMAppAttempt rmAppAttempt = mock(RMAppAttempt.class);
+     when(rmApp.getCurrentAppAttempt()).thenReturn(rmAppAttempt);
+     when(rmAppAttempt.getRMAppAttemptMetrics()).thenReturn(
+         new RMAppAttemptMetrics(id, resourceManager.getRMContext()));
++    ApplicationSubmissionContext submissionContext = mock(ApplicationSubmissionContext.class);
++    when(submissionContext.getUnmanagedAM()).thenReturn(false);
++    when(rmAppAttempt.getSubmissionContext()).thenReturn(submissionContext);
++    Container container = mock(Container.class);
++    when(rmAppAttempt.getMasterContainer()).thenReturn(container);
+     resourceManager.getRMContext().getRMApps()
+         .put(id.getApplicationId(), rmApp);
++
++    scheduler.allocate(id, ask, new ArrayList<ContainerId>(), null, null);
+     return id;
+   }
+   
+@@ -167,14 +177,19 @@ protected ApplicationAttemptId createSchedulingRequest(String queueId,
+     if (scheduler.getSchedulerApplications().containsKey(id.getApplicationId())) {
+       scheduler.addApplicationAttempt(id, false, false);
+     }
+-    scheduler.allocate(id, ask, new ArrayList<ContainerId>(), null, null);
++
+     RMApp rmApp = mock(RMApp.class);
+     RMAppAttempt rmAppAttempt = mock(RMAppAttempt.class);
+     when(rmApp.getCurrentAppAttempt()).thenReturn(rmAppAttempt);
+     when(rmAppAttempt.getRMAppAttemptMetrics()).thenReturn(
+         new RMAppAttemptMetrics(id,resourceManager.getRMContext()));
++    ApplicationSubmissionContext submissionContext = mock(ApplicationSubmissionContext.class);
++    when(submissionContext.getUnmanagedAM()).thenReturn(false);
++    when(rmAppAttempt.getSubmissionContext()).thenReturn(submissionContext);
+     resourceManager.getRMContext().getRMApps()
+         .put(id.getApplicationId(), rmApp);
++
++    scheduler.allocate(id, ask, new ArrayList<ContainerId>(), null, null);
+     return id;
+   }
+ 
+@@ -202,13 +217,14 @@ protected void createSchedulingRequestExistingApplication(
+   protected void createApplicationWithAMResource(ApplicationAttemptId attId,
+       String queue, String user, Resource amResource) {
+     RMContext rmContext = resourceManager.getRMContext();
+-    RMApp rmApp = new RMAppImpl(attId.getApplicationId(), rmContext, conf,
+-        null, null, null, ApplicationSubmissionContext.newInstance(null, null,
+-        null, null, null, false, false, 0, amResource, null), null, null,
++    ApplicationId appId = attId.getApplicationId();
++    RMApp rmApp = new RMAppImpl(appId, rmContext, conf,
++        null, user, null, ApplicationSubmissionContext.newInstance(appId, null,
++        queue, null, null, false, false, 0, amResource, null), scheduler, null,
+         0, null, null, null);
+     rmContext.getRMApps().put(attId.getApplicationId(), rmApp);
+     AppAddedSchedulerEvent appAddedEvent = new AppAddedSchedulerEvent(
+-        attId.getApplicationId(), queue, user);
++        appId, queue, user);
+     scheduler.handle(appAddedEvent);
+     AppAttemptAddedSchedulerEvent attempAddedEvent =
+         new AppAttemptAddedSchedulerEvent(attId, false);
+@@ -223,6 +239,9 @@ protected RMApp createMockRMApp(ApplicationAttemptId attemptId) {
+     RMAppAttemptMetrics attemptMetric = mock(RMAppAttemptMetrics.class);
+     when(attempt.getRMAppAttemptMetrics()).thenReturn(attemptMetric);
+     when(app.getCurrentAppAttempt()).thenReturn(attempt);
++    ApplicationSubmissionContext submissionContext = mock(ApplicationSubmissionContext.class);
++    when(submissionContext.getUnmanagedAM()).thenReturn(false);
++    when(attempt.getSubmissionContext()).thenReturn(submissionContext);
+     resourceManager.getRMContext().getRMApps()
+         .put(attemptId.getApplicationId(), app);
+     return app;
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/TestContinuousScheduling.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/TestContinuousScheduling.java
+index d1e166b..83e4342 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/TestContinuousScheduling.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/TestContinuousScheduling.java
+@@ -24,6 +24,7 @@
+ import org.apache.hadoop.yarn.api.records.ResourceRequest;
+ import org.apache.hadoop.yarn.server.resourcemanager.MockNodes;
+ import org.apache.hadoop.yarn.server.resourcemanager.MockRM;
++import org.apache.hadoop.yarn.server.resourcemanager.rmapp.RMAppImpl;
+ import org.apache.hadoop.yarn.server.resourcemanager.rmnode.RMNode;
+ import org.apache.hadoop.yarn.server.resourcemanager.scheduler.event.NodeAddedSchedulerEvent;
+ 
+@@ -92,6 +93,8 @@ public void testSchedulingDelay() throws InterruptedException {
+     // and ANY requests
+     ApplicationAttemptId appAttemptId =
+         createAppAttemptId(this.APP_ID++, this.ATTEMPT_ID++);
++    createMockRMApp(appAttemptId);
++
+     scheduler.addApplication(appAttemptId.getApplicationId(), "queue11", "user11", false);
+     scheduler.addApplicationAttempt(appAttemptId, false, false);
+     List<ResourceRequest> ask = new ArrayList<>();
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/TestFairScheduler.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/TestFairScheduler.java
+index 8905754..dd1344f 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/TestFairScheduler.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/TestFairScheduler.java
+@@ -1382,12 +1382,16 @@ public void testQueueDemandCalculation() throws Exception {
+     scheduler.reinitialize(conf, resourceManager.getRMContext());
+ 
+     ApplicationAttemptId id11 = createAppAttemptId(1, 1);
++    createMockRMApp(id11);
+     scheduler.addApplication(id11.getApplicationId(), "root.queue1", "user1", false);
+     scheduler.addApplicationAttempt(id11, false, false);
+     ApplicationAttemptId id21 = createAppAttemptId(2, 1);
++    createMockRMApp(id21);
+     scheduler.addApplication(id21.getApplicationId(), "root.queue2", "user1", false);
+     scheduler.addApplicationAttempt(id21, false, false);
+     ApplicationAttemptId id22 = createAppAttemptId(2, 2);
++    createMockRMApp(id22);
++
+     scheduler.addApplication(id22.getApplicationId(), "root.queue2", "user1", false);
+     scheduler.addApplicationAttempt(id22, false, false);
+ 
+@@ -2868,9 +2872,13 @@ public void testMultipleNodesSingleRackRequest() throws Exception {
+     NodeAddedSchedulerEvent nodeEvent2 = new NodeAddedSchedulerEvent(node2);
+     scheduler.handle(nodeEvent2);
+     
+-    ApplicationAttemptId appId = createAppAttemptId(this.APP_ID++, this.ATTEMPT_ID++);
+-    scheduler.addApplication(appId.getApplicationId(), "queue1", "user1", false);
+-    scheduler.addApplicationAttempt(appId, false, false);
++    ApplicationAttemptId attemptId =
++        createAppAttemptId(this.APP_ID++, this.ATTEMPT_ID++);
++    createMockRMApp(attemptId);
++
++    scheduler.addApplication(attemptId.getApplicationId(), "queue1", "user1",
++        false);
++    scheduler.addApplicationAttempt(attemptId, false, false);
+     
+     // 1 request with 2 nodes on the same rack. another request with 1 node on
+     // a different rack
+@@ -2882,21 +2890,24 @@ public void testMultipleNodesSingleRackRequest() throws Exception {
+     asks.add(createResourceRequest(1024, node3.getRackName(), 1, 1, true));
+     asks.add(createResourceRequest(1024, ResourceRequest.ANY, 1, 2, true));
+ 
+-    scheduler.allocate(appId, asks, new ArrayList<ContainerId>(), null, null);
++    scheduler.allocate(attemptId, asks, new ArrayList<ContainerId>(), null,
++        null);
+     
+     // node 1 checks in
+     scheduler.update();
+     NodeUpdateSchedulerEvent updateEvent1 = new NodeUpdateSchedulerEvent(node1);
+     scheduler.handle(updateEvent1);
+     // should assign node local
+-    assertEquals(1, scheduler.getSchedulerApp(appId).getLiveContainers().size());
++    assertEquals(1, scheduler.getSchedulerApp(attemptId).getLiveContainers()
++        .size());
+ 
+     // node 2 checks in
+     scheduler.update();
+     NodeUpdateSchedulerEvent updateEvent2 = new NodeUpdateSchedulerEvent(node2);
+     scheduler.handle(updateEvent2);
+     // should assign rack local
+-    assertEquals(2, scheduler.getSchedulerApp(appId).getLiveContainers().size());
++    assertEquals(2, scheduler.getSchedulerApp(attemptId).getLiveContainers()
++        .size());
+   }
+   
+   @Test (timeout = 5000)
+@@ -4006,6 +4017,8 @@ public void testContinuousScheduling() throws Exception {
+     // send application request
+     ApplicationAttemptId appAttemptId =
+             createAppAttemptId(this.APP_ID++, this.ATTEMPT_ID++);
++    createMockRMApp(appAttemptId);
++
+     scheduler.addApplication(appAttemptId.getApplicationId(), "queue11", "user11", false);
+     scheduler.addApplicationAttempt(appAttemptId, false, false);
+     List<ResourceRequest> ask = new ArrayList<ResourceRequest>();
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fifo/TestFifoScheduler.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fifo/TestFifoScheduler.java
+index b4c4c10..fa93a40 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fifo/TestFifoScheduler.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fifo/TestFifoScheduler.java
+@@ -21,6 +21,7 @@
+ import static org.junit.Assert.assertEquals;
+ import static org.junit.Assert.assertTrue;
+ import static org.mockito.Mockito.mock;
++import static org.mockito.Mockito.when;
+ 
+ import java.io.IOException;
+ import java.lang.reflect.Method;
+@@ -35,6 +36,7 @@
+ import org.apache.hadoop.net.NetworkTopology;
+ import org.apache.hadoop.yarn.api.records.ApplicationAttemptId;
+ import org.apache.hadoop.yarn.api.records.ApplicationId;
++import org.apache.hadoop.yarn.api.records.ApplicationSubmissionContext;
+ import org.apache.hadoop.yarn.api.records.ContainerId;
+ import org.apache.hadoop.yarn.api.records.NodeId;
+ import org.apache.hadoop.yarn.api.records.Priority;
+@@ -57,6 +59,9 @@
+ import org.apache.hadoop.yarn.server.resourcemanager.Task;
+ import org.apache.hadoop.yarn.server.resourcemanager.ahs.RMApplicationHistoryWriter;
+ import org.apache.hadoop.yarn.server.resourcemanager.metrics.SystemMetricsPublisher;
++import org.apache.hadoop.yarn.server.resourcemanager.rmapp.RMAppImpl;
++import org.apache.hadoop.yarn.server.resourcemanager.rmapp.attempt.RMAppAttemptImpl;
++import org.apache.hadoop.yarn.server.resourcemanager.rmapp.attempt.RMAppAttemptMetrics;
+ import org.apache.hadoop.yarn.server.resourcemanager.rmnode.RMNode;
+ import org.apache.hadoop.yarn.server.resourcemanager.scheduler.AbstractYarnScheduler;
+ import org.apache.hadoop.yarn.server.resourcemanager.scheduler.QueueMetrics;
+@@ -209,9 +214,12 @@ public void testNodeLocalAssignment() throws Exception {
+     int _appAttemptId = 1;
+     ApplicationAttemptId appAttemptId = createAppAttemptId(_appId,
+         _appAttemptId);
++
++    createMockRMApp(appAttemptId, rmContext);
++
+     AppAddedSchedulerEvent appEvent =
+         new AppAddedSchedulerEvent(appAttemptId.getApplicationId(), "queue1",
+-          "user1");
++            "user1");
+     scheduler.handle(appEvent);
+     AppAttemptAddedSchedulerEvent attemptEvent =
+         new AppAttemptAddedSchedulerEvent(appAttemptId, false);
+@@ -305,6 +313,8 @@ public void testUpdateResourceOnNode() throws Exception {
+     int _appAttemptId = 1;
+     ApplicationAttemptId appAttemptId = createAppAttemptId(_appId,
+         _appAttemptId);
++    createMockRMApp(appAttemptId, rmContext);
++
+     AppAddedSchedulerEvent appEvent =
+         new AppAddedSchedulerEvent(appAttemptId.getApplicationId(), "queue1",
+           "user1");
+@@ -569,6 +579,9 @@ public void testBlackListNodes() throws Exception {
+     ApplicationId appId = BuilderUtils.newApplicationId(100, 1);
+     ApplicationAttemptId appAttemptId = BuilderUtils.newApplicationAttemptId(
+         appId, 1);
++
++    createMockRMApp(appAttemptId, rm.getRMContext());
++
+     SchedulerEvent appEvent =
+         new AppAddedSchedulerEvent(appId, "default",
+           "user");
+@@ -638,4 +651,21 @@ public static void main(String[] arg) throws Exception {
+     t.testFifoScheduler();
+     t.tearDown();
+   }
++
++  private RMAppImpl createMockRMApp(ApplicationAttemptId attemptId,
++      RMContext context) {
++    RMAppImpl app = mock(RMAppImpl.class);
++    when(app.getApplicationId()).thenReturn(attemptId.getApplicationId());
++    RMAppAttemptImpl attempt = mock(RMAppAttemptImpl.class);
++    when(attempt.getAppAttemptId()).thenReturn(attemptId);
++    RMAppAttemptMetrics attemptMetric = mock(RMAppAttemptMetrics.class);
++    when(attempt.getRMAppAttemptMetrics()).thenReturn(attemptMetric);
++    when(app.getCurrentAppAttempt()).thenReturn(attempt);
++    ApplicationSubmissionContext submissionContext = mock(ApplicationSubmissionContext.class);
++    when(submissionContext.getUnmanagedAM()).thenReturn(false);
++    when(attempt.getSubmissionContext()).thenReturn(submissionContext);
++    context.getRMApps().putIfAbsent(attemptId.getApplicationId(), app);
++    return app;
++  }
++
+ }
+-- 
+1.7.9.5
+

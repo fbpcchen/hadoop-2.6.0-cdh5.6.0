@@ -1,0 +1,79 @@
+From 27abae6c1aac9f9ccbf89265f2ca0bce6f54b5f3 Mon Sep 17 00:00:00 2001
+From: Vinayakumar B <vinayakumarb@apache.org>
+Date: Fri, 8 May 2015 17:18:14 +0530
+Subject: [PATCH 0822/1023] HDFS-3384. DataStreamer thread should be closed
+ immediatly when failed to setup a
+ PipelineForAppendOrRecovery (Contributed by Uma
+ Maheswara Rao G)
+
+(cherry picked from commit c648317a68891e1c900f04b7a9c98ba40c5faddb)
+(cherry picked from commit d129bbbb37eadc0d096c0ca5f2c86cb57e148b75)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt
+	hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DataStreamer.java
+	hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestFileAppend.java
+
+Change-Id: Iaaa79f2d329fdb387a71857d51e33bb5afed0930
+(cherry picked from commit b9c1d79f50decbf1f44c210ae54831e49f6bec4f)
+(cherry picked from commit 451d76f8ed9aa4bd788c79d52b7f719ba3007467)
+---
+ .../org/apache/hadoop/hdfs/DFSOutputStream.java    |    4 ++++
+ .../org/apache/hadoop/hdfs/TestFileAppend.java     |   21 ++++++++++++++++++++
+ 2 files changed, 25 insertions(+)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSOutputStream.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSOutputStream.java
+index a8f0891..632c5a1 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSOutputStream.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSOutputStream.java
+@@ -678,6 +678,9 @@ public void run() {
+               DFSClient.LOG.debug("Append to block " + block);
+             }
+             setupPipelineForAppendOrRecovery();
++            if (true == streamerClosed) {
++              continue;
++            }
+             initDataStreaming();
+           }
+ 
+@@ -793,6 +796,7 @@ public void run() {
+           } else {
+             setLastException(new IOException("DataStreamer Exception: ",e));
+           }
++          assert !(e instanceof NullPointerException);
+           hasError = true;
+           if (errorIndex == -1 && restartingNodeIndex == -1) {
+             // Not a datanode issue
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestFileAppend.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestFileAppend.java
+index a1490d3..007fb43 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestFileAppend.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestFileAppend.java
+@@ -368,4 +368,25 @@ public void testFailedAppendBlockRejection() throws Exception {
+     }
+   }
+ 
++  @Test(timeout = 10000)
++  public void testAppendCorruptedBlock() throws Exception {
++    Configuration conf = new HdfsConfiguration();
++    conf.setInt(DFSConfigKeys.DFS_BLOCK_SIZE_KEY, 1024);
++    conf.setInt(DFSConfigKeys.DFS_REPLICATION_KEY, 1);
++    conf.setInt("dfs.min.replication", 1);
++    MiniDFSCluster cluster = new MiniDFSCluster.Builder(conf).numDataNodes(1)
++        .build();
++    try {
++      DistributedFileSystem fs = cluster.getFileSystem();
++      Path fileName = new Path("/appendCorruptBlock");
++      DFSTestUtil.createFile(fs, fileName, 512, (short) 1, 0);
++      DFSTestUtil.waitReplication(fs, fileName, (short) 1);
++      Assert.assertTrue("File not created", fs.exists(fileName));
++      ExtendedBlock block = DFSTestUtil.getFirstBlock(fs, fileName);
++      cluster.corruptBlockOnDataNodes(block);
++      DFSTestUtil.appendFile(fs, fileName, "appendCorruptBlock");
++    } finally {
++      cluster.shutdown();
++    }
++  }
+ }
+-- 
+1.7.9.5
+

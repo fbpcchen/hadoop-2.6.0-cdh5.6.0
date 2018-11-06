@@ -1,0 +1,93 @@
+From 6106aab2982474ef36dc09a205a23a9a608c5a2a Mon Sep 17 00:00:00 2001
+From: Jason Lowe <jlowe@apache.org>
+Date: Wed, 1 Jul 2015 21:13:32 +0000
+Subject: [PATCH 0629/1023] YARN-3793. Several NPEs when deleting local files
+ on NM recovery. Contributed by Varun Saxena
+ (cherry picked from commit
+ b5cdf78e8e6cd6c5c1fb7286207dac72be32c0d6) (cherry
+ picked from commit
+ a721b9d81289f80f86f8466bd58bc13d3a5af4a6)
+
+Conflicts:
+	hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/test/java/org/apache/hadoop/yarn/server/nodemanager/containermanager/logaggregation/TestLogAggregationService.java
+---
+ .../logaggregation/AppLogAggregatorImpl.java       |    6 ++--
+ .../logaggregation/TestLogAggregationService.java  |   37 ++++++++++++++++++++
+ 2 files changed, 40 insertions(+), 3 deletions(-)
+
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/containermanager/logaggregation/AppLogAggregatorImpl.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/containermanager/logaggregation/AppLogAggregatorImpl.java
+index 20887b6..208a186 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/containermanager/logaggregation/AppLogAggregatorImpl.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/containermanager/logaggregation/AppLogAggregatorImpl.java
+@@ -263,10 +263,10 @@ private void uploadLogsForContainers() {
+             aggregator.doContainerLogAggregation(writer);
+         if (uploadedFilePathsInThisCycle.size() > 0) {
+           uploadedLogsInThisCycle = true;
++          this.delService.delete(this.userUgi.getShortUserName(), null,
++              uploadedFilePathsInThisCycle
++                  .toArray(new Path[uploadedFilePathsInThisCycle.size()]));
+         }
+-        this.delService.delete(this.userUgi.getShortUserName(), null,
+-          uploadedFilePathsInThisCycle
+-            .toArray(new Path[uploadedFilePathsInThisCycle.size()]));
+ 
+         // This container is finished, and all its logs have been uploaded,
+         // remove it from containerLogAggregators.
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/test/java/org/apache/hadoop/yarn/server/nodemanager/containermanager/logaggregation/TestLogAggregationService.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/test/java/org/apache/hadoop/yarn/server/nodemanager/containermanager/logaggregation/TestLogAggregationService.java
+index 7d911e9..3719363 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/test/java/org/apache/hadoop/yarn/server/nodemanager/containermanager/logaggregation/TestLogAggregationService.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/test/java/org/apache/hadoop/yarn/server/nodemanager/containermanager/logaggregation/TestLogAggregationService.java
+@@ -31,6 +31,7 @@
+ import static org.mockito.Mockito.never;
+ import static org.mockito.Mockito.reset;
+ import static org.mockito.Mockito.spy;
++import static org.mockito.Mockito.times;
+ import static org.mockito.Mockito.verify;
+ import static org.mockito.Mockito.when;
+ 
+@@ -251,6 +252,42 @@ public void testLocalFileDeletionAfterUpload() throws Exception {
+     dispatcher.stop();
+   }
+ 
++  /* Test to verify fix for YARN-3793 */
++  @Test
++  public void testNoLogsUploadedOnAppFinish() throws Exception {
++    this.delSrvc = new DeletionService(createContainerExecutor());
++    delSrvc = spy(delSrvc);
++    this.delSrvc.init(conf);
++    this.conf.set(YarnConfiguration.NM_LOG_DIRS, localLogDir.getAbsolutePath());
++    this.conf.set(YarnConfiguration.NM_REMOTE_APP_LOG_DIR,
++        this.remoteRootLogDir.getAbsolutePath());
++
++    LogAggregationService logAggregationService = new LogAggregationService(
++        dispatcher, this.context, this.delSrvc, super.dirsHandler);
++    logAggregationService.init(this.conf);
++    logAggregationService.start();
++
++    ApplicationId app = BuilderUtils.newApplicationId(1234, 1);
++    File appLogDir = new File(localLogDir, ConverterUtils.toString(app));
++    appLogDir.mkdir();
++    LogAggregationContext context =
++        LogAggregationContext.newInstance("HOST*", "sys*");
++    logAggregationService.handle(new LogHandlerAppStartedEvent(app, this.user,
++        null, ContainerLogsRetentionPolicy.ALL_CONTAINERS, this.acls, context));
++
++    ApplicationAttemptId appAttemptId =
++        BuilderUtils.newApplicationAttemptId(app, 1);
++    ContainerId cont = BuilderUtils.newContainerId(appAttemptId, 1);
++    writeContainerLogs(appLogDir, cont, new String[] { "stdout",
++        "stderr", "syslog" });
++    logAggregationService.handle(new LogHandlerContainerFinishedEvent(cont, 0));
++    logAggregationService.handle(new LogHandlerAppFinishedEvent(app));
++    logAggregationService.stop();
++    delSrvc.stop();
++    // Aggregated logs should not be deleted if not uploaded.
++    verify(delSrvc, times(0)).delete(user, null);
++  }
++
+   @Test
+   public void testNoContainerOnNode() throws Exception {
+     this.conf.set(YarnConfiguration.NM_LOG_DIRS, localLogDir.getAbsolutePath());
+-- 
+1.7.9.5
+

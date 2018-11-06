@@ -1,0 +1,47 @@
+From 32f56e2efdf4d890139d4c2ffe34b019959037d7 Mon Sep 17 00:00:00 2001
+From: Haohui Mai <wheat9@apache.org>
+Date: Tue, 18 Nov 2014 14:52:59 -0800
+Subject: [PATCH 0749/1023] HDFS-7406. SimpleHttpProxyHandler puts incorrect
+ "Connection: Close" header. Contributed by Haohui
+ Mai.
+
+(cherry picked from commit fbf81fbd1ca83c6695dee4f8b87c4b790461166b)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt
+
+Change-Id: Idafe58b9ec79d1cdf6fad5b77b496ba8425f714b
+---
+ .../datanode/web/SimpleHttpProxyHandler.java       |    5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/web/SimpleHttpProxyHandler.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/web/SimpleHttpProxyHandler.java
+index 9e02b4b..ffa7681 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/web/SimpleHttpProxyHandler.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/web/SimpleHttpProxyHandler.java
+@@ -39,6 +39,7 @@
+ import java.net.InetSocketAddress;
+ 
+ import static io.netty.handler.codec.http.HttpHeaders.Names.CONNECTION;
++import static io.netty.handler.codec.http.HttpHeaders.Values;
+ import static io.netty.handler.codec.http.HttpResponseStatus.INTERNAL_SERVER_ERROR;
+ import static io.netty.handler.codec.http.HttpVersion.HTTP_1_1;
+ 
+@@ -119,12 +120,12 @@ public void operationComplete(ChannelFuture future) throws Exception {
+           HttpRequest newReq = new DefaultFullHttpRequest(HTTP_1_1,
+             req.getMethod(), req.getUri());
+           newReq.headers().add(req.headers());
+-          newReq.headers().set(CONNECTION, CLOSE);
++          newReq.headers().set(CONNECTION, Values.CLOSE);
+           future.channel().writeAndFlush(newReq);
+         } else {
+           DefaultHttpResponse resp = new DefaultHttpResponse(HTTP_1_1,
+             INTERNAL_SERVER_ERROR);
+-          resp.headers().set(CONNECTION, CLOSE);
++          resp.headers().set(CONNECTION, Values.CLOSE);
+           LOG.info("Proxy " + uri + " failed. Cause: ", future.cause());
+           ctx.writeAndFlush(resp).addListener(ChannelFutureListener.CLOSE);
+           client.close();
+-- 
+1.7.9.5
+

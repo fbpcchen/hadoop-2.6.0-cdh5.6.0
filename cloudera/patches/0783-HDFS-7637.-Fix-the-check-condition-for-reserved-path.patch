@@ -1,0 +1,34 @@
+From 16c712be9c62231abbf5d1df6f7c0bc13e165e87 Mon Sep 17 00:00:00 2001
+From: Jing Zhao <jing9@apache.org>
+Date: Mon, 19 Jan 2015 10:28:29 -0800
+Subject: [PATCH 0783/1023] HDFS-7637. Fix the check condition for reserved
+ path. Contributed by Yi Liu.
+
+(cherry picked from commit e843a0a8cee5c704a5d28cf14b5a4050094d341b)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt
+
+Change-Id: I03701861fd982de810d55a58d46a85acfeead036
+(cherry picked from commit 24e321e3e58434c826da7abc0b7f3033a478956b)
+(cherry picked from commit 956e5f095fec836b5dcf72917f1d2b81c8d2c254)
+---
+ .../hadoop/hdfs/server/namenode/FSDirectory.java   |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSDirectory.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSDirectory.java
+index c62c6b5..e050911 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSDirectory.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSDirectory.java
+@@ -3165,7 +3165,7 @@ public static boolean isReservedName(INode inode) {
+ 
+   /** Check if a given path is reserved */
+   public static boolean isReservedName(String src) {
+-    return src.startsWith(DOT_RESERVED_PATH_PREFIX);
++    return src.startsWith(DOT_RESERVED_PATH_PREFIX + Path.SEPARATOR);
+   }
+ 
+   static boolean isReservedRawName(String src) {
+-- 
+1.7.9.5
+

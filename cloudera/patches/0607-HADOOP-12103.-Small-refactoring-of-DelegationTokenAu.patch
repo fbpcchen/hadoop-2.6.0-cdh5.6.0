@@ -1,0 +1,53 @@
+From 6b6a38d3d57289db51f0d9a3e7e2556b6e558ff4 Mon Sep 17 00:00:00 2001
+From: Yongjun Zhang <yzhang@cloudera.com>
+Date: Fri, 19 Jun 2015 14:06:17 -0700
+Subject: [PATCH 0607/1023] HADOOP-12103. Small refactoring of
+ DelegationTokenAuthenticationFilter to allow code
+ sharing. Contributed by Yongjun Zhang.
+
+(cherry picked from commit 49f5d20efe7af7cd7c45d93edad33997a695a746)
+
+Conflicts:
+	hadoop-common-project/hadoop-common/CHANGES.txt
+---
+ .../web/DelegationTokenAuthenticationFilter.java   |   16 +++++++++++++++-
+ 1 file changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/security/token/delegation/web/DelegationTokenAuthenticationFilter.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/security/token/delegation/web/DelegationTokenAuthenticationFilter.java
+index fbd1129..de1d218 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/security/token/delegation/web/DelegationTokenAuthenticationFilter.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/security/token/delegation/web/DelegationTokenAuthenticationFilter.java
+@@ -115,7 +115,22 @@
+   protected Properties getConfiguration(String configPrefix,
+       FilterConfig filterConfig) throws ServletException {
+     Properties props = super.getConfiguration(configPrefix, filterConfig);
++    setAuthHandlerClass(props);
++    return props;
++  }
++
++  /**
++   * Set AUTH_TYPE property to the name of the corresponding authentication
++   * handler class based on the input properties.
++   * @param props input properties.
++   */
++  protected void setAuthHandlerClass(Properties props)
++      throws ServletException {
+     String authType = props.getProperty(AUTH_TYPE);
++    if (authType == null) {
++      throw new ServletException("Config property "
++          + AUTH_TYPE + " doesn't exist");
++    }
+     if (authType.equals(PseudoAuthenticationHandler.TYPE)) {
+       props.setProperty(AUTH_TYPE,
+           PseudoDelegationTokenAuthenticationHandler.class.getName());
+@@ -123,7 +138,6 @@ protected Properties getConfiguration(String configPrefix,
+       props.setProperty(AUTH_TYPE,
+           KerberosDelegationTokenAuthenticationHandler.class.getName());
+     }
+-    return props;
+   }
+ 
+   /**
+-- 
+1.7.9.5
+

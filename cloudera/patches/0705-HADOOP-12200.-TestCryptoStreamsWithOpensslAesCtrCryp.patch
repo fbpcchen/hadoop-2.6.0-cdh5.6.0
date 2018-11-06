@@ -1,0 +1,40 @@
+From 2bea2e3ae64366327d8f7f5f02b4055f18292285 Mon Sep 17 00:00:00 2001
+From: Akira Ajisaka <aajisaka@apache.org>
+Date: Thu, 9 Jul 2015 13:14:53 +0900
+Subject: [PATCH 0705/1023] HADOOP-12200.
+ TestCryptoStreamsWithOpensslAesCtrCryptoCodec
+ should be skipped in non-native profile.
+ Contributed by Masatake Iwasaki.
+
+(cherry picked from commit 6b7692c468931215ec0de7e11f0bdf15b80e68ce)
+---
+ ...tCryptoStreamsWithOpensslAesCtrCryptoCodec.java |    3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/crypto/TestCryptoStreamsWithOpensslAesCtrCryptoCodec.java b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/crypto/TestCryptoStreamsWithOpensslAesCtrCryptoCodec.java
+index 684ec09..d5f25b8 100644
+--- a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/crypto/TestCryptoStreamsWithOpensslAesCtrCryptoCodec.java
++++ b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/crypto/TestCryptoStreamsWithOpensslAesCtrCryptoCodec.java
+@@ -19,16 +19,19 @@
+ 
+ import org.apache.hadoop.conf.Configuration;
+ import org.apache.hadoop.fs.CommonConfigurationKeysPublic;
++import org.apache.hadoop.util.NativeCodeLoader;
+ import org.junit.BeforeClass;
+ 
+ import static org.junit.Assert.assertEquals;
+ import static org.junit.Assert.assertNotNull;
++import static org.junit.Assume.assumeTrue;
+ 
+ public class TestCryptoStreamsWithOpensslAesCtrCryptoCodec 
+     extends TestCryptoStreams {
+   
+   @BeforeClass
+   public static void init() throws Exception {
++    assumeTrue(NativeCodeLoader.isNativeCodeLoaded());
+     Configuration conf = new Configuration();
+     conf.set(
+         CommonConfigurationKeysPublic.HADOOP_SECURITY_CRYPTO_CODEC_CLASSES_AES_CTR_NOPADDING_KEY,
+-- 
+1.7.9.5
+

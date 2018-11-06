@@ -1,0 +1,26 @@
+From 303bc77c9c1a87fb1a485df451a483c2a0b0e7b4 Mon Sep 17 00:00:00 2001
+From: Arun Suresh <Arun Suresh>
+Date: Thu, 26 Mar 2015 18:31:59 -0700
+Subject: [PATCH 0519/1023] CLOUDERA-BUILD: CDH-26365 Allow KMS Tomcat version
+ to be specifyable via the root cdh pom
+
+---
+ hadoop-project/pom.xml |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/hadoop-project/pom.xml b/hadoop-project/pom.xml
+index 4bdbbba..830c0f9 100644
+--- a/hadoop-project/pom.xml
++++ b/hadoop-project/pom.xml
+@@ -74,7 +74,7 @@
+     <curator.version>2.7.1</curator.version>
+     <findbugs.version>3.0.0</findbugs.version>
+ 
+-    <tomcat.version>6.0.41</tomcat.version>
++    <tomcat.version>${cdh.tomcat.version}</tomcat.version>
+ 
+     <!-- define the Java language version used by the compiler -->
+     <javac.version>${javaVersion}</javac.version>
+-- 
+1.7.9.5
+

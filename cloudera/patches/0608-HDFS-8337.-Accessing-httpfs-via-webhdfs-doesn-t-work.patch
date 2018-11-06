@@ -1,0 +1,43 @@
+From aaecef068cdb8315a3fe881b510487fdffb2d4f0 Mon Sep 17 00:00:00 2001
+From: Yongjun Zhang <yzhang@cloudera.com>
+Date: Fri, 19 Jun 2015 23:39:13 -0700
+Subject: [PATCH 0608/1023] HDFS-8337. Accessing httpfs via webhdfs doesn't
+ work from a jar with kerberos. Contributed by
+ Yongjun Zhang.
+
+(cherry picked from commit 971dc838ecf8bf55a9bd64128ce2447e4613ea76)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt
+---
+ .../fs/http/server/HttpFSAuthenticationFilter.java |    5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs-httpfs/src/main/java/org/apache/hadoop/fs/http/server/HttpFSAuthenticationFilter.java b/hadoop-hdfs-project/hadoop-hdfs-httpfs/src/main/java/org/apache/hadoop/fs/http/server/HttpFSAuthenticationFilter.java
+index 8b332fc..712a3a3 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs-httpfs/src/main/java/org/apache/hadoop/fs/http/server/HttpFSAuthenticationFilter.java
++++ b/hadoop-hdfs-project/hadoop-hdfs-httpfs/src/main/java/org/apache/hadoop/fs/http/server/HttpFSAuthenticationFilter.java
+@@ -19,8 +19,10 @@
+ 
+ import org.apache.hadoop.classification.InterfaceAudience;
+ import org.apache.hadoop.conf.Configuration;
++import org.apache.hadoop.hdfs.web.WebHdfsFileSystem;
+ import org.apache.hadoop.security.authentication.server.AuthenticationFilter;
+ import org.apache.hadoop.security.token.delegation.web.DelegationTokenAuthenticationFilter;
++import org.apache.hadoop.security.token.delegation.web.KerberosDelegationTokenAuthenticationHandler;
+ 
+ import javax.servlet.FilterConfig;
+ import javax.servlet.ServletException;
+@@ -88,6 +90,9 @@ protected Properties getConfiguration(String configPrefix,
+     } catch (IOException ex) {
+       throw new RuntimeException("Could not read HttpFS signature secret file: " + signatureSecretFile);
+     }
++    setAuthHandlerClass(props);
++    props.setProperty(KerberosDelegationTokenAuthenticationHandler.TOKEN_KIND,
++        WebHdfsFileSystem.TOKEN_KIND.toString());
+     return props;
+   }
+ 
+-- 
+1.7.9.5
+

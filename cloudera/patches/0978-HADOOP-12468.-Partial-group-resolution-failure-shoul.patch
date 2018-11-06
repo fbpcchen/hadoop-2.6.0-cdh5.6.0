@@ -1,0 +1,511 @@
+From 57fa0e72c540fa6c4fdc8dc80b20924348a21798 Mon Sep 17 00:00:00 2001
+From: Yongjun Zhang <yzhang@cloudera.com>
+Date: Wed, 25 Nov 2015 18:37:52 -0800
+Subject: [PATCH 0978/1023] HADOOP-12468. Partial group resolution failure
+ should not result in user lockout. (Wei-Chiu
+ Chuang via Yongjun Zhang)
+
+(cherry picked from commit 0348e769abc507c69d644db7bc56d31d971c51d1)
+(cherry picked from commit 165abe6c4fe18ab3ba6d34b19b940a16e11e7242)
+
+Conflicts:
+hadoop-common-project/hadoop-common/CHANGES.txt
+hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/util/Shell.java
+
+Change-Id: I16f5079a61f0406d853e0063f6e93233df2081b1
+(cherry picked from commit 34bd3f3ef691026621db1ecd44a7251b8f58d7c4)
+(cherry picked from commit b55ce609fb2785a753d71eaf8ac4f0552631013f)
+---
+ .../security/ShellBasedUnixGroupsMapping.java      |  181 +++++++++++++++--
+ .../main/java/org/apache/hadoop/util/Shell.java    |   24 ++-
+ .../security/TestShellBasedUnixGroupsMapping.java  |  213 ++++++++++++++++++++
+ 3 files changed, 393 insertions(+), 25 deletions(-)
+ create mode 100644 hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/security/TestShellBasedUnixGroupsMapping.java
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/security/ShellBasedUnixGroupsMapping.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/security/ShellBasedUnixGroupsMapping.java
+index da6e434..9b80be9 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/security/ShellBasedUnixGroupsMapping.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/security/ShellBasedUnixGroupsMapping.java
+@@ -21,12 +21,14 @@
+ import java.util.LinkedList;
+ import java.util.List;
+ import java.util.StringTokenizer;
++import org.apache.commons.lang.StringUtils;
+ import org.apache.commons.logging.Log;
+ import org.apache.commons.logging.LogFactory;
+ import org.apache.hadoop.classification.InterfaceAudience;
+ import org.apache.hadoop.classification.InterfaceStability;
+ import org.apache.hadoop.util.Shell;
+ import org.apache.hadoop.util.Shell.ExitCodeException;
++import org.apache.hadoop.util.Shell.ShellCommandExecutor;
+ 
+ /**
+  * A simple shell-based implementation of {@link GroupMappingServiceProvider} 
+@@ -40,16 +42,34 @@
+   
+   private static final Log LOG =
+     LogFactory.getLog(ShellBasedUnixGroupsMapping.class);
+-  
++
++  @SuppressWarnings("serial")
++  private static class PartialGroupNameException extends IOException {
++    public PartialGroupNameException(String message) {
++      super(message);
++    }
++
++    public PartialGroupNameException(String message, Throwable err) {
++      super(message, err);
++    }
++
++    @Override
++    public String toString() {
++      final StringBuilder sb =
++          new StringBuilder("PartialGroupNameException ");
++      sb.append(super.getMessage());
++      return sb.toString();
++    }
++  }
+   /**
+    * Returns list of groups for a user
+    *
+-   * @param user get groups for this user
++   * @param userName get groups for this user
+    * @return list of groups for a given user
+    */
+   @Override
+-  public List<String> getGroups(String user) throws IOException {
+-    return getUnixGroups(user);
++  public List<String> getGroups(String userName) throws IOException {
++    return getUnixGroups(userName);
+   }
+ 
+   /**
+@@ -70,30 +90,52 @@ public void cacheGroupsAdd(List<String> groups) throws IOException {
+     // does nothing in this provider of user to groups mapping
+   }
+ 
+-  /** 
++  /**
++   * Create a ShellCommandExecutor object using the user's name.
++   *
++   * @param userName user's name
++   * @return a ShellCommandExecutor object
++   */
++  protected ShellCommandExecutor createGroupExecutor(String userName) {
++    return new ShellCommandExecutor(
++        Shell.getGroupsForUserCommand(userName), null, null, 0L);
++  }
++
++  /**
++   * Create a ShellCommandExecutor object for fetch a user's group id list.
++   *
++   * @param userName the user's name
++   * @return a ShellCommandExecutor object
++   */
++  protected ShellCommandExecutor createGroupIDExecutor(String userName) {
++    return new ShellCommandExecutor(
++        Shell.getGroupsIDForUserCommand(userName), null, null, 0L);
++  }
++
++  /**
+    * Get the current user's group list from Unix by running the command 'groups'
+-   * NOTE. For non-existing user it will return EMPTY list
+-   * @param user user name
++   * NOTE. For non-existing user it will return EMPTY list.
++   *
++   * @param user get groups for this user
+    * @return the groups list that the <code>user</code> belongs to. The primary
+    *         group is returned first.
+    * @throws IOException if encounter any error when running the command
+    */
+-  private static List<String> getUnixGroups(final String user) throws IOException {
+-    String result = "";
++  private List<String> getUnixGroups(String user) throws IOException {
++    ShellCommandExecutor executor = createGroupExecutor(user);
++
++    List<String> groups;
+     try {
+-      result = Shell.execCommand(Shell.getGroupsForUserCommand(user));
++      executor.execute();
++      groups = resolveFullGroupNames(executor.getOutput());
+     } catch (ExitCodeException e) {
+-      // if we didn't get the group - just return empty list;
+-      LOG.warn("got exception trying to get groups for user " + user + ": "
+-          + e.getMessage());
+-      return new LinkedList<String>();
+-    }
+-    
+-    StringTokenizer tokenizer =
+-        new StringTokenizer(result, Shell.TOKEN_SEPARATOR_REGEX);
+-    List<String> groups = new LinkedList<String>();
+-    while (tokenizer.hasMoreTokens()) {
+-      groups.add(tokenizer.nextToken());
++      try {
++        groups = resolvePartialGroupNames(user, e.getMessage(),
++            executor.getOutput());
++      } catch (PartialGroupNameException pge) {
++        LOG.warn("unable to return groups for user " + user, pge);
++        return new LinkedList<>();
++      }
+     }
+ 
+     // remove duplicated primary group
+@@ -108,4 +150,101 @@ public void cacheGroupsAdd(List<String> groups) throws IOException {
+ 
+     return groups;
+   }
++
++  /**
++   * Attempt to parse group names given that some names are not resolvable.
++   * Use the group id list to identify those that are not resolved.
++   *
++   * @param groupNames a string representing a list of group names
++   * @param groupIDs a string representing a list of group ids
++   * @return a linked list of group names
++   * @throws PartialGroupNameException
++   */
++  private List<String> parsePartialGroupNames(String groupNames,
++      String groupIDs) throws PartialGroupNameException {
++    StringTokenizer nameTokenizer =
++        new StringTokenizer(groupNames, Shell.TOKEN_SEPARATOR_REGEX);
++    StringTokenizer idTokenizer =
++        new StringTokenizer(groupIDs, Shell.TOKEN_SEPARATOR_REGEX);
++    List<String> groups = new LinkedList<String>();
++    while (nameTokenizer.hasMoreTokens()) {
++      // check for unresolvable group names.
++      if (!idTokenizer.hasMoreTokens()) {
++        throw new PartialGroupNameException("Number of group names and ids do"
++        + " not match. group name =" + groupNames + ", group id = " + groupIDs);
++      }
++      String groupName = nameTokenizer.nextToken();
++      String groupID = idTokenizer.nextToken();
++      if (!StringUtils.isNumeric(groupName) ||
++          !groupName.equals(groupID)) {
++        // if the group name is non-numeric, it is resolved.
++        // if the group name is numeric, but is not the same as group id,
++        // regard it as a group name.
++        // if unfortunately, some group names are not resolvable, and
++        // the group name is the same as the group id, regard it as not
++        // resolved.
++        groups.add(groupName);
++      }
++    }
++    return groups;
++  }
++
++  /**
++   * Attempt to partially resolve group names.
++   *
++   * @param userName the user's name
++   * @param errMessage error message from the shell command
++   * @param groupNames the incomplete list of group names
++   * @return a list of resolved group names
++   * @throws PartialGroupNameException
++   */
++  private List<String> resolvePartialGroupNames(String userName,
++      String errMessage, String groupNames) throws PartialGroupNameException {
++    // Exception may indicate that some group names are not resolvable.
++    // Shell-based implementation should tolerate unresolvable groups names,
++    // and return resolvable ones, similar to what JNI-based implementation
++    // does.
++    if (Shell.WINDOWS) {
++      throw new PartialGroupNameException("Does not support partial group"
++      + " name resolution on Windows. " + errMessage);
++    }
++    if (groupNames.isEmpty()) {
++      throw new PartialGroupNameException("The user name '" + userName
++          + "' is not found. " + errMessage);
++    } else {
++      LOG.warn("Some group names for '" + userName + "' are not resolvable. "
++          + errMessage);
++      // attempt to partially resolve group names
++      try {
++        ShellCommandExecutor exec2 = createGroupIDExecutor(userName);
++        exec2.execute();
++        return parsePartialGroupNames(groupNames, exec2.getOutput());
++      } catch (ExitCodeException ece) {
++        // If exception is thrown trying to get group id list,
++        // something is terribly wrong, so give up.
++        throw new PartialGroupNameException("failed to get group id list for " +
++        "user '" + userName + "'", ece);
++      } catch (IOException ioe) {
++        throw new PartialGroupNameException("can't execute the shell command to"
++        + " get the list of group id for user '" + userName + "'", ioe);
++      }
++    }
++  }
++
++  /**
++   * Split group names into a linked list.
++   *
++   * @param groupNames a string representing the user's group names
++   * @return a linked list of group names
++   */
++  private List<String> resolveFullGroupNames(String groupNames) {
++    StringTokenizer tokenizer =
++        new StringTokenizer(groupNames, Shell.TOKEN_SEPARATOR_REGEX);
++    List<String> groups = new LinkedList<String>();
++    while (tokenizer.hasMoreTokens()) {
++      groups.add(tokenizer.nextToken());
++    }
++
++    return groups;
++  }
+ }
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/util/Shell.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/util/Shell.java
+index 2fb52f6..f041aac 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/util/Shell.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/util/Shell.java
+@@ -142,10 +142,26 @@ static private OSType getOSType() {
+    * i.e. the user's primary group will be included twice.
+    */
+   public static String[] getGroupsForUserCommand(final String user) {
+-    //'groups username' command return is non-consistent across different unixes
+-    return (WINDOWS)? new String[] { WINUTILS, "groups", "-F", "\"" + user + "\""}
+-                    : new String [] {"bash", "-c", "id -gn " + user
+-                                     + "&& id -Gn " + user};
++    //'groups username' command return is inconsistent across different unixes
++    return WINDOWS ?
++      new String[]
++          {getWinUtilsPath(), "groups", "-F", "\"" + user + "\""}
++      : new String[] {"bash", "-c", "id -gn " + user + "; id -Gn " + user};
++  }
++
++  /**
++   * A command to get a given user's group id list.
++   * The command will get the user's primary group
++   * first and finally get the groups list which includes the primary group.
++   * i.e. the user's primary group will be included twice.
++   * This command does not support Windows and will only return group names.
++   */
++  public static String[] getGroupsIDForUserCommand(final String user) {
++    //'groups username' command return is inconsistent across different unixes
++    return WINDOWS ?
++        new String[]
++            {getWinUtilsPath(), "groups", "-F", "\"" + user + "\""}
++        : new String[] {"bash", "-c", "id -g " + user + "; id -G " + user};
+   }
+ 
+   /** a Unix command to get a given netgroup's user list */
+diff --git a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/security/TestShellBasedUnixGroupsMapping.java b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/security/TestShellBasedUnixGroupsMapping.java
+new file mode 100644
+index 0000000..f28cc62
+--- /dev/null
++++ b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/security/TestShellBasedUnixGroupsMapping.java
+@@ -0,0 +1,213 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.apache.hadoop.security;
++
++import java.io.IOException;
++import java.util.List;
++
++import org.apache.commons.logging.Log;
++import org.apache.commons.logging.LogFactory;
++import org.apache.hadoop.util.Shell.ExitCodeException;
++import org.apache.hadoop.util.Shell.ShellCommandExecutor;
++import org.junit.Test;
++import static org.junit.Assert.*;
++import static org.mockito.Mockito.doNothing;
++import static org.mockito.Mockito.doThrow;
++import static org.mockito.Mockito.mock;
++import static org.mockito.Mockito.when;
++
++public class TestShellBasedUnixGroupsMapping {
++  private static final Log LOG =
++      LogFactory.getLog(TestShellBasedUnixGroupsMapping.class);
++
++  private class TestGroupUserNotExist
++      extends ShellBasedUnixGroupsMapping {
++    /**
++     * Create a ShellCommandExecutor object which returns exit code 1,
++     * emulating the case that the user does not exist.
++     *
++     * @param userName not used
++     * @return a mock ShellCommandExecutor object
++     */
++    @Override
++    protected ShellCommandExecutor createGroupExecutor(String userName) {
++      ShellCommandExecutor executor = mock(ShellCommandExecutor.class);
++
++      try {
++        doThrow(new ExitCodeException(1,
++            "id: foobarusernotexist: No such user")).
++            when(executor).execute();
++
++        when(executor.getOutput()).thenReturn("");
++      } catch (IOException e) {
++        LOG.warn(e.getMessage());
++      }
++      return executor;
++    }
++  }
++
++  @Test
++  public void testGetGroupsNonexistentUser() throws Exception {
++    TestGroupUserNotExist mapping = new TestGroupUserNotExist();
++
++    List<String> groups = mapping.getGroups("foobarusernotexist");
++    assertTrue(groups.isEmpty());
++  }
++
++  private class TestGroupNotResolvable
++      extends ShellBasedUnixGroupsMapping {
++    /**
++     * Create a ShellCommandExecutor object which returns partially resolved
++     * group names for a user.
++     *
++     * @param userName not used
++     * @return a mock ShellCommandExecutor object
++     */
++    @Override
++    protected ShellCommandExecutor createGroupExecutor(String userName) {
++      ShellCommandExecutor executor = mock(ShellCommandExecutor.class);
++
++      try {
++        // There is both a group name 9999 and a group ID 9999.
++        // This is treated as unresolvable group.
++        doThrow(new ExitCodeException(1, "cannot find name for group ID 9999")).
++            when(executor).execute();
++
++        when(executor.getOutput()).thenReturn("9999\n9999 abc def");
++      } catch (IOException e) {
++        LOG.warn(e.getMessage());
++      }
++      return executor;
++    }
++
++    @Override
++    protected ShellCommandExecutor createGroupIDExecutor(String userName) {
++      ShellCommandExecutor executor = mock(ShellCommandExecutor.class);
++
++      when(executor.getOutput()).thenReturn("9999\n9999 1 2");
++      return executor;
++    }
++  }
++
++  @Test
++  public void testGetGroupsNotResolvable() throws Exception {
++    TestGroupNotResolvable mapping = new TestGroupNotResolvable();
++
++    List<String> groups = mapping.getGroups("user");
++    assertTrue(groups.size() == 2);
++    assertTrue(groups.contains("abc"));
++    assertTrue(groups.contains("def"));
++  }
++
++  private class TestNumericGroupResolvable
++      extends ShellBasedUnixGroupsMapping {
++    /**
++     * Create a ShellCommandExecutor object which returns numerical group
++     * names of a user.
++     *
++     * @param userName not used
++     * @return a mock ShellCommandExecutor object
++     */
++    @Override
++    protected ShellCommandExecutor createGroupExecutor(String userName) {
++      ShellCommandExecutor executor = mock(ShellCommandExecutor.class);
++
++      try {
++        // There is a numerical group 23, but no group name 23.
++        // Thus 23 is treated as a resolvable group name.
++        doNothing().when(executor).execute();
++        when(executor.getOutput()).thenReturn("23\n23 groupname zzz");
++      } catch (IOException e) {
++        LOG.warn(e.getMessage());
++      }
++      return executor;
++    }
++
++    @Override
++    protected ShellCommandExecutor createGroupIDExecutor(String userName) {
++      ShellCommandExecutor executor = mock(ShellCommandExecutor.class);
++
++      try {
++        doNothing().when(executor).execute();
++        when(executor.getOutput()).thenReturn("111\n111 112 113");
++      } catch (IOException e) {
++        LOG.warn(e.getMessage());
++      }
++      return executor;
++    }
++  }
++
++  @Test
++  public void testGetNumericGroupsResolvable() throws Exception {
++    TestNumericGroupResolvable mapping = new TestNumericGroupResolvable();
++
++    List<String> groups = mapping.getGroups("user");
++    assertTrue(groups.size() == 3);
++    assertTrue(groups.contains("23"));
++    assertTrue(groups.contains("groupname"));
++    assertTrue(groups.contains("zzz"));
++  }
++
++  private class TestGroupResolvable
++      extends ShellBasedUnixGroupsMapping {
++    /**
++     * Create a ShellCommandExecutor object to return the group names of a user.
++     *
++     * @param userName not used
++     * @return a mock ShellCommandExecutor object
++     */
++    @Override
++    protected ShellCommandExecutor createGroupExecutor(String userName) {
++      ShellCommandExecutor executor = mock(ShellCommandExecutor.class);
++
++      try {
++        doNothing().when(executor).execute();
++        when(executor.getOutput()).thenReturn("abc\ndef abc hij");
++      } catch (IOException e) {
++        LOG.warn(e.getMessage());
++      }
++      return executor;
++    }
++
++    @Override
++    protected ShellCommandExecutor createGroupIDExecutor(String userName) {
++      ShellCommandExecutor executor = mock(ShellCommandExecutor.class);
++
++      try {
++        doNothing().when(executor).execute();
++        when(executor.getOutput()).thenReturn("1\n1 2 3");
++      } catch (IOException e) {
++        LOG.warn(e.getMessage());
++      }
++      return executor;
++    }
++  }
++
++  @Test
++  public void testGetGroupsResolvable() throws Exception {
++    TestGroupResolvable mapping = new TestGroupResolvable();
++
++    List<String> groups = mapping.getGroups("user");
++    assertTrue(groups.size() == 3);
++    assertTrue(groups.contains("abc"));
++    assertTrue(groups.contains("def"));
++    assertTrue(groups.contains("hij"));
++  }
++}
++
++
+-- 
+1.7.9.5
+

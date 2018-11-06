@@ -1,0 +1,117 @@
+From f438d14928bdf9ae58b53c8fb82a75689415acb6 Mon Sep 17 00:00:00 2001
+From: Colin Patrick Mccabe <cmccabe@cloudera.com>
+Date: Wed, 1 Apr 2015 13:55:40 -0700
+Subject: [PATCH 0644/1023] HDFS-8026. Trace
+ FSOutputSummer#writeChecksumChunks rather than
+ DFSOutputStream#writeChunk (cmccabe)
+
+(cherry picked from commit c94d594a57806dec515e2a2053a1221f8ce48cc4)
+(cherry picked from commit 4b74aa7182c44d61a339f43c691dc31d14028ca2)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSOutputStream.java
+---
+ .../java/org/apache/hadoop/fs/FSOutputSummer.java  |   20 ++++++++++++++++----
+ .../org/apache/hadoop/hdfs/DFSOutputStream.java    |   15 ++++-----------
+ .../org/apache/hadoop/tracing/TestTracing.java     |    4 ++--
+ 3 files changed, 22 insertions(+), 17 deletions(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/FSOutputSummer.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/FSOutputSummer.java
+index 934421a..88efcf1 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/FSOutputSummer.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/FSOutputSummer.java
+@@ -21,6 +21,8 @@
+ import org.apache.hadoop.classification.InterfaceAudience;
+ import org.apache.hadoop.classification.InterfaceStability;
+ import org.apache.hadoop.util.DataChecksum;
++import org.apache.htrace.NullScope;
++import org.apache.htrace.TraceScope;
+ 
+ import java.io.IOException;
+ import java.io.OutputStream;
+@@ -194,16 +196,26 @@ protected int getChecksumSize() {
+     return sum.getChecksumSize();
+   }
+ 
++  protected TraceScope createWriteTraceScope() {
++    return NullScope.INSTANCE;
++  }
++
+   /** Generate checksums for the given data chunks and output chunks & checksums
+    * to the underlying output stream.
+    */
+   private void writeChecksumChunks(byte b[], int off, int len)
+   throws IOException {
+     sum.calculateChunkedSums(b, off, len, checksum, 0);
+-    for (int i = 0; i < len; i += sum.getBytesPerChecksum()) {
+-      int chunkLen = Math.min(sum.getBytesPerChecksum(), len - i);
+-      int ckOffset = i / sum.getBytesPerChecksum() * getChecksumSize();
+-      writeChunk(b, off + i, chunkLen, checksum, ckOffset, getChecksumSize());
++    TraceScope scope = createWriteTraceScope();
++    try {
++      for (int i = 0; i < len; i += sum.getBytesPerChecksum()) {
++        int chunkLen = Math.min(sum.getBytesPerChecksum(), len - i);
++        int ckOffset = i / sum.getBytesPerChecksum() * getChecksumSize();
++        writeChunk(b, off + i, chunkLen, checksum, ckOffset,
++            getChecksumSize());
++      }
++    } finally {
++      scope.close();
+     }
+   }
+ 
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSOutputStream.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSOutputStream.java
+index d6a5fa0..0df796d 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSOutputStream.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSOutputStream.java
+@@ -1975,21 +1975,14 @@ private void waitAndQueueCurrentPacket() throws IOException {
+     }
+   }
+ 
++  protected TraceScope createWriteTraceScope() {
++    return dfsClient.getPathTraceScope("DFSOutputStream#write", src);
++  }
++
+   // @see FSOutputSummer#writeChunk()
+   @Override
+   protected synchronized void writeChunk(byte[] b, int offset, int len,
+             byte[] checksum, int ckoff, int cklen) throws IOException {
+-    TraceScope scope =
+-        dfsClient.getPathTraceScope("DFSOutputStream#writeChunk", src);
+-    try {
+-      writeChunkImpl(b, offset, len, checksum, ckoff, cklen);
+-    } finally {
+-      scope.close();
+-    }
+-  }
+-
+-  private synchronized void writeChunkImpl(byte[] b, int offset, int len,
+-          byte[] checksum, int ckoff, int cklen) throws IOException {
+     dfsClient.checkOpen();
+     checkClosed();
+ 
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracing.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracing.java
+index 3720abe..01361b5 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracing.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracing.java
+@@ -89,7 +89,7 @@ public void testWriteTraceHooks() throws Exception {
+       "org.apache.hadoop.hdfs.protocol.ClientProtocol.complete",
+       "ClientNamenodeProtocol#complete",
+       "newStreamForCreate",
+-      "DFSOutputStream#writeChunk",
++      "DFSOutputStream#write",
+       "DFSOutputStream#close",
+       "dataStreamer",
+       "OpWriteBlockProto",
+@@ -117,7 +117,7 @@ public void testWriteTraceHooks() throws Exception {
+       "org.apache.hadoop.hdfs.protocol.ClientProtocol.complete",
+       "ClientNamenodeProtocol#complete",
+       "newStreamForCreate",
+-      "DFSOutputStream#writeChunk",
++      "DFSOutputStream#write",
+       "DFSOutputStream#close",
+     };
+     for (String desc : spansInTopTrace) {
+-- 
+1.7.9.5
+

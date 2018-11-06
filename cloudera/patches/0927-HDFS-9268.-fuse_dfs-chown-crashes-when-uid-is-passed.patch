@@ -1,0 +1,36 @@
+From 21c0964279a3e6910b640458a449869d903a1734 Mon Sep 17 00:00:00 2001
+From: Colin Patrick Mccabe <cmccabe@cloudera.com>
+Date: Mon, 26 Oct 2015 13:33:22 -0700
+Subject: [PATCH 0927/1023] HDFS-9268. fuse_dfs chown crashes when uid is
+ passed as -1 (cmccabe)
+
+(cherry picked from commit 2f1eb2bceb1df5f27649a514246b38b9ccf60cba)
+(cherry picked from commit 1405181d08d2b547cae0bad0cc67acca8512ebc6)
+
+Change-Id: Id48d9efa92506f0e0b1b129bbb7c1fd285cde0bc
+(cherry picked from commit a0e8c16e55e508806e8685465fe8679676711603)
+---
+ .../src/main/native/fuse-dfs/fuse_impls_chown.c    |    6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/native/fuse-dfs/fuse_impls_chown.c b/hadoop-hdfs-project/hadoop-hdfs/src/main/native/fuse-dfs/fuse_impls_chown.c
+index 2a6b61c..7fc9b87 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/native/fuse-dfs/fuse_impls_chown.c
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/native/fuse-dfs/fuse_impls_chown.c
+@@ -61,10 +61,10 @@ int dfs_chown(const char *path, uid_t uid, gid_t gid)
+     }
+   }
+ 
+-  ret = fuseConnect(user, fuse_get_context(), &conn);
++  ret = fuseConnectAsThreadUid(&conn);
+   if (ret) {
+-    fprintf(stderr, "fuseConnect: failed to open a libhdfs connection!  "
+-            "error %d.\n", ret);
++    fprintf(stderr, "fuseConnectAsThreadUid: failed to open a libhdfs "
++            "connection!  error %d.\n", ret);
+     ret = -EIO;
+     goto cleanup;
+   }
+-- 
+1.7.9.5
+

@@ -1,0 +1,508 @@
+From 78073fa5b0a11df9fbf56d355b0eb8f5c7b9ba60 Mon Sep 17 00:00:00 2001
+From: Colin Patrick Mccabe <cmccabe@cloudera.com>
+Date: Thu, 3 Sep 2015 11:22:47 -0700
+Subject: [PATCH 0790/1023] HDFS-8964. When validating the edit log, do not
+ read at or beyond the file offset that is being
+ written (Zhe Zhang via Colin P. McCabe)
+
+(cherry picked from commit 53c38cc89ab979ec47557dcfa7affbad20578c0a)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt
+	hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/qjournal/server/Journal.java
+	hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestEditLog.java
+
+Change-Id: Ic8b92361ea74ed0d59be3e7ca7aa6664f7cedf0b
+(cherry picked from commit cda38f930ccf27d94c5a08ea9dfdf3ada1e57af5)
+---
+ .../hdfs/server/namenode/FSEditLogTestUtil.java    |    3 +-
+ .../hadoop/hdfs/qjournal/server/Journal.java       |   22 +++--
+ .../server/namenode/EditLogFileInputStream.java    |   15 ++-
+ .../hadoop/hdfs/server/namenode/FSEditLog.java     |   10 ++
+ .../hdfs/server/namenode/FSEditLogLoader.java      |   12 ++-
+ .../hdfs/server/namenode/FileJournalManager.java   |   39 ++++++--
+ .../hdfs/server/namenode/SecondaryNameNode.java    |    2 +-
+ .../namenode/TestCheckPointForSecurityTokens.java  |    4 +-
+ .../hadoop/hdfs/server/namenode/TestEditLog.java   |  103 +++++++++++++++++++-
+ .../hdfs/server/namenode/TestFSEditLogLoader.java  |   13 ++-
+ 10 files changed, 196 insertions(+), 27 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/contrib/bkjournal/src/test/java/org/apache/hadoop/hdfs/server/namenode/FSEditLogTestUtil.java b/hadoop-hdfs-project/hadoop-hdfs/src/contrib/bkjournal/src/test/java/org/apache/hadoop/hdfs/server/namenode/FSEditLogTestUtil.java
+index a46f9cf..e5b9d01 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/contrib/bkjournal/src/test/java/org/apache/hadoop/hdfs/server/namenode/FSEditLogTestUtil.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/contrib/bkjournal/src/test/java/org/apache/hadoop/hdfs/server/namenode/FSEditLogTestUtil.java
+@@ -33,7 +33,8 @@ public static FSEditLogOp getNoOpInstance() {
+ 
+   public static long countTransactionsInStream(EditLogInputStream in) 
+       throws IOException {
+-    FSEditLogLoader.EditLogValidation validation = FSEditLogLoader.validateEditLog(in);
++    FSEditLogLoader.EditLogValidation validation =
++        FSEditLogLoader.validateEditLog(in, Long.MAX_VALUE);
+     return (validation.getEndTxId() - in.getFirstTxId()) + 1;
+   }
+ }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/qjournal/server/Journal.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/qjournal/server/Journal.java
+index 0eccb23..f38de48 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/qjournal/server/Journal.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/qjournal/server/Journal.java
+@@ -152,7 +152,7 @@
+     
+     EditLogFile latest = scanStorageForLatestEdits();
+     if (latest != null) {
+-      highestWrittenTxId = latest.getLastTxId();
++      updateHighestWrittenTxId(latest.getLastTxId());
+     }
+   }
+ 
+@@ -267,7 +267,17 @@ synchronized long getCurrentLagTxns() throws IOException {
+   synchronized long getHighestWrittenTxId() {
+     return highestWrittenTxId;
+   }
+-  
++
++  /**
++   * Update the highest Tx ID that has been written to the journal. Also update
++   * the {@link FileJournalManager#lastReadableTxId} of the underlying fjm.
++   * @param val The new value
++   */
++  private void updateHighestWrittenTxId(long val) {
++    highestWrittenTxId = val;
++    fjm.setLastReadableTxId(val);
++  }
++
+   @VisibleForTesting
+   JournalMetrics getMetricsForTests() {
+     return metrics;
+@@ -395,7 +405,7 @@ synchronized void journal(RequestInfo reqInfo,
+     metrics.bytesWritten.incr(records.length);
+     metrics.txnsWritten.incr(numTxns);
+     
+-    highestWrittenTxId = lastTxnId;
++    updateHighestWrittenTxId(lastTxnId);
+     nextTxId = lastTxnId + 1;
+   }
+ 
+@@ -778,8 +788,8 @@ public synchronized void acceptRecovery(RequestInfo reqInfo,
+             ": no current segment in place");
+         
+         // Update the highest txid for lag metrics
+-        highestWrittenTxId = Math.max(segment.getEndTxId(),
+-            highestWrittenTxId);
++        updateHighestWrittenTxId(Math.max(segment.getEndTxId(),
++            highestWrittenTxId));
+       } else {
+         LOG.info("Synchronizing log " + TextFormat.shortDebugString(segment) +
+             ": old segment " + TextFormat.shortDebugString(currentSegment) +
+@@ -808,7 +818,7 @@ public synchronized void acceptRecovery(RequestInfo reqInfo,
+         // If we're shortening the log, update our highest txid
+         // used for lag metrics.
+         if (txnRange(currentSegment).contains(highestWrittenTxId)) {
+-          highestWrittenTxId = segment.getEndTxId();
++          updateHighestWrittenTxId(segment.getEndTxId());
+         }
+       }
+       syncedFile = syncLog(reqInfo, segment, fromUrl);
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/EditLogFileInputStream.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/EditLogFileInputStream.java
+index 2be62a6..13487d8 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/EditLogFileInputStream.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/EditLogFileInputStream.java
+@@ -301,8 +301,17 @@ public String toString() {
+     return getName();
+   }
+ 
+-  static FSEditLogLoader.EditLogValidation validateEditLog(File file)
+-      throws IOException {
++  /**
++   * @param file File being validated.
++   * @param maxTxIdToValidate Maximum Tx ID to try to validate. Validation
++   *                          returns after reading this or a higher ID.
++   *                          The file portion beyond this ID is potentially
++   *                          being updated.
++   * @return Result of the validation
++   * @throws IOException
++   */
++  static FSEditLogLoader.EditLogValidation validateEditLog(File file,
++      long maxTxIdToValidate) throws IOException {
+     EditLogFileInputStream in;
+     try {
+       in = new EditLogFileInputStream(file);
+@@ -315,7 +324,7 @@ public String toString() {
+     }
+     
+     try {
+-      return FSEditLogLoader.validateEditLog(in);
++      return FSEditLogLoader.validateEditLog(in, maxTxIdToValidate);
+     } finally {
+       IOUtils.closeStream(in);
+     }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSEditLog.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSEditLog.java
+index b79d80e..7cae0cd 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSEditLog.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSEditLog.java
+@@ -663,6 +663,16 @@ public void logSync() {
+       synchronized (this) {
+         if (sync) {
+           synctxid = syncStart;
++          for (JournalManager jm : journalSet.getJournalManagers()) {
++            /**
++             * {@link FileJournalManager#lastReadableTxId} is only meaningful
++             * for file-based journals. Therefore the interface is not added to
++             * other types of {@link JournalManager}.
++             */
++            if (jm instanceof FileJournalManager) {
++              ((FileJournalManager)jm).setLastReadableTxId(syncStart);
++            }
++          }
+           isSyncRunning = false;
+         }
+         this.notifyAll();
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSEditLogLoader.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSEditLogLoader.java
+index c6adff3..dca5fb9 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSEditLogLoader.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSEditLogLoader.java
+@@ -1042,8 +1042,14 @@ private void check203UpgradeFailure(int logVersion, Throwable e)
+    * If there are invalid or corrupt transactions in the middle of the stream,
+    * validateEditLog will skip over them.
+    * This reads through the stream but does not close it.
++   *
++   * @param maxTxIdToValidate Maximum Tx ID to try to validate. Validation
++   *                          returns after reading this or a higher ID.
++   *                          The file portion beyond this ID is potentially
++   *                          being updated.
+    */
+-  static EditLogValidation validateEditLog(EditLogInputStream in) {
++  static EditLogValidation validateEditLog(EditLogInputStream in,
++      long maxTxIdToValidate) {
+     long lastPos = 0;
+     long lastTxId = HdfsConstants.INVALID_TXID;
+     long numValid = 0;
+@@ -1066,6 +1072,10 @@ static EditLogValidation validateEditLog(EditLogInputStream in) {
+           || op.getTransactionId() > lastTxId) {
+         lastTxId = op.getTransactionId();
+       }
++      if (lastTxId >= maxTxIdToValidate) {
++        break;
++      }
++
+       numValid++;
+     }
+     return new EditLogValidation(lastPos, lastTxId, false);
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FileJournalManager.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FileJournalManager.java
+index b8a59b5..3754ab4 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FileJournalManager.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FileJournalManager.java
+@@ -75,6 +75,15 @@
+ 
+   private File currentInProgress = null;
+ 
++  /**
++   * A FileJournalManager should maintain the largest Tx ID that has been
++   * safely written to its edit log files.
++   * It should limit readers to read beyond this ID to avoid potential race
++   * with ongoing writers.
++   * Initial value indicates that all transactions can be read.
++   */
++  private long lastReadableTxId = Long.MAX_VALUE;
++
+   @VisibleForTesting
+   StoragePurger purger
+     = new NNStorageRetentionManager.DeletionStoragePurger();
+@@ -158,6 +167,15 @@ synchronized public void setOutputBufferCapacity(int size) {
+     this.outputBufferCapacity = size;
+   }
+ 
++
++  public long getLastReadableTxId() {
++    return lastReadableTxId;
++  }
++
++  public void setLastReadableTxId(long id) {
++    this.lastReadableTxId = id;
++  }
++
+   @Override
+   public void purgeLogsOlderThan(long minTxIdToKeep)
+       throws IOException {
+@@ -192,7 +210,7 @@ public void purgeLogsOlderThan(long minTxIdToKeep)
+       }
+       if (elf.isInProgress()) {
+         try {
+-          elf.validateLog();
++          elf.validateLog(getLastReadableTxId());
+         } catch (IOException e) {
+           LOG.error("got IOException while trying to validate header of " +
+               elf + ".  Skipping.", e);
+@@ -324,11 +342,13 @@ synchronized public void selectInputStreams(
+           (inProgressOk ? " (inProgress ok) " : " (excluding inProgress) ") +
+           "from among " + elfs.size() + " candidate file(s)");
+     }
+-    addStreamsToCollectionFromFiles(elfs, streams, fromTxId, inProgressOk);
++    addStreamsToCollectionFromFiles(elfs, streams, fromTxId,
++        getLastReadableTxId(), inProgressOk);
+   }
+   
+   static void addStreamsToCollectionFromFiles(Collection<EditLogFile> elfs,
+-      Collection<EditLogInputStream> streams, long fromTxId, boolean inProgressOk) {
++      Collection<EditLogInputStream> streams, long fromTxId, long maxTxIdToValidate,
++      boolean inProgressOk) {
+     for (EditLogFile elf : elfs) {
+       if (elf.isInProgress()) {
+         if (!inProgressOk) {
+@@ -339,7 +359,7 @@ static void addStreamsToCollectionFromFiles(Collection<EditLogFile> elfs,
+           continue;
+         }
+         try {
+-          elf.validateLog();
++          elf.validateLog(maxTxIdToValidate);
+         } catch (IOException e) {
+           LOG.error("got IOException while trying to validate header of " +
+               elf + ".  Skipping.", e);
+@@ -383,7 +403,7 @@ synchronized public void recoverUnfinalizedSegments() throws IOException {
+           continue;
+         }
+ 
+-        elf.validateLog();
++        elf.validateLog(getLastReadableTxId());
+ 
+         if (elf.hasCorruptHeader()) {
+           elf.moveAsideCorruptFile();
+@@ -515,9 +535,14 @@ boolean containsTxId(long txId) {
+      * Find out where the edit log ends.
+      * This will update the lastTxId of the EditLogFile or
+      * mark it as corrupt if it is.
++     * @param maxTxIdToValidate Maximum Tx ID to try to validate. Validation
++     *                          returns after reading this or a higher ID.
++     *                          The file portion beyond this ID is potentially
++     *                          being updated.
+      */
+-    public void validateLog() throws IOException {
+-      EditLogValidation val = EditLogFileInputStream.validateEditLog(file);
++    public void validateLog(long maxTxIdToValidate) throws IOException {
++      EditLogValidation val = EditLogFileInputStream.validateEditLog(file,
++          maxTxIdToValidate);
+       this.lastTxId = val.getEndTxId();
+       this.hasCorruptHeader = val.hasCorruptHeader();
+     }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/SecondaryNameNode.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/SecondaryNameNode.java
+index 10f1720..2e43420 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/SecondaryNameNode.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/SecondaryNameNode.java
+@@ -895,7 +895,7 @@ public void selectInputStreams(Collection<EditLogInputStream> streams,
+             throw new RuntimeException(ioe);
+           }
+           FileJournalManager.addStreamsToCollectionFromFiles(editFiles, streams,
+-              fromTxId, inProgressOk);
++              fromTxId, Long.MAX_VALUE, inProgressOk);
+         }
+       }
+       
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestCheckPointForSecurityTokens.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestCheckPointForSecurityTokens.java
+index 9401d07..d5e64ae 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestCheckPointForSecurityTokens.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestCheckPointForSecurityTokens.java
+@@ -88,7 +88,7 @@ public void testSaveNamespace() throws IOException {
+       for (StorageDirectory sd : nn.getFSImage().getStorage().dirIterable(null)) {
+         EditLogFile log = FSImageTestUtil.findLatestEditsLog(sd);
+         assertTrue(log.isInProgress());
+-        log.validateLog();
++        log.validateLog(Long.MAX_VALUE);
+         long numTransactions = (log.getLastTxId() - log.getFirstTxId()) + 1;
+         assertEquals("In-progress log " + log + " should have 5 transactions",
+                      5, numTransactions);;
+@@ -105,7 +105,7 @@ public void testSaveNamespace() throws IOException {
+       for (StorageDirectory sd : nn.getFSImage().getStorage().dirIterable(null)) {
+         EditLogFile log = FSImageTestUtil.findLatestEditsLog(sd);
+         assertTrue(log.isInProgress());
+-        log.validateLog();
++        log.validateLog(Long.MAX_VALUE);
+         long numTransactions = (log.getLastTxId() - log.getFirstTxId()) + 1;
+         assertEquals("In-progress log " + log + " should only have START txn",
+             1, numTransactions);
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestEditLog.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestEditLog.java
+index 577e305..242ec6c 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestEditLog.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestEditLog.java
+@@ -66,6 +66,8 @@
+ import org.apache.hadoop.fs.permission.FsPermission;
+ import org.apache.hadoop.fs.permission.PermissionStatus;
+ import org.apache.hadoop.hdfs.DFSConfigKeys;
++import org.apache.hadoop.hdfs.DFSInotifyEventInputStream;
++import org.apache.hadoop.hdfs.DistributedFileSystem;
+ import org.apache.hadoop.hdfs.HdfsConfiguration;
+ import org.apache.hadoop.hdfs.MiniDFSCluster;
+ import org.apache.hadoop.hdfs.protocol.HdfsConstants;
+@@ -84,6 +86,9 @@
+ import org.apache.hadoop.util.Time;
+ import org.apache.log4j.Level;
+ import org.junit.Assert;
++import org.apache.log4j.AppenderSkeleton;
++import org.apache.log4j.LogManager;
++import org.apache.log4j.spi.LoggingEvent;
+ import org.junit.Test;
+ import org.mockito.Mockito;
+ import org.xml.sax.ContentHandler;
+@@ -1241,7 +1246,8 @@ public void testAlternatingJournalFailure() throws IOException {
+                                                                           TXNS_PER_ROLL*11);
+ 
+     for (EditLogInputStream edits : editStreams) {
+-      FSEditLogLoader.EditLogValidation val = FSEditLogLoader.validateEditLog(edits);
++      FSEditLogLoader.EditLogValidation val =
++          FSEditLogLoader.validateEditLog(edits, Long.MAX_VALUE);
+       long read = (val.getEndTxId() - edits.getFirstTxId()) + 1;
+       LOG.info("Loading edits " + edits + " read " + read);
+       assertEquals(startTxId, edits.getFirstTxId());
+@@ -1589,4 +1595,99 @@ public void testResetThreadLocalCachedOps() throws IOException {
+       }
+     }
+   }
++
++  class TestAppender extends AppenderSkeleton {
++    private final List<LoggingEvent> log = new ArrayList<>();
++
++    @Override
++    public boolean requiresLayout() {
++      return false;
++    }
++
++    @Override
++    protected void append(final LoggingEvent loggingEvent) {
++      log.add(loggingEvent);
++    }
++
++    @Override
++    public void close() {
++    }
++
++    public List<LoggingEvent> getLog() {
++      return new ArrayList<>(log);
++    }
++  }
++
++  /**
++   *
++   * @throws Exception
++   */
++  @Test
++  public void testReadActivelyUpdatedLog() throws Exception {
++    final TestAppender appender = new TestAppender();
++    LogManager.getRootLogger().addAppender(appender);
++    Configuration conf = new HdfsConfiguration();
++    conf.setBoolean(DFSConfigKeys.DFS_NAMENODE_ACLS_ENABLED_KEY, true);
++    // Set single handler thread, so all transactions hit same thread-local ops.
++    conf.setInt(DFSConfigKeys.DFS_NAMENODE_HANDLER_COUNT_KEY, 1);
++    MiniDFSCluster cluster = null;
++    try {
++      cluster = new MiniDFSCluster.Builder(conf).numDataNodes(1).build();
++      cluster.waitActive();
++      FSImage fsimage = cluster.getNamesystem().getFSImage();
++      StorageDirectory sd = fsimage.getStorage().getStorageDir(0);
++
++      final DistributedFileSystem fileSys = cluster.getFileSystem();
++      DFSInotifyEventInputStream events = fileSys.getInotifyEventStream();
++      fileSys.mkdirs(new Path("/test"));
++      fileSys.mkdirs(new Path("/test/dir1"));
++      fileSys.delete(new Path("/test/dir1"), true);
++      fsimage.getEditLog().logSync();
++      fileSys.mkdirs(new Path("/test/dir2"));
++
++
++      final File inProgressEdit = NNStorage.getInProgressEditsFile(sd, 1);
++      assertTrue(inProgressEdit.exists());
++      EditLogFileInputStream elis = new EditLogFileInputStream(inProgressEdit);
++      FSEditLogOp op;
++      long pos = 0;
++
++      while (true) {
++        op = elis.readOp();
++        if (op != null && op.opCode != FSEditLogOpCodes.OP_INVALID) {
++          pos = elis.getPosition();
++        } else {
++          break;
++        }
++      }
++      elis.close();
++      assertTrue(pos > 0);
++
++      RandomAccessFile rwf = new RandomAccessFile(inProgressEdit, "rw");
++      rwf.seek(pos);
++      assertEquals(rwf.readByte(), (byte) -1);
++
++      rwf.seek(pos + 1);
++      rwf.writeByte(2);
++
++      rwf.close();
++
++      events.poll();
++      String pattern = "Caught exception after reading (.*) ops";
++      Pattern r = Pattern.compile(pattern);
++      final List<LoggingEvent> log = appender.getLog();
++      for (LoggingEvent event : log) {
++        Matcher m = r.matcher(event.getRenderedMessage());
++        if (m.find()) {
++          fail("Should not try to read past latest syned edit log op");
++        }
++      }
++
++    } finally {
++      if (cluster != null) {
++        cluster.shutdown();
++      }
++      LogManager.getRootLogger().removeAppender(appender);
++    }
++  }
+ }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestFSEditLogLoader.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestFSEditLogLoader.java
+index 833ef95..ed07bb8 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestFSEditLogLoader.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestFSEditLogLoader.java
+@@ -318,7 +318,8 @@ public void testValidateEditLogWithCorruptHeader() throws IOException {
+     } finally {
+       rwf.close();
+     }
+-    EditLogValidation validation = EditLogFileInputStream.validateEditLog(logFile);
++    EditLogValidation validation =
++        EditLogFileInputStream.validateEditLog(logFile, Long.MAX_VALUE);
+     assertTrue(validation.hasCorruptHeader());
+   }
+ 
+@@ -333,7 +334,7 @@ public void testValidateEditLogWithCorruptBody() throws IOException {
+     File logFileBak = new File(testDir, logFile.getName() + ".bak");
+     Files.copy(logFile, logFileBak);
+     EditLogValidation validation =
+-        EditLogFileInputStream.validateEditLog(logFile);
++        EditLogFileInputStream.validateEditLog(logFile, Long.MAX_VALUE);
+     assertTrue(!validation.hasCorruptHeader());
+     // We expect that there will be an OP_START_LOG_SEGMENT, followed by
+     // NUM_TXNS opcodes, followed by an OP_END_LOG_SEGMENT.
+@@ -346,7 +347,8 @@ public void testValidateEditLogWithCorruptBody() throws IOException {
+       // Restore backup, corrupt the txn opcode
+       Files.copy(logFileBak, logFile);
+       corruptByteInFile(logFile, txOffset);
+-      validation = EditLogFileInputStream.validateEditLog(logFile);
++      validation = EditLogFileInputStream.validateEditLog(logFile,
++          Long.MAX_VALUE);
+       long expectedEndTxId = (txId == (NUM_TXNS + 1)) ?
+           NUM_TXNS : (NUM_TXNS + 1);
+       assertEquals("Failed when corrupting txn opcode at " + txOffset,
+@@ -363,7 +365,8 @@ public void testValidateEditLogWithCorruptBody() throws IOException {
+       // Restore backup, corrupt the txn opcode
+       Files.copy(logFileBak, logFile);
+       truncateFile(logFile, txOffset);
+-      validation = EditLogFileInputStream.validateEditLog(logFile);
++      validation = EditLogFileInputStream.validateEditLog(logFile,
++          Long.MAX_VALUE);
+       long expectedEndTxId = (txId == 0) ?
+           HdfsConstants.INVALID_TXID : (txId - 1);
+       assertEquals("Failed when corrupting txid " + txId + " txn opcode " +
+@@ -381,7 +384,7 @@ public void testValidateEmptyEditLog() throws IOException {
+     // layout flags section.
+     truncateFile(logFile, 8);
+     EditLogValidation validation =
+-        EditLogFileInputStream.validateEditLog(logFile);
++        EditLogFileInputStream.validateEditLog(logFile, Long.MAX_VALUE);
+     assertTrue(!validation.hasCorruptHeader());
+     assertEquals(HdfsConstants.INVALID_TXID, validation.getEndTxId());
+   }
+-- 
+1.7.9.5
+

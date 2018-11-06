@@ -1,0 +1,175 @@
+From 9fb842cf802c7702e856b79b703171e4d93ca390 Mon Sep 17 00:00:00 2001
+From: Allen Wittenauer <aw@apache.org>
+Date: Sun, 26 Apr 2015 20:31:40 -0700
+Subject: [PATCH 0564/1023] MAPREDUCE-6057. Remove obsolete entries from
+ mapred-default.xml (Ray Chiang via aw)
+
+(cherry picked from commit 618ba707f0f2ddc353414dbd0eee0ab9e83b8013)
+
+Conflicts:
+	hadoop-mapreduce-project/CHANGES.txt
+	hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/resources/mapred-default.xml
+---
+ .../java/org/apache/hadoop/mapred/MapTask.java     |    5 ++--
+ .../org/apache/hadoop/mapreduce/MRJobConfig.java   |    3 +++
+ .../src/main/resources/mapred-default.xml          |   24 --------------------
+ .../test/resources/job_1329348432655_0001_conf.xml |    4 ----
+ .../src/main/data/2jobs2min-rumen-jh.json          |    6 -----
+ 5 files changed, 6 insertions(+), 36 deletions(-)
+
+diff --git a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/java/org/apache/hadoop/mapred/MapTask.java b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/java/org/apache/hadoop/mapred/MapTask.java
+index 1a4901b..e2693fd 100644
+--- a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/java/org/apache/hadoop/mapred/MapTask.java
++++ b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/java/org/apache/hadoop/mapred/MapTask.java
+@@ -978,8 +978,9 @@ public void init(MapOutputCollector.Context context
+         throw new IOException(
+             "Invalid \"" + JobContext.IO_SORT_MB + "\": " + sortmb);
+       }
+-      sorter = ReflectionUtils.newInstance(job.getClass("map.sort.class",
+-            QuickSort.class, IndexedSorter.class), job);
++      sorter = ReflectionUtils.newInstance(job.getClass(
++                   MRJobConfig.MAP_SORT_CLASS, QuickSort.class,
++                   IndexedSorter.class), job);
+       // buffers and accounting
+       int maxMemUsage = sortmb << 20;
+       maxMemUsage -= maxMemUsage % METASIZE;
+diff --git a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/java/org/apache/hadoop/mapreduce/MRJobConfig.java b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/java/org/apache/hadoop/mapreduce/MRJobConfig.java
+index 1190aa4..749a4dd 100644
+--- a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/java/org/apache/hadoop/mapreduce/MRJobConfig.java
++++ b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/java/org/apache/hadoop/mapreduce/MRJobConfig.java
+@@ -28,6 +28,9 @@
+ @InterfaceStability.Evolving
+ public interface MRJobConfig {
+ 
++  // Used by MapTask
++  public static final String MAP_SORT_CLASS = "map.sort.class";
++
+   // Put all of the attribute names in here so that Job and JobContext are
+   // consistent.
+   public static final String INPUT_FORMAT_CLASS_ATTR = "mapreduce.job.inputformat.class";
+diff --git a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/resources/mapred-default.xml b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/resources/mapred-default.xml
+index c10db69..3a2476c 100644
+--- a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/resources/mapred-default.xml
++++ b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/resources/mapred-default.xml
+@@ -1224,30 +1224,6 @@
+   </property>
+   
+   <property>
+-    <name>mapreduce.map.skip.proc.count.autoincr</name>
+-    <value>true</value>
+-    <description> The flag which if set to true, 
+-    SkipBadRecords.COUNTER_MAP_PROCESSED_RECORDS is incremented 
+-    by MapRunner after invoking the map function. This value must be set to 
+-    false for applications which process the records asynchronously 
+-    or buffer the input records. For example streaming. 
+-    In such cases applications should increment this counter on their own.
+-    </description>
+-  </property>
+-  
+-  <property>
+-    <name>mapreduce.reduce.skip.proc.count.autoincr</name>
+-    <value>true</value>
+-    <description> The flag which if set to true, 
+-    SkipBadRecords.COUNTER_REDUCE_PROCESSED_GROUPS is incremented 
+-    by framework after invoking the reduce function. This value must be set to 
+-    false for applications which process the records asynchronously 
+-    or buffer the input records. For example streaming. 
+-    In such cases applications should increment this counter on their own.
+-    </description>
+-  </property>
+-  
+-  <property>
+     <name>mapreduce.job.skip.outdir</name>
+     <value></value>
+     <description> If no value is specified here, the skipped records are 
+diff --git a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-hs/src/test/resources/job_1329348432655_0001_conf.xml b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-hs/src/test/resources/job_1329348432655_0001_conf.xml
+index 0109e09..d9411fb 100644
+--- a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-hs/src/test/resources/job_1329348432655_0001_conf.xml
++++ b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-hs/src/test/resources/job_1329348432655_0001_conf.xml
+@@ -94,7 +94,6 @@
+ <property><!--Loaded from job.xml--><name>mapreduce.reduce.input.buffer.percent</name><value>0.0</value></property>
+ <property><!--Loaded from job.xml--><name>mapreduce.map.output.compress.codec</name><value>org.apache.hadoop.io.compress.DefaultCodec</value></property>
+ <property><!--Loaded from job.xml--><name>yarn.resourcemanager.delegation-token.keepalive-time-ms</name><value>300000</value></property>
+-<property><!--Loaded from job.xml--><name>mapreduce.map.skip.proc.count.autoincr</name><value>true</value></property>
+ <property><!--Loaded from job.xml--><name>dfs.datanode.directoryscan.threads</name><value>1</value></property>
+ <property><!--Loaded from job.xml--><name>mapreduce.jobtracker.address</name><value>local</value></property>
+ <property><!--Loaded from job.xml--><name>mapreduce.cluster.local.dir</name><value>${hadoop.tmp.dir}/mapred/local</value></property>
+@@ -201,7 +200,6 @@
+ <property><!--Loaded from job.xml--><name>dfs.block.access.key.update.interval</name><value>600</value></property>
+ <property><!--Loaded from job.xml--><name>mapreduce.jobhistory.move.interval-ms</name><value>30000</value></property>
+ <property><!--Loaded from job.xml--><name>dfs.datanode.dns.interface</name><value>default</value></property>
+-<property><!--Loaded from job.xml--><name>mapreduce.reduce.skip.proc.count.autoincr</name><value>true</value></property>
+ <property><!--Loaded from job.xml--><name>dfs.namenode.backup.http-address</name><value>0.0.0.0:50105</value></property>
+ <property><!--Loaded from job.xml--><name>yarn.nodemanager.container-monitor.interval-ms</name><value>3000</value></property>
+ <property><!--Loaded from job.xml--><name>mapred.reducer.new-api</name><value>true</value></property>
+@@ -296,7 +294,6 @@
+ <property><!--Loaded from job.xml--><name>yarn.app.mapreduce.am.command-opts</name><value>-Xmx500m</value></property>
+ <property><!--Loaded from job.xml--><name>mapreduce.admin.user.env</name><value>LD_LIBRARY_PATH=$HADOOP_COMMON_HOME/lib/native</value></property>
+ <property><!--Loaded from job.xml--><name>dfs.namenode.checkpoint.edits.dir</name><value>${dfs.namenode.checkpoint.dir}</value></property>
+-<property><!--Loaded from job.xml--><name>mapreduce.local.clientfactory.class.name</name><value>org.apache.hadoop.mapred.LocalClientFactory</value></property>
+ <property><!--Loaded from job.xml--><name>hadoop.common.configuration.version</name><value>0.23.0</value></property>
+ <property><!--Loaded from job.xml--><name>mapreduce.tasktracker.dns.interface</name><value>default</value></property>
+ <property><!--Loaded from job.xml--><name>io.serializations</name><value>org.apache.hadoop.io.serializer.WritableSerialization,org.apache.hadoop.io.serializer.avro.AvroSpecificSerialization,org.apache.hadoop.io.serializer.avro.AvroReflectSerialization</value></property>
+@@ -386,7 +383,6 @@
+ <property><!--Loaded from job.xml--><name>fs.AbstractFileSystem.viewfs.impl</name><value>org.apache.hadoop.fs.viewfs.ViewFs</value></property>
+ <property><!--Loaded from job.xml--><name>yarn.resourcemanager.resource-tracker.client.thread-count</name><value>50</value></property>
+ <property><!--Loaded from job.xml--><name>mapreduce.tasktracker.dns.nameserver</name><value>default</value></property>
+-<property><!--Loaded from job.xml--><name>mapreduce.clientfactory.class.name</name><value>org.apache.hadoop.mapred.YarnClientFactory</value></property>
+ <property><!--Loaded from job.xml--><name>mapreduce.map.output.compress</name><value>false</value></property>
+ <property><!--Loaded from job.xml--><name>mapreduce.job.counters.limit</name><value>120</value></property>
+ <property><!--Loaded from job.xml--><name>dfs.datanode.ipc.address</name><value>0.0.0.0:50020</value></property>
+diff --git a/hadoop-tools/hadoop-sls/src/main/data/2jobs2min-rumen-jh.json b/hadoop-tools/hadoop-sls/src/main/data/2jobs2min-rumen-jh.json
+index 59ae8d7..bf36e58 100644
+--- a/hadoop-tools/hadoop-sls/src/main/data/2jobs2min-rumen-jh.json
++++ b/hadoop-tools/hadoop-sls/src/main/data/2jobs2min-rumen-jh.json
+@@ -4646,7 +4646,6 @@
+     "dfs.ha.log-roll.period" : "120",
+     "mapreduce.reduce.input.buffer.percent" : "0.0",
+     "mapreduce.map.output.compress.codec" : "org.apache.hadoop.io.compress.SnappyCodec",
+-    "mapreduce.map.skip.proc.count.autoincr" : "true",
+     "dfs.client.failover.sleep.base.millis" : "500",
+     "dfs.datanode.directoryscan.threads" : "1",
+     "mapreduce.jobtracker.address" : "neededForHive:999999",
+@@ -4768,7 +4767,6 @@
+     "dfs.namenode.backup.address" : "0.0.0.0:50100",
+     "hadoop.util.hash.type" : "murmur",
+     "dfs.block.access.key.update.interval" : "600",
+-    "mapreduce.reduce.skip.proc.count.autoincr" : "true",
+     "dfs.datanode.dns.interface" : "default",
+     "dfs.datanode.use.datanode.hostname" : "false",
+     "mapreduce.job.output.key.class" : "org.apache.hadoop.io.Text",
+@@ -4879,7 +4877,6 @@
+     "mapreduce.reduce.shuffle.read.timeout" : "180000",
+     "mapreduce.admin.user.env" : "LD_LIBRARY_PATH=$HADOOP_COMMON_HOME/lib/native",
+     "yarn.app.mapreduce.am.command-opts" : " -Xmx1238932873",
+-    "mapreduce.local.clientfactory.class.name" : "org.apache.hadoop.mapred.LocalClientFactory",
+     "dfs.namenode.checkpoint.edits.dir" : "${dfs.namenode.checkpoint.dir}",
+     "fs.permissions.umask-mode" : "022",
+     "dfs.client.domain.socket.data.traffic" : "false",
+@@ -9759,7 +9756,6 @@
+     "dfs.ha.log-roll.period" : "120",
+     "mapreduce.reduce.input.buffer.percent" : "0.0",
+     "mapreduce.map.output.compress.codec" : "org.apache.hadoop.io.compress.SnappyCodec",
+-    "mapreduce.map.skip.proc.count.autoincr" : "true",
+     "dfs.client.failover.sleep.base.millis" : "500",
+     "dfs.datanode.directoryscan.threads" : "1",
+     "mapreduce.jobtracker.address" : "neededForHive:999999",
+@@ -9881,7 +9877,6 @@
+     "dfs.namenode.backup.address" : "0.0.0.0:50100",
+     "hadoop.util.hash.type" : "murmur",
+     "dfs.block.access.key.update.interval" : "600",
+-    "mapreduce.reduce.skip.proc.count.autoincr" : "true",
+     "dfs.datanode.dns.interface" : "default",
+     "dfs.datanode.use.datanode.hostname" : "false",
+     "mapreduce.job.output.key.class" : "org.apache.hadoop.io.Text",
+@@ -9992,7 +9987,6 @@
+     "mapreduce.reduce.shuffle.read.timeout" : "180000",
+     "mapreduce.admin.user.env" : "LD_LIBRARY_PATH=$HADOOP_COMMON_HOME/lib/native",
+     "yarn.app.mapreduce.am.command-opts" : " -Xmx1238932873",
+-    "mapreduce.local.clientfactory.class.name" : "org.apache.hadoop.mapred.LocalClientFactory",
+     "dfs.namenode.checkpoint.edits.dir" : "${dfs.namenode.checkpoint.dir}",
+     "fs.permissions.umask-mode" : "022",
+     "dfs.client.domain.socket.data.traffic" : "false",
+-- 
+1.7.9.5
+

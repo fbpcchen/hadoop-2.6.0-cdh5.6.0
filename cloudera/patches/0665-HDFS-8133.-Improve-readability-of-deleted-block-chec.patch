@@ -1,0 +1,172 @@
+From eed6b9c5aabd31251fc746a29e9dadf0d2dc38ae Mon Sep 17 00:00:00 2001
+From: Colin Patrick Mccabe <cmccabe@cloudera.com>
+Date: Tue, 21 Apr 2015 11:41:22 -0700
+Subject: [PATCH 0665/1023] HDFS-8133. Improve readability of deleted block
+ check (Daryn Sharp via Colin P. McCabe)
+
+(cherry picked from commit 997408eaaceef20b053ee7344468e28cb9a1379b)
+(cherry picked from commit 447f2f699e14eff7c278e18980fd11994f070f36)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlockInfoContiguous.java
+	hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlockManager.java
+---
+ .../hdfs/server/blockmanagement/BlockInfo.java     |    4 ++++
+ .../hdfs/server/blockmanagement/BlockManager.java  |   18 ++++++++++--------
+ .../hdfs/server/blockmanagement/BlocksMap.java     |    2 +-
+ .../hadoop/hdfs/server/namenode/FSNamesystem.java  |    5 ++---
+ .../hdfs/server/blockmanagement/TestBlockInfo.java |   12 +++++++++++-
+ 5 files changed, 28 insertions(+), 13 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlockInfo.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlockInfo.java
+index 34e06fb..7a8db8c 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlockInfo.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlockInfo.java
+@@ -88,6 +88,10 @@ public void setBlockCollection(BlockCollection bc) {
+     this.bc = bc;
+   }
+ 
++  public boolean isDeleted() {
++    return (bc == null);
++  }
++
+   public DatanodeDescriptor getDatanode(int index) {
+     DatanodeStorageInfo storage = getStorageInfo(index);
+     return storage == null ? null : storage.getDatanodeDescriptor();
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlockManager.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlockManager.java
+index 56c726b..780fd7b 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlockManager.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlockManager.java
+@@ -1153,13 +1153,14 @@ private void markBlockAsCorrupt(BlockToMarkCorrupt b,
+       DatanodeStorageInfo storageInfo,
+       DatanodeDescriptor node) throws IOException {
+ 
+-    BlockCollection bc = b.corrupted.getBlockCollection();
+-    if (bc == null) {
++    if (b.corrupted.isDeleted()) {
+       blockLog.info("BLOCK markBlockAsCorrupt: {} cannot be marked as" +
+           " corrupt as it does not belong to any file", b);
+       addToInvalidates(b.corrupted, node);
+       return;
+     } 
++    short expectedReplicas =
++        b.corrupted.getBlockCollection().getBlockReplication();
+ 
+     // Add replica to the data-node if it is not already there
+     if (storageInfo != null) {
+@@ -1171,13 +1172,13 @@ private void markBlockAsCorrupt(BlockToMarkCorrupt b,
+         b.reasonCode);
+ 
+     NumberReplicas numberOfReplicas = countNodes(b.stored);
+-    boolean hasEnoughLiveReplicas = numberOfReplicas.liveReplicas() >= bc
+-        .getBlockReplication();
++    boolean hasEnoughLiveReplicas = numberOfReplicas.liveReplicas() >=
++        expectedReplicas;
+     boolean minReplicationSatisfied =
+         numberOfReplicas.liveReplicas() >= minReplication;
+     boolean hasMoreCorruptReplicas = minReplicationSatisfied &&
+         (numberOfReplicas.liveReplicas() + numberOfReplicas.corruptReplicas()) >
+-        bc.getBlockReplication();
++        expectedReplicas;
+     boolean corruptedDuringWrite = minReplicationSatisfied &&
+         (b.stored.getGenerationStamp() > b.corrupted.getGenerationStamp());
+     // case 1: have enough number of live replicas
+@@ -2466,7 +2467,7 @@ private Block addStoredBlock(final BlockInfo block,
+     } else {
+       storedBlock = block;
+     }
+-    if (storedBlock == null || storedBlock.getBlockCollection() == null) {
++    if (storedBlock == null || storedBlock.isDeleted()) {
+       // If this block does not belong to anyfile, then we are done.
+       blockLog.info("BLOCK* addStoredBlock: {} on {} size {} but it does not" +
+           " belong to any file", block, node, block.getNumBytes());
+@@ -2753,7 +2754,7 @@ public double getReplicationQueuesInitProgress() {
+    */
+   private MisReplicationResult processMisReplicatedBlock(BlockInfo block) {
+     BlockCollection bc = block.getBlockCollection();
+-    if (bc == null) {
++    if (block.isDeleted()) {
+       // block does not belong to any file
+       addToInvalidates(block);
+       return MisReplicationResult.INVALID;
+@@ -2764,7 +2765,8 @@ private MisReplicationResult processMisReplicatedBlock(BlockInfo block) {
+       return MisReplicationResult.UNDER_CONSTRUCTION;
+     }
+     // calculate current replication
+-    short expectedReplication = bc.getBlockReplication();
++    short expectedReplication =
++        block.getBlockCollection().getBlockReplication();
+     NumberReplicas num = countNodes(block);
+     int numCurrentReplica = num.liveReplicas();
+     // add to under-replicated queue if need to be
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlocksMap.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlocksMap.java
+index d532e74..d06d503 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlocksMap.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlocksMap.java
+@@ -193,7 +193,7 @@ boolean removeNode(Block b, DatanodeDescriptor node) {
+     boolean removed = node.removeBlock(info);
+ 
+     if (info.getDatanode(0) == null     // no datanodes left
+-              && info.getBlockCollection() == null) {  // does not belong to a file
++              && info.isDeleted()) {  // does not belong to a file
+       blocks.remove(b);  // remove block from the map
+     }
+     return removed;
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSNamesystem.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSNamesystem.java
+index d9f8f9d..f72f8cb 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSNamesystem.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSNamesystem.java
+@@ -4845,13 +4845,12 @@ void commitBlockSynchronization(ExtendedBlock lastblock,
+       // this method to add a CloseOp to the edit log for an already deleted
+       // file (See HDFS-6825).
+       //
+-      BlockCollection blockCollection = storedBlock.getBlockCollection();
+-      if (blockCollection == null) {
++      if (storedBlock.isDeleted()) {
+         throw new IOException("The blockCollection of " + storedBlock
+             + " is null, likely because the file owning this block was"
+             + " deleted and the block removal is delayed");
+       }
+-      INodeFile iFile = ((INode)blockCollection).asFile();
++      INodeFile iFile = ((INode)storedBlock.getBlockCollection()).asFile();
+       if (isFileDeleted(iFile)) {
+         throw new FileNotFoundException("File not found: "
+             + iFile.getFullPathName() + ", likely due to delayed block"
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/blockmanagement/TestBlockInfo.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/blockmanagement/TestBlockInfo.java
+index 41c8f8a..329d560 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/blockmanagement/TestBlockInfo.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/blockmanagement/TestBlockInfo.java
+@@ -34,6 +34,7 @@
+ import org.apache.hadoop.hdfs.server.protocol.DatanodeStorage;
+ import org.junit.Assert;
+ import org.junit.Test;
++import org.mockito.Mockito;
+ 
+ /**
+  * This class provides tests for BlockInfo class, which is used in BlocksMap.
+@@ -46,6 +47,15 @@
+   private static final Log LOG = LogFactory
+       .getLog("org.apache.hadoop.hdfs.TestBlockInfo");
+ 
++  @Test
++  public void testIsDeleted() {
++    BlockInfo blockInfo = new BlockInfo((short) 3);
++    BlockCollection bc = Mockito.mock(BlockCollection.class);
++    blockInfo.setBlockCollection(bc);
++    Assert.assertFalse(blockInfo.isDeleted());
++    blockInfo.setBlockCollection(null);
++    Assert.assertTrue(blockInfo.isDeleted());
++  }
+ 
+   @Test
+   public void testAddStorage() throws Exception {
+@@ -161,4 +171,4 @@ public void testBlockListMoveToHead() throws Exception {
+           blockInfoList.get(j), dd.getBlockListHeadForTesting());
+     }
+   }
+-}
+\ No newline at end of file
++}
+-- 
+1.7.9.5
+

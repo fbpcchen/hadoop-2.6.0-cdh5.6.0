@@ -1,0 +1,28 @@
+From 1b328553bdffb100a5c5cfabbe68e50d1fe827a0 Mon Sep 17 00:00:00 2001
+From: Colin Patrick Mccabe <cmccabe@cloudera.com>
+Date: Thu, 17 Sep 2015 16:11:05 -0700
+Subject: [PATCH 0798/1023] HDFS-8735 addendum. AppendEvent does not have
+ newBlock so don't try to reference it in toString
+
+Change-Id: I15fc78e91bd0532d8bc44bcfaf94994926e3ea58
+(cherry picked from commit 28b6cbf6762c08dd629ddf088535605e85348c38)
+---
+ .../java/org/apache/hadoop/hdfs/inotify/Event.java |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/inotify/Event.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/inotify/Event.java
+index f1c4d3f..b3b9203 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/inotify/Event.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/inotify/Event.java
+@@ -562,7 +562,7 @@ public String getPath() {
+     @Override
+     @InterfaceStability.Unstable
+     public String toString() {
+-      return "AppendEvent [path=" + path + ", newBlock=" + newBlock + "]";
++      return "AppendEvent [path=" + path + "]";
+     }
+ 
+   }
+-- 
+1.7.9.5
+

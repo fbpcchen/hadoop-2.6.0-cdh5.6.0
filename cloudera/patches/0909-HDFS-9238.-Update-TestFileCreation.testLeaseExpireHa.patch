@@ -1,0 +1,64 @@
+From fb9b88d1d6ed2b215c680c0997d3c145ae8eb775 Mon Sep 17 00:00:00 2001
+From: Lei Xu <lei@apache.org>
+Date: Wed, 14 Oct 2015 13:10:26 -0700
+Subject: [PATCH 0909/1023] HDFS-9238. Update
+ TestFileCreation.testLeaseExpireHardLimit() to
+ avoid using DataNodeTestUtils.getFile(). (Tony Wu
+ via lei)
+
+(cherry picked from commit 86516774466af89115d5b1fc6c0c42a5d8626c38)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestFileCreation.java
+
+Change-Id: Iab8c610ddc6382e8bd2ec764b1b72567257148d1
+---
+ .../org/apache/hadoop/hdfs/TestFileCreation.java   |   15 +++------------
+ 1 file changed, 3 insertions(+), 12 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestFileCreation.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestFileCreation.java
+index 8e88b62..01434e2 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestFileCreation.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestFileCreation.java
+@@ -39,10 +39,9 @@
+ 
+ import java.io.BufferedReader;
+ import java.io.ByteArrayOutputStream;
+-import java.io.File;
+ import java.io.FileNotFoundException;
+-import java.io.FileReader;
+ import java.io.IOException;
++import java.io.InputStreamReader;
+ import java.net.InetSocketAddress;
+ import java.net.URI;
+ import java.net.UnknownHostException;
+@@ -64,8 +63,6 @@
+ import org.apache.hadoop.fs.Path;
+ import org.apache.hadoop.fs.permission.FsPermission;
+ import org.apache.hadoop.hdfs.client.HdfsDataOutputStream;
+-import org.apache.hadoop.hdfs.protocol.AlreadyBeingCreatedException;
+-import org.apache.hadoop.hdfs.protocol.Block;
+ import org.apache.hadoop.hdfs.protocol.DatanodeInfo;
+ import org.apache.hadoop.hdfs.protocol.ExtendedBlock;
+ import org.apache.hadoop.hdfs.protocol.HdfsConstants;
+@@ -995,15 +992,9 @@ public void testLeaseExpireHardLimit() throws Exception {
+       for(DatanodeInfo datanodeinfo: locatedblock.getLocations()) {
+         DataNode datanode = cluster.getDataNode(datanodeinfo.getIpcPort());
+         ExtendedBlock blk = locatedblock.getBlock();
+-        Block b = DataNodeTestUtils.getFSDataset(datanode).getStoredBlock(
+-            blk.getBlockPoolId(), blk.getBlockId());
+-        final File blockfile = DataNodeTestUtils.getFile(datanode,
+-            blk.getBlockPoolId(), b.getBlockId());
+-        System.out.println("blockfile=" + blockfile);
+-        if (blockfile != null) {
+-          BufferedReader in = new BufferedReader(new FileReader(blockfile));
++        try (BufferedReader in = new BufferedReader(new InputStreamReader(
++            datanode.getFSDataset().getBlockInputStream(blk, 0)))) {
+           assertEquals("something", in.readLine());
+-          in.close();
+           successcount++;
+         }
+       }
+-- 
+1.7.9.5
+

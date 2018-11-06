@@ -1,0 +1,73 @@
+From 90587dbda3a92ca61b56e3c2d99634bc8ebf8598 Mon Sep 17 00:00:00 2001
+From: Colin Patrick Mccabe <cmccabe@cloudera.com>
+Date: Fri, 31 Jul 2015 14:59:42 -0700
+Subject: [PATCH 0808/1023] HADOOP-12183. Annotate the HTrace span created by
+ FsShell with the command-line arguments passed by
+ the user (Masatake Iwasaki via Colin P.  McCabe)
+
+(cherry picked from commit 454da959c726528ac98dbca1b935a83ed4b9e235)
+(cherry picked from commit 7d68f17731989fa99693d072cbe1f568a7e8827d)
+
+Change-Id: Ie04189277e925df26e054d7710f5e71616545a1e
+(cherry picked from commit 2d1ddb7b9ac0b08b05ff13d377cc7cf93c38ca83)
+---
+ .../main/java/org/apache/hadoop/fs/FsShell.java    |    8 ++++++++
+ .../java/org/apache/hadoop/fs/TestFsShell.java     |    6 +++++-
+ 2 files changed, 13 insertions(+), 1 deletion(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/FsShell.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/FsShell.java
+index e9c2f73..a0510be 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/FsShell.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/FsShell.java
+@@ -35,6 +35,7 @@
+ import org.apache.hadoop.tracing.SpanReceiverHost;
+ import org.apache.hadoop.tools.TableListing;
+ import org.apache.hadoop.tracing.TraceUtils;
++import org.apache.hadoop.util.StringUtils;
+ import org.apache.hadoop.util.Tool;
+ import org.apache.hadoop.util.ToolRunner;
+ import org.apache.htrace.Sampler;
+@@ -298,6 +299,13 @@ public int run(String argv[]) throws Exception {
+           throw new UnknownCommandException();
+         }
+         TraceScope scope = Trace.startSpan(instance.getCommandName(), traceSampler);
++        if (scope.getSpan() != null) {
++          String args = StringUtils.join(" ", argv);
++          if (args.length() > 2048) {
++            args = args.substring(0, 2048);
++          }
++          scope.getSpan().addKVAnnotation("args", args);
++        }
+         try {
+           exitCode = instance.run(Arrays.copyOfRange(argv, 1, argv.length));
+         } finally {
+diff --git a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/TestFsShell.java b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/TestFsShell.java
+index 38e768f..59fcbe5 100644
+--- a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/TestFsShell.java
++++ b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/TestFsShell.java
+@@ -24,6 +24,7 @@
+ import org.apache.hadoop.util.ToolRunner;
+ import org.apache.htrace.SamplerBuilder;
+ import org.apache.htrace.impl.AlwaysSampler;
++import org.junit.Assert;
+ import org.junit.Test;
+ 
+ public class TestFsShell {
+@@ -57,10 +58,13 @@ public void testTracing() throws Throwable {
+     FsShell shell = new FsShell(conf);
+     int res;
+     try {
+-      res = ToolRunner.run(shell, new String[]{"-help"});
++      res = ToolRunner.run(shell, new String[]{"-help", "ls", "cat"});
+     } finally {
+       shell.close();
+     }
+     SetSpanReceiver.assertSpanNamesFound(new String[]{"help"});
++    Assert.assertEquals("-help ls cat",
++        SetSpanReceiver.getMap()
++            .get("help").get(0).getKVAnnotations().get("args"));
+   }
+ }
+-- 
+1.7.9.5
+

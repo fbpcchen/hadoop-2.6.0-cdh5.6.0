@@ -1,0 +1,107 @@
+From 4e627e1ff4a2032b99c11e78ac535d5210dc706b Mon Sep 17 00:00:00 2001
+From: Kihwal Lee <kihwal@apache.org>
+Date: Mon, 30 Mar 2015 10:11:25 -0500
+Subject: [PATCH 0827/1023] HDFS-7742. Favoring decommissioning node for
+ replication can cause a block to stay
+ underreplicated for long periods. Contributed by
+ Nathan Roberts. (cherry picked from commit
+ 04ee18ed48ceef34598f954ff40940abc9fde1d2)
+
+(cherry picked from commit c4cedfc1d601127430c70ca8ca4d4e2ee2d1003d)
+(cherry picked from commit c6b68a82adea8de488b255594d35db8e01f5fc8f)
+(cherry picked from commit bc8728cd27870e048fd90d1e07ea92e8c9ed310d)
+
+Change-Id: I26d5d8bb5781e68c02c458f96395faf8fc3baf2d
+(cherry picked from commit c9321eb9b3ba396b14278d9d5c5982d4852595e2)
+---
+ .../hdfs/server/blockmanagement/BlockManager.java  |   10 ++---
+ .../server/blockmanagement/TestBlockManager.java   |   42 ++++++++++++++++++++
+ 2 files changed, 47 insertions(+), 5 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlockManager.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlockManager.java
+index 85fd8f0..d513988 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlockManager.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlockManager.java
+@@ -1647,7 +1647,8 @@ else if (excessBlocks != null && excessBlocks.contains(block)) {
+       // If so, do not select the node as src node
+       if ((nodesCorrupt != null) && nodesCorrupt.contains(node))
+         continue;
+-      if(priority != UnderReplicatedBlocks.QUEUE_HIGHEST_PRIORITY
++      if(priority != UnderReplicatedBlocks.QUEUE_HIGHEST_PRIORITY 
++          && !node.isDecommissionInProgress() 
+           && node.getNumberOfBlocksToBeReplicated() >= maxReplicationStreams)
+       {
+         continue; // already reached replication limit
+@@ -1662,13 +1663,12 @@ else if (excessBlocks != null && excessBlocks.contains(block)) {
+       // never use already decommissioned nodes
+       if(node.isDecommissioned())
+         continue;
+-      // we prefer nodes that are in DECOMMISSION_INPROGRESS state
+-      if(node.isDecommissionInProgress() || srcNode == null) {
++
++      // We got this far, current node is a reasonable choice
++      if (srcNode == null) {
+         srcNode = node;
+         continue;
+       }
+-      if(srcNode.isDecommissionInProgress())
+-        continue;
+       // switch to a different node randomly
+       // this to prevent from deterministically selecting the same node even
+       // if the node failed to replicate the block on previous iterations
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/blockmanagement/TestBlockManager.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/blockmanagement/TestBlockManager.java
+index 580e5b2..28ad5b5 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/blockmanagement/TestBlockManager.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/blockmanagement/TestBlockManager.java
+@@ -541,6 +541,48 @@ public void testHighestPriReplSrcChosenDespiteMaxReplLimit() throws Exception {
+   }
+ 
+   @Test
++  public void testFavorDecomUntilHardLimit() throws Exception {
++    bm.maxReplicationStreams = 0;
++    bm.replicationStreamsHardLimit = 1;
++
++    long blockId = 42;         // arbitrary
++    Block aBlock = new Block(blockId, 0, 0);
++    List<DatanodeDescriptor> origNodes = getNodes(0, 1);
++    // Add the block to the first node.
++    addBlockOnNodes(blockId,origNodes.subList(0,1));
++    origNodes.get(0).startDecommission();
++
++    List<DatanodeDescriptor> cntNodes = new LinkedList<DatanodeDescriptor>();
++    List<DatanodeStorageInfo> liveNodes = new LinkedList<DatanodeStorageInfo>();
++
++    assertNotNull("Chooses decommissioning source node for a normal replication"
++        + " if all available source nodes have reached their replication"
++        + " limits below the hard limit.",
++        bm.chooseSourceDatanode(
++            aBlock,
++            cntNodes,
++            liveNodes,
++            new NumberReplicas(),
++            UnderReplicatedBlocks.QUEUE_UNDER_REPLICATED));
++
++
++    // Increase the replication count to test replication count > hard limit
++    DatanodeStorageInfo targets[] = { origNodes.get(1).getStorageInfos()[0] };
++    origNodes.get(0).addBlockToBeReplicated(aBlock, targets);
++
++    assertNull("Does not choose a source decommissioning node for a normal"
++        + " replication when all available nodes exceed the hard limit.",
++        bm.chooseSourceDatanode(
++            aBlock,
++            cntNodes,
++            liveNodes,
++            new NumberReplicas(),
++            UnderReplicatedBlocks.QUEUE_UNDER_REPLICATED));
++  }
++
++
++
++  @Test
+   public void testSafeModeIBR() throws Exception {
+     DatanodeDescriptor node = spy(nodes.get(0));
+     DatanodeStorageInfo ds = node.getStorageInfos()[0];
+-- 
+1.7.9.5
+

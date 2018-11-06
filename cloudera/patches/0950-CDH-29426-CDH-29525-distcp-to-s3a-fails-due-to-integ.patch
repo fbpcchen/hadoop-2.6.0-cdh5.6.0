@@ -1,0 +1,97 @@
+From 5c3265cd09bb0cacc9e45ac431cdc0f17c4f24b4 Mon Sep 17 00:00:00 2001
+From: Aaron Fabbri <fabbri@cloudera.com>
+Date: Thu, 16 Jul 2015 15:10:37 -0700
+Subject: [PATCH 0950/1023] CDH-29426 CDH-29525 distcp to s3a fails due to
+ integer overflow..
+
+Build fixes for newer AWS SDK.
+
+Fix classpath shading for joda-time.
+
+Excluding joda-time from the aws-java-sdk dependency breaks with newer versions
+of the aws sdk.
+
+In fact, the previous maven shading config was broken, because the shading
+relocation does nothing if that artifact is not a dependency.
+
+This commit adds the joda time classes to the uber/shaded jar, and adds
+depenency exclusions for the parent artifacts that depend on this one.
+
+Change-Id: Iea44f29578dacf0e577c3b235628b5823b6ae7f1
+(cherry picked from commit bac1a2a0dd7d3662f8d781542e7ffee5ec36a61d)
+---
+ hadoop-client/pom.xml                  |    6 ++++++
+ hadoop-tools/hadoop-aws/pom.xml        |   15 ++++++++-------
+ hadoop-tools/hadoop-tools-dist/pom.xml |    6 ++++++
+ 3 files changed, 20 insertions(+), 7 deletions(-)
+
+diff --git a/hadoop-client/pom.xml b/hadoop-client/pom.xml
+index 710f8d5..e515340 100644
+--- a/hadoop-client/pom.xml
++++ b/hadoop-client/pom.xml
+@@ -330,6 +330,12 @@
+       <groupId>org.apache.hadoop</groupId>
+       <artifactId>hadoop-aws</artifactId>
+       <scope>compile</scope>
++      <exclusions>
++        <exclusion>
++          <groupId>joda-time</groupId>
++          <artifactId>joda-time</artifactId>
++        </exclusion>
++      </exclusions>
+     </dependency>
+ 
+     <dependency>
+diff --git a/hadoop-tools/hadoop-aws/pom.xml b/hadoop-tools/hadoop-aws/pom.xml
+index c3549dd..e00e9bd 100644
+--- a/hadoop-tools/hadoop-aws/pom.xml
++++ b/hadoop-tools/hadoop-aws/pom.xml
+@@ -96,7 +96,8 @@
+               <createDependencyReducedPom>false</createDependencyReducedPom>
+               <artifactSet>
+                 <includes>
+-                  <include>com.amazonaws:aws-java-sdk:jar:*</include>
++                  <include>com.amazonaws:aws-java-sdk-s3:jar:*</include>
++                  <include>com.amazonaws:aws-java-sdk-core:jar:*</include>
+                   <include>com.fasterxml.jackson.*:*</include>
+                   <include>joda-time:joda-time:jar:*</include>
+                   <include>org.apache.httpcomponents:*:jar:*</include>
+@@ -162,12 +163,12 @@
+       <groupId>com.amazonaws</groupId>
+       <artifactId>aws-java-sdk</artifactId>
+       <scope>compile</scope>
+-      <exclusions>
+-        <exclusion>
+-          <groupId>joda-time</groupId>
+-          <artifactId>joda-time</artifactId>
+-        </exclusion>
+-      </exclusions>
++      <!-- If you exclude joda time here, it will *not* be included in the
++	   uber/shaded jar.  It happened to work with older versions of
++	   aws-java-sdk probably because joda time wasn't actually used.
++	   Instead, artifacts that have dependency on this .jar should add
++	   exclusions for joda-time.
++      -->
+     </dependency>
+ 
+     <dependency>
+diff --git a/hadoop-tools/hadoop-tools-dist/pom.xml b/hadoop-tools/hadoop-tools-dist/pom.xml
+index ab77b23..4b70836 100644
+--- a/hadoop-tools/hadoop-tools-dist/pom.xml
++++ b/hadoop-tools/hadoop-tools-dist/pom.xml
+@@ -93,6 +93,12 @@
+       <artifactId>hadoop-aws</artifactId>
+       <scope>compile</scope>
+       <version>${project.version}</version>
++      <exclusions>
++	<exclusion>
++	  <groupId>joda-time</groupId>
++	  <artifactId>joda-time</artifactId>
++	</exclusion>
++      </exclusions>
+     </dependency>
+     <dependency>
+       <groupId>org.apache.hadoop</groupId>
+-- 
+1.7.9.5
+

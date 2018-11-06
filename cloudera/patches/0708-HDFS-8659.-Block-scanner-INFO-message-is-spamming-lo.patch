@@ -1,0 +1,64 @@
+From f903d95783e941bba22171c48ed9ef4c8d30b5eb Mon Sep 17 00:00:00 2001
+From: Yongjun Zhang <yzhang@cloudera.com>
+Date: Mon, 29 Jun 2015 14:35:39 -0700
+Subject: [PATCH 0708/1023] HDFS-8659. Block scanner INFO message is spamming
+ logs. Contributed by Yongjun Zhang.
+
+(cherry picked from commit 43a1288fff5e323895fde66b9e3eb31a7412fcc2)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt
+---
+ .../hadoop/hdfs/server/datanode/BlockScanner.java  |    2 +-
+ .../hadoop/hdfs/server/datanode/VolumeScanner.java |    8 ++++----
+ 2 files changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BlockScanner.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BlockScanner.java
+index 9c4dd10..be6aa83 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BlockScanner.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BlockScanner.java
+@@ -317,7 +317,7 @@ synchronized void printStats(StringBuilder p) {
+    */
+   synchronized void markSuspectBlock(String storageId, ExtendedBlock block) {
+     if (!isEnabled()) {
+-      LOG.info("Not scanning suspicious block {} on {}, because the block " +
++      LOG.debug("Not scanning suspicious block {} on {}, because the block " +
+           "scanner is disabled.", block, storageId);
+       return;
+     }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/VolumeScanner.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/VolumeScanner.java
+index 0f8636f..212e13b 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/VolumeScanner.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/VolumeScanner.java
+@@ -658,24 +658,24 @@ public synchronized void shutdown() {
+ 
+   public synchronized void markSuspectBlock(ExtendedBlock block) {
+     if (stopping) {
+-      LOG.info("{}: Not scheduling suspect block {} for " +
++      LOG.debug("{}: Not scheduling suspect block {} for " +
+           "rescanning, because this volume scanner is stopping.", this, block);
+       return;
+     }
+     Boolean recent = recentSuspectBlocks.getIfPresent(block);
+     if (recent != null) {
+-      LOG.info("{}: Not scheduling suspect block {} for " +
++      LOG.debug("{}: Not scheduling suspect block {} for " +
+           "rescanning, because we rescanned it recently.", this, block);
+       return;
+     }
+     if (suspectBlocks.contains(block)) {
+-      LOG.info("{}: suspect block {} is already queued for " +
++      LOG.debug("{}: suspect block {} is already queued for " +
+           "rescanning.", this, block);
+       return;
+     }
+     suspectBlocks.add(block);
+     recentSuspectBlocks.put(block, true);
+-    LOG.info("{}: Scheduling suspect block {} for rescanning.", this, block);
++    LOG.debug("{}: Scheduling suspect block {} for rescanning.", this, block);
+     notify(); // wake scanner thread.
+   }
+ 
+-- 
+1.7.9.5
+

@@ -1,0 +1,113 @@
+From 623e07e6c51fe407b160bc7a6bce7779a300d440 Mon Sep 17 00:00:00 2001
+From: Devaraj K <devaraj@apache.org>
+Date: Fri, 15 May 2015 12:31:32 +0530
+Subject: [PATCH 0943/1023] MAPREDUCE-6273. HistoryFileManager should check
+ whether summaryFile exists to avoid
+ FileNotFoundException causing HistoryFileInfo
+ into MOVE_FAILED state. Contributed by zhihai xu.
+
+(cherry picked from commit 1ea90144d58443a7431ff33ba49ee19278ebe42b)
+
+Conflicts:
+	hadoop-mapreduce-project/CHANGES.txt
+	hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-hs/src/test/java/org/apache/hadoop/mapreduce/v2/hs/TestHistoryFileManager.java
+
+Change-Id: I1bcf48d9d9b08b8d756c31b66a2cadc56c6c1fd0
+(cherry picked from commit 256fe23c9466afb7714347dcbe3b579c6a1047dd)
+(cherry picked from commit df747769874295705983167e73fba8f9c527ef96)
+---
+ .../hadoop/mapreduce/v2/hs/HistoryFileManager.java |   11 +++---
+ .../mapreduce/v2/hs/TestHistoryFileManager.java    |   35 ++++++++++++++++++++
+ 2 files changed, 42 insertions(+), 4 deletions(-)
+
+diff --git a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-hs/src/main/java/org/apache/hadoop/mapreduce/v2/hs/HistoryFileManager.java b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-hs/src/main/java/org/apache/hadoop/mapreduce/v2/hs/HistoryFileManager.java
+index 2f74d15..d0e171e 100644
+--- a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-hs/src/main/java/org/apache/hadoop/mapreduce/v2/hs/HistoryFileManager.java
++++ b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-hs/src/main/java/org/apache/hadoop/mapreduce/v2/hs/HistoryFileManager.java
+@@ -299,8 +299,9 @@ public synchronized void scanIfNeeded(FileStatus fs) {
+     private JobIndexInfo jobIndexInfo;
+     private HistoryInfoState state;
+ 
+-    private HistoryFileInfo(Path historyFile, Path confFile, Path summaryFile,
+-        JobIndexInfo jobIndexInfo, boolean isInDone) {
++    @VisibleForTesting
++    protected HistoryFileInfo(Path historyFile, Path confFile,
++        Path summaryFile, JobIndexInfo jobIndexInfo, boolean isInDone) {
+       this.historyFile = historyFile;
+       this.confFile = confFile;
+       this.summaryFile = summaryFile;
+@@ -333,7 +334,8 @@ public String toString() {
+              + " historyFile = " + historyFile;
+     }
+ 
+-    private synchronized void moveToDone() throws IOException {
++    @VisibleForTesting
++    synchronized void moveToDone() throws IOException {
+       if (LOG.isDebugEnabled()) {
+         LOG.debug("moveToDone: " + historyFile);
+       }
+@@ -364,7 +366,8 @@ private synchronized void moveToDone() throws IOException {
+           paths.add(confFile);
+         }
+ 
+-        if (summaryFile == null) {
++        if (summaryFile == null || !intermediateDoneDirFc.util().exists(
++            summaryFile)) {
+           LOG.info("No summary file for job: " + jobId);
+         } else {
+           String jobSummaryString = getJobSummary(intermediateDoneDirFc,
+diff --git a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-hs/src/test/java/org/apache/hadoop/mapreduce/v2/hs/TestHistoryFileManager.java b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-hs/src/test/java/org/apache/hadoop/mapreduce/v2/hs/TestHistoryFileManager.java
+index e2e943a..e5b38ff 100644
+--- a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-hs/src/test/java/org/apache/hadoop/mapreduce/v2/hs/TestHistoryFileManager.java
++++ b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-hs/src/test/java/org/apache/hadoop/mapreduce/v2/hs/TestHistoryFileManager.java
+@@ -31,7 +31,12 @@
+ import org.apache.hadoop.hdfs.HdfsConfiguration;
+ import org.apache.hadoop.hdfs.MiniDFSCluster;
+ import org.apache.hadoop.hdfs.protocol.HdfsConstants;
++import org.apache.hadoop.mapreduce.JobID;
++import org.apache.hadoop.mapreduce.TypeConverter;
++import org.apache.hadoop.mapreduce.v2.api.records.JobId;
++import org.apache.hadoop.mapreduce.v2.hs.HistoryFileManager.HistoryFileInfo;
+ import org.apache.hadoop.mapreduce.v2.jobhistory.JHAdminConfig;
++import org.apache.hadoop.mapreduce.v2.jobhistory.JobIndexInfo;
+ import org.apache.hadoop.test.CoreTestDriver;
+ import org.apache.hadoop.yarn.conf.YarnConfiguration;
+ import org.apache.hadoop.yarn.exceptions.YarnRuntimeException;
+@@ -199,4 +204,34 @@ public void run() {
+     testCreateHistoryDirs(dfsCluster.getConfiguration(0), clock);
+   }
+ 
++  @Test
++  public void testHistoryFileInfoSummaryFileNotExist() throws Exception {
++    HistoryFileManagerTest hmTest = new HistoryFileManagerTest();
++    String job = "job_1410889000000_123456";
++    Path summaryFile = new Path(job + ".summary");
++    JobIndexInfo jobIndexInfo = new JobIndexInfo();
++    jobIndexInfo.setJobId(TypeConverter.toYarn(JobID.forName(job)));
++    Configuration conf = dfsCluster.getConfiguration(0);
++    conf.set(JHAdminConfig.MR_HISTORY_DONE_DIR,
++        "/" + UUID.randomUUID());
++    conf.set(JHAdminConfig.MR_HISTORY_INTERMEDIATE_DONE_DIR,
++        "/" + UUID.randomUUID());
++    hmTest.serviceInit(conf);
++    HistoryFileInfo info = hmTest.getHistoryFileInfo(null, null,
++        summaryFile, jobIndexInfo, false);
++    info.moveToDone();
++    Assert.assertFalse(info.didMoveFail());
++  }
++
++  static class HistoryFileManagerTest extends HistoryFileManager {
++    public HistoryFileManagerTest() {
++      super();
++    }
++    public HistoryFileInfo getHistoryFileInfo(Path historyFile,
++        Path confFile, Path summaryFile, JobIndexInfo jobIndexInfo,
++        boolean isInDone) {
++      return new HistoryFileInfo(historyFile, confFile, summaryFile,
++          jobIndexInfo, isInDone);
++    }
++  }
+ }
+-- 
+1.7.9.5
+

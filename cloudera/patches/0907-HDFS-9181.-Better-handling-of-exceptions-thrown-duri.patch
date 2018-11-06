@@ -1,0 +1,55 @@
+From 56b5f2aa1d38cc834a6613ab08e280abfc3861e5 Mon Sep 17 00:00:00 2001
+From: Yongjun Zhang <yzhang@cloudera.com>
+Date: Fri, 9 Oct 2015 09:21:29 -0700
+Subject: [PATCH 0907/1023] HDFS-9181. Better handling of exceptions thrown
+ during upgrade shutdown. Contributed by Wei-Chiu
+ Chuang.
+
+(cherry picked from commit c11fc8a1be222f870cded0b24736387e44cc788c)
+
+Change-Id: I05ac0b7fb565a6b345167dfdfedb513db66caf97
+---
+ .../hadoop/hdfs/server/datanode/DataNode.java      |    3 ++-
+ .../hdfs/server/datanode/TestDataNodeExit.java     |    8 ++++----
+ 2 files changed, 6 insertions(+), 5 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java
+index 88f4e6a..4d7b296 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java
+@@ -1689,8 +1689,9 @@ public void shutdown() {
+         xserver.sendOOBToPeers();
+         ((DataXceiverServer) this.dataXceiverServer.getRunnable()).kill();
+         this.dataXceiverServer.interrupt();
+-      } catch (Throwable e) {
++      } catch (Exception e) {
+         // Ignore, since the out of band messaging is advisory.
++        LOG.trace("Exception interrupting DataXceiverServer: ", e);
+       }
+     }
+ 
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestDataNodeExit.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestDataNodeExit.java
+index c067b07..68f3f2f 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestDataNodeExit.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestDataNodeExit.java
+@@ -95,13 +95,13 @@ public void testBPServiceExit() throws Exception {
+   public void testSendOOBToPeers() throws Exception {
+     DataNode dn = cluster.getDataNodes().get(0);
+     DataXceiverServer spyXserver = Mockito.spy(dn.getXferServer());
+-    NullPointerException e = new NullPointerException();
+-    Mockito.doThrow(e).when(spyXserver).sendOOBToPeers();
++    NullPointerException npe = new NullPointerException();
++    Mockito.doThrow(npe).when(spyXserver).sendOOBToPeers();
+     dn.xserver = spyXserver;
+     try {
+       dn.shutdown();
+-    } catch (Throwable t) {
+-      fail("DataNode shutdown should not have thrown exception " + t);
++    } catch (Exception e) {
++      fail("DataNode shutdown should not have thrown exception " + e);
+     }
+   }
+ }
+-- 
+1.7.9.5
+

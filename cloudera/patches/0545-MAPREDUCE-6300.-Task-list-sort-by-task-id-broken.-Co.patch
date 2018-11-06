@@ -1,0 +1,141 @@
+From aa646b9f6259182b8da0ab320bc62543a39cf13d Mon Sep 17 00:00:00 2001
+From: Akira Ajisaka <aajisaka@apache.org>
+Date: Thu, 16 Apr 2015 10:04:09 -0500
+Subject: [PATCH 0545/1023] MAPREDUCE-6300. Task list sort by task id broken.
+ Contributed by Siqi Li.
+
+(cherry picked from commit 1fa8075794894b3e0053d251788277fb88e85533)
+
+Conflicts:
+	hadoop-mapreduce-project/CHANGES.txt
+	hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-common/src/main/java/org/apache/hadoop/yarn/server/webapp/AppsBlock.java
+	hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/webapp/RMAppBlock.java
+	hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/webapp/RMAppsBlock.java
+---
+ .../hadoop/mapreduce/v2/app/webapp/TasksPage.java  |    2 +-
+ .../hadoop/mapreduce/v2/hs/webapp/HsTasksPage.java |    2 +-
+ .../resources/webapps/static/yarn.dt.plugins.js    |    3 +++
+ .../webapp/AppAttemptPage.java                     |    4 ++--
+ .../applicationhistoryservice/webapp/AppPage.java  |    2 +-
+ .../hadoop/yarn/server/webapp/AppAttemptBlock.java |    4 +---
+ .../apache/hadoop/yarn/server/webapp/AppBlock.java |    2 --
+ .../webapp/FairSchedulerAppsBlock.java             |    1 -
+ 8 files changed, 9 insertions(+), 11 deletions(-)
+
+diff --git a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/main/java/org/apache/hadoop/mapreduce/v2/app/webapp/TasksPage.java b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/main/java/org/apache/hadoop/mapreduce/v2/app/webapp/TasksPage.java
+index 0212ae4..9648527 100644
+--- a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/main/java/org/apache/hadoop/mapreduce/v2/app/webapp/TasksPage.java
++++ b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/main/java/org/apache/hadoop/mapreduce/v2/app/webapp/TasksPage.java
+@@ -43,7 +43,7 @@ private String tasksTableInit() {
+       .append(", bProcessing: true")
+ 
+       .append("\n, aoColumnDefs: [\n")
+-      .append("{'sType':'numeric', 'aTargets': [0]")
++      .append("{'sType':'string', 'aTargets': [0]")
+       .append(", 'mRender': parseHadoopID }")
+ 
+       .append("\n, {'sType':'numeric', bSearchable:false, 'aTargets': [1]")
+diff --git a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-hs/src/main/java/org/apache/hadoop/mapreduce/v2/hs/webapp/HsTasksPage.java b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-hs/src/main/java/org/apache/hadoop/mapreduce/v2/hs/webapp/HsTasksPage.java
+index 4e2b687..2619dff 100644
+--- a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-hs/src/main/java/org/apache/hadoop/mapreduce/v2/hs/webapp/HsTasksPage.java
++++ b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-hs/src/main/java/org/apache/hadoop/mapreduce/v2/hs/webapp/HsTasksPage.java
+@@ -76,7 +76,7 @@ private String tasksTableInit() {
+     .append(", bProcessing: true")
+ 
+     .append("\n, aoColumnDefs: [\n")
+-    .append("{'sType':'numeric', 'aTargets': [ 0 ]")
++    .append("{'sType':'string', 'aTargets': [ 0 ]")
+     .append(", 'mRender': parseHadoopID }")
+ 
+     .append(", {'sType':'numeric', 'aTargets': [ 4")
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/main/resources/webapps/static/yarn.dt.plugins.js b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/main/resources/webapps/static/yarn.dt.plugins.js
+index 7b069df..c9416fd 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/main/resources/webapps/static/yarn.dt.plugins.js
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/main/resources/webapps/static/yarn.dt.plugins.js
+@@ -139,6 +139,9 @@ function renderHadoopElapsedTime(data, type, full) {
+   return data;  
+ }
+ 
++//JSON array element is formatted like
++//"<a href="/proxy/application_1360183373897_0001>">application_1360183373897_0001</a>"
++//this function removes <a> tag and return a string value for sorting
+ function parseHadoopID(data, type, full) {
+   if (type === 'display') {
+     return data;
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-applicationhistoryservice/src/main/java/org/apache/hadoop/yarn/server/applicationhistoryservice/webapp/AppAttemptPage.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-applicationhistoryservice/src/main/java/org/apache/hadoop/yarn/server/applicationhistoryservice/webapp/AppAttemptPage.java
+index 63b44bd..5a425e6 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-applicationhistoryservice/src/main/java/org/apache/hadoop/yarn/server/applicationhistoryservice/webapp/AppAttemptPage.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-applicationhistoryservice/src/main/java/org/apache/hadoop/yarn/server/applicationhistoryservice/webapp/AppAttemptPage.java
+@@ -62,8 +62,8 @@ private String containersTableInit() {
+ 
+   protected String getContainersTableColumnDefs() {
+     StringBuilder sb = new StringBuilder();
+-    return sb.append("[\n").append("{'sType':'numeric', 'aTargets': [0]")
++    return sb.append("[\n").append("{'sType':'string', 'aTargets': [0]")
+       .append(", 'mRender': parseHadoopID }]").toString();
+   }
+ 
+-}
+\ No newline at end of file
++}
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-applicationhistoryservice/src/main/java/org/apache/hadoop/yarn/server/applicationhistoryservice/webapp/AppPage.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-applicationhistoryservice/src/main/java/org/apache/hadoop/yarn/server/applicationhistoryservice/webapp/AppPage.java
+index 96ca659..2ee9c3d 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-applicationhistoryservice/src/main/java/org/apache/hadoop/yarn/server/applicationhistoryservice/webapp/AppPage.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-applicationhistoryservice/src/main/java/org/apache/hadoop/yarn/server/applicationhistoryservice/webapp/AppPage.java
+@@ -62,7 +62,7 @@ private String attemptsTableInit() {
+ 
+   protected String getAttemptsTableColumnDefs() {
+     StringBuilder sb = new StringBuilder();
+-    return sb.append("[\n").append("{'sType':'numeric', 'aTargets': [0]")
++    return sb.append("[\n").append("{'sType':'string', 'aTargets': [0]")
+       .append(", 'mRender': parseHadoopID }")
+ 
+       .append("\n, {'sType':'numeric', 'aTargets': [1]")
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-common/src/main/java/org/apache/hadoop/yarn/server/webapp/AppAttemptBlock.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-common/src/main/java/org/apache/hadoop/yarn/server/webapp/AppAttemptBlock.java
+index 4a02892..1f94e22 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-common/src/main/java/org/apache/hadoop/yarn/server/webapp/AppAttemptBlock.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-common/src/main/java/org/apache/hadoop/yarn/server/webapp/AppAttemptBlock.java
+@@ -158,8 +158,6 @@ public ApplicationAttemptReport run() throws Exception {
+     StringBuilder containersTableData = new StringBuilder("[\n");
+     for (ContainerReport containerReport : containers) {
+       ContainerInfo container = new ContainerInfo(containerReport);
+-      // ConatinerID numerical value parsed by parseHadoopID in
+-      // yarn.dt.plugins.js
+       containersTableData
+         .append("[\"<a href='")
+         .append(url("container", container.getContainerId()))
+@@ -187,4 +185,4 @@ public ApplicationAttemptReport run() throws Exception {
+ 
+     tbody._()._();
+   }
+-}
+\ No newline at end of file
++}
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-common/src/main/java/org/apache/hadoop/yarn/server/webapp/AppBlock.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-common/src/main/java/org/apache/hadoop/yarn/server/webapp/AppBlock.java
+index 8fa4086..f27e3ea 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-common/src/main/java/org/apache/hadoop/yarn/server/webapp/AppBlock.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-common/src/main/java/org/apache/hadoop/yarn/server/webapp/AppBlock.java
+@@ -182,8 +182,6 @@ public ContainerReport run() throws Exception {
+           && appAttempt.getRpcPort() < 65536) {
+         nodeLink = appAttempt.getHost() + ":" + appAttempt.getRpcPort();
+       }
+-      // AppAttemptID numerical value parsed by parseHadoopID in
+-      // yarn.dt.plugins.js
+       attemptsTableData
+         .append("[\"<a href='")
+         .append(url("appattempt", appAttempt.getAppAttemptId()))
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/webapp/FairSchedulerAppsBlock.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/webapp/FairSchedulerAppsBlock.java
+index 2a1442e..0f3be21 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/webapp/FairSchedulerAppsBlock.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/webapp/FairSchedulerAppsBlock.java
+@@ -114,7 +114,6 @@
+         // FairScheduler#applications don't have the entry. Skip it.
+         continue;
+       }
+-      //AppID numerical value parsed by parseHadoopID in yarn.dt.plugins.js
+       appsTableData.append("[\"<a href='")
+       .append(url("app", appInfo.getAppId())).append("'>")
+       .append(appInfo.getAppId()).append("</a>\",\"")
+-- 
+1.7.9.5
+

@@ -1,0 +1,159 @@
+From 38ceb73332318e7c39aa00d7572ba0b56cef0bd0 Mon Sep 17 00:00:00 2001
+From: Andrew Wang <wang@apache.org>
+Date: Mon, 30 Nov 2015 14:32:19 -0800
+Subject: [PATCH 0976/1023] HDFS-9470. Encryption zone on root not loaded from
+ fsimage after NN restart. Xiao Chen via wang.
+
+(cherry picked from commit 9b8e50b424d060e16c1175b1811e7abc476e2468)
+(cherry picked from commit ce1111ceea830cce5f0833db55201e0e88c3b199)
+
+ Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSDirectory.java
+
+(cherry picked from commit 10e8a67d23200d2b6fbab7a050adf922b27e77c4)
+
+ Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSDirectory.java
+
+(cherry picked from commit b2dd21e82da37d9ab06ed1f4641b108c5ecb9bdd)
+
+Change-Id: Id619b0cd658dae23a9419218a04320b3b91e2673
+---
+ .../hadoop/hdfs/server/namenode/FSDirectory.java   |   52 +++++++++++++-------
+ .../hdfs/server/namenode/FSImageFormatPBINode.java |    1 +
+ .../apache/hadoop/hdfs/TestEncryptionZones.java    |   38 ++++++++++++++
+ 3 files changed, 72 insertions(+), 19 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSDirectory.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSDirectory.java
+index c9586a4..cb0005e 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSDirectory.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSDirectory.java
+@@ -2221,31 +2221,45 @@ public final void addToInodeMap(INode inode) {
+       inodeMap.put(inode);
+       if (!inode.isSymlink()) {
+         final XAttrFeature xaf = inode.getXAttrFeature();
+-        if (xaf != null) {
+-          final List<XAttr> xattrs = xaf.getXAttrs();
+-          for (XAttr xattr : xattrs) {
+-            final String xaName = XAttrHelper.getPrefixName(xattr);
+-            if (CRYPTO_XATTR_ENCRYPTION_ZONE.equals(xaName)) {
+-              try {
+-                final HdfsProtos.ZoneEncryptionInfoProto ezProto =
+-                    HdfsProtos.ZoneEncryptionInfoProto.parseFrom(
+-                        xattr.getValue());
+-                ezManager.unprotectedAddEncryptionZone(inode.getId(),
+-                    PBHelper.convert(ezProto.getSuite()),
+-                    PBHelper.convert(ezProto.getCryptoProtocolVersion()),
+-                    ezProto.getKeyName());
+-              } catch (InvalidProtocolBufferException e) {
+-                NameNode.LOG.warn("Error parsing protocol buffer of " +
+-                    "EZ XAttr " + xattr.getName());
+-              }
+-            }
+-          }
++        addEncryptionZone((INodeWithAdditionalFields) inode, xaf);
++      }
++    }
++  }
++
++  private void addEncryptionZone(INodeWithAdditionalFields inode,
++      XAttrFeature xaf) {
++    if (xaf == null) {
++      return;
++    }
++    final List<XAttr> xattrs = xaf.getXAttrs();
++    for (XAttr xattr : xattrs) {
++      final String xaName = XAttrHelper.getPrefixName(xattr);
++      if (CRYPTO_XATTR_ENCRYPTION_ZONE.equals(xaName)) {
++        try {
++          final HdfsProtos.ZoneEncryptionInfoProto ezProto =
++              HdfsProtos.ZoneEncryptionInfoProto.parseFrom(
++                  xattr.getValue());
++          ezManager.unprotectedAddEncryptionZone(inode.getId(),
++              PBHelper.convert(ezProto.getSuite()),
++              PBHelper.convert(ezProto.getCryptoProtocolVersion()),
++              ezProto.getKeyName());
++        } catch (InvalidProtocolBufferException e) {
++          NameNode.LOG.warn("Error parsing protocol buffer of " +
++              "EZ XAttr " + xattr.getName() + " dir:" + inode.getFullPathName());
+         }
+       }
+     }
+   }
+   
+   /**
++   * This is to handle encryption zone for rootDir when loading from
++   * fsimage, and should only be called during NN restart.
++   */
++  public final void addRootDirToEncryptionZone(XAttrFeature xaf) {
++    addEncryptionZone(rootDir, xaf);
++  }
++
++  /**
+    * This method is always called with writeLock of FSDirectory held.
+    */
+   public final void removeFromInodeMap(List<? extends INode> inodes) {
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSImageFormatPBINode.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSImageFormatPBINode.java
+index 846b8c6..8442202 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSImageFormatPBINode.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSImageFormatPBINode.java
+@@ -347,6 +347,7 @@ private void loadRootINode(INodeSection.INode p) {
+       if (f != null) {
+         dir.rootDir.addXAttrFeature(f);
+       }
++      dir.addRootDirToEncryptionZone(f);
+     }
+   }
+ 
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestEncryptionZones.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestEncryptionZones.java
+index a6a7c0e..2687a0f 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestEncryptionZones.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestEncryptionZones.java
+@@ -374,6 +374,44 @@ public Object run() throws Exception {
+     assertZonePresent(null, nonpersistZone.toString());
+   }
+ 
++  @Test(timeout = 60000)
++  public void testBasicOperationsRootDir() throws Exception {
++    int numZones = 0;
++    final Path rootDir = new Path("/");
++    final Path zone1 = new Path(rootDir, "zone1");
++
++    /* Normal creation of an EZ on rootDir */
++    dfsAdmin.createEncryptionZone(rootDir, TEST_KEY);
++    assertNumZones(++numZones);
++    assertZonePresent(null, rootDir.toString());
++
++    /* create EZ on child of rootDir which is already an EZ should fail */
++    fsWrapper.mkdir(zone1, FsPermission.getDirDefault(), true);
++    try {
++      dfsAdmin.createEncryptionZone(zone1, TEST_KEY);
++      fail("EZ over an EZ");
++    } catch (IOException e) {
++      assertExceptionContains("already in an encryption zone", e);
++    }
++
++    // Verify rootDir ez is present after restarting the NameNode
++    // and saving/loading from fsimage.
++    fs.setSafeMode(SafeModeAction.SAFEMODE_ENTER);
++    fs.saveNamespace();
++    fs.setSafeMode(SafeModeAction.SAFEMODE_LEAVE);
++    cluster.restartNameNode(true);
++    assertNumZones(numZones);
++    assertZonePresent(null, rootDir.toString());
++
++    /* create EZ on child of rootDir which is already an EZ should fail */
++    try {
++      dfsAdmin.createEncryptionZone(zone1, TEST_KEY);
++      fail("EZ over an EZ");
++    } catch (IOException e) {
++      assertExceptionContains("already in an encryption zone", e);
++    }
++  }
++
+   /**
+    * Test listing encryption zones as a non super user.
+    */
+-- 
+1.7.9.5
+

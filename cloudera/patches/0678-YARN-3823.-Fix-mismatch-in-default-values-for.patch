@@ -1,0 +1,28 @@
+From f8e7c1d73fb1db9df012c79dc42830e24ddae368 Mon Sep 17 00:00:00 2001
+From: Devaraj K <devaraj@apache.org>
+Date: Wed, 1 Jul 2015 11:11:26 +0530
+Subject: [PATCH 0678/1023] YARN-3823. Fix mismatch in default values for
+ yarn.scheduler.maximum-allocation-vcores
+ property. Contributed by Ray Chiang.
+
+(cherry picked from commit 7405c59799ed1b8ad1a7c6f1b18fabf49d0b92b2)
+---
+ .../src/main/resources/yarn-default.xml            |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/main/resources/yarn-default.xml b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/main/resources/yarn-default.xml
+index d67c6e6..f9850b7 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/main/resources/yarn-default.xml
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/main/resources/yarn-default.xml
+@@ -256,7 +256,7 @@
+     in terms of virtual CPU cores. Requests higher than this won't take effect,
+     and will get capped to this value.</description>
+     <name>yarn.scheduler.maximum-allocation-vcores</name>
+-    <value>32</value>
++    <value>4</value>
+   </property>
+ 
+   <property>
+-- 
+1.7.9.5
+

@@ -1,0 +1,29 @@
+From 452d54083cc44065a50a97f1dec3ceafacde6e94 Mon Sep 17 00:00:00 2001
+From: Colin Patrick Mccabe <cmccabe@cloudera.com>
+Date: Wed, 29 Oct 2014 12:12:58 -0700
+Subject: [PATCH 0634/1023] HADOOP-11186: documentation should talk about
+ hadoop.htrace.spanreceiver.classes, not
+ hadoop.trace.spanreceiver.classes (cmccabe)
+
+(cherry picked from commit c2575fb046bb8fab73ee9c55e0ce65d4d0df75d0)
+(cherry picked from commit f6102831bca0a8401aa88b7324be3e766ab9509b)
+---
+ .../hadoop-common/src/site/apt/Tracing.apt.vm      |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/site/apt/Tracing.apt.vm b/hadoop-common-project/hadoop-common/src/site/apt/Tracing.apt.vm
+index 31c2516..9eda220 100644
+--- a/hadoop-common-project/hadoop-common/src/site/apt/Tracing.apt.vm
++++ b/hadoop-common-project/hadoop-common/src/site/apt/Tracing.apt.vm
+@@ -42,7 +42,7 @@ public void receiveSpan(Span span);
+   Configure what SpanReceivers you'd like to use
+   by putting a comma separated list of the fully-qualified class name of
+   classes implementing SpanReceiver
+-  in <<<hdfs-site.xml>>> property: <<<hadoop.trace.spanreceiver.classes>>>.
++  in <<<hdfs-site.xml>>> property: <<<hadoop.htrace.spanreceiver.classes>>>.
+ 
+ +----
+   <property>
+-- 
+1.7.9.5
+

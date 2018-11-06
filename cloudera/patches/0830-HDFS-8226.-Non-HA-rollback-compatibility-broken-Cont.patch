@@ -1,0 +1,77 @@
+From 50c3e6fbc34e736a57c8ae511e9017c4b8a27717 Mon Sep 17 00:00:00 2001
+From: Vinayakumar B <vinayakumarb@apache.org>
+Date: Fri, 8 May 2015 15:24:36 +0530
+Subject: [PATCH 0830/1023] HDFS-8226. Non-HA rollback compatibility broken
+ (Contributed by J.Andreina)
+
+(cherry picked from commit e01c1a979cbc8fb398d5b7a46693657bc2668a58)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/src/main/bin/start-dfs.sh
+	hadoop-hdfs-project/hadoop-hdfs/src/site/markdown/HdfsUserGuide.md
+
+(cherry picked from commit 3a894b45635d6528bb4c29953f57bd418a7c8a80)
+(cherry picked from commit 99309a9fecbd2d17e525f6989c936ee6d0bbaeb9)
+
+Change-Id: Ia4a0075fc0be9cc8e1197287629cefccd10a9435
+(cherry picked from commit 4f51b0099bbd9ee8ed0c0600f0f10fad6897451b)
+---
+ .../hadoop-hdfs/src/main/bin/start-dfs.sh          |   28 ++++++++++----------
+ .../hadoop-hdfs/src/site/apt/HdfsUserGuide.apt.vm  |    2 ++
+ 2 files changed, 16 insertions(+), 14 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/bin/start-dfs.sh b/hadoop-hdfs-project/hadoop-hdfs/src/main/bin/start-dfs.sh
+index 8cbea16..c46e625 100755
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/bin/start-dfs.sh
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/bin/start-dfs.sh
+@@ -30,20 +30,20 @@ HADOOP_LIBEXEC_DIR=${HADOOP_LIBEXEC_DIR:-$DEFAULT_LIBEXEC_DIR}
+ . $HADOOP_LIBEXEC_DIR/hdfs-config.sh
+ 
+ # get arguments
+-if [ $# -ge 1 ]; then
+-	nameStartOpt="$1"
+-	shift
+-	case "$nameStartOpt" in
+-	  (-upgrade)
+-	  	;;
+-	  (-rollback) 
+-	  	dataStartOpt="$nameStartOpt"
+-	  	;;
+-	  (*)
+-		  echo $usage
+-		  exit 1
+-	    ;;
+-	esac
++if [[ $# -ge 1 ]]; then
++  startOpt="$1"
++  shift
++  case "$startOpt" in
++    -upgrade)
++      nameStartOpt="$startOpt"
++    ;;
++    -rollback)
++      dataStartOpt="$startOpt"
++    ;;
++    *)
++      hadoop_exit_with_usage 1
++    ;;
++  esac
+ fi
+ 
+ #Add other possible options
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/site/apt/HdfsUserGuide.apt.vm b/hadoop-hdfs-project/hadoop-hdfs/src/site/apt/HdfsUserGuide.apt.vm
+index 25a466e..510191b 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/site/apt/HdfsUserGuide.apt.vm
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/site/apt/HdfsUserGuide.apt.vm
+@@ -457,6 +457,8 @@ HDFS Users Guide
+ 
+           * stop the cluster and distribute earlier version of Hadoop.
+ 
++          * run the rollback command on the namenode (`bin/hdfs namenode -rollback`).
++
+           * start the cluster with rollback option. (<<<bin/start-dfs.sh -rollback>>>).
+ 
+     When upgrading to a new version of HDFS, it is necessary to rename or
+-- 
+1.7.9.5
+

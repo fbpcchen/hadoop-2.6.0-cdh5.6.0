@@ -1,0 +1,345 @@
+From 6b49ccf2fc8865f9d64ca1537f1dfc441dc30220 Mon Sep 17 00:00:00 2001
+From: Haohui Mai <wheat9@apache.org>
+Date: Wed, 25 Mar 2015 11:12:27 -0700
+Subject: [PATCH 0595/1023] HADOOP-10670. Allow AuthenticationFilters to load
+ secret from signature secret files. Contributed
+ by Kai Zheng.
+
+(cherry picked from commit 17f17dac4e2f228cb468614d436731bc8d9dcfc2)
+
+Conflicts:
+	hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/security/AuthenticationFilterInitializer.java
+	hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-applicationhistoryservice/src/main/java/org/apache/hadoop/yarn/server/timeline/security/TimelineAuthenticationFilterInitializer.java
+---
+ .../server/AuthenticationFilter.java               |   18 ++++++----
+ .../server/TestAuthenticationFilter.java           |   38 +++++++++++++++++++-
+ .../security/AuthenticationFilterInitializer.java  |   23 ------------
+ .../hadoop/security/TestAuthenticationFilter.java  |   12 -------
+ .../TimelineAuthenticationFilterInitializer.java   |   38 +++-----------------
+ .../http/RMAuthenticationFilterInitializer.java    |   31 ----------------
+ 6 files changed, 52 insertions(+), 108 deletions(-)
+
+diff --git a/hadoop-common-project/hadoop-auth/src/main/java/org/apache/hadoop/security/authentication/server/AuthenticationFilter.java b/hadoop-common-project/hadoop-auth/src/main/java/org/apache/hadoop/security/authentication/server/AuthenticationFilter.java
+index 0ac352b..e0d7eb1 100644
+--- a/hadoop-common-project/hadoop-auth/src/main/java/org/apache/hadoop/security/authentication/server/AuthenticationFilter.java
++++ b/hadoop-common-project/hadoop-auth/src/main/java/org/apache/hadoop/security/authentication/server/AuthenticationFilter.java
+@@ -18,12 +18,7 @@
+ import org.apache.hadoop.security.authentication.client.AuthenticatedURL;
+ import org.apache.hadoop.security.authentication.client.AuthenticationException;
+ import org.apache.hadoop.security.authentication.client.KerberosAuthenticator;
+-import org.apache.hadoop.security.authentication.util.Signer;
+-import org.apache.hadoop.security.authentication.util.SignerException;
+-import org.apache.hadoop.security.authentication.util.RandomSignerSecretProvider;
+-import org.apache.hadoop.security.authentication.util.SignerSecretProvider;
+-import org.apache.hadoop.security.authentication.util.StringSignerSecretProvider;
+-import org.apache.hadoop.security.authentication.util.ZKSignerSecretProvider;
++import org.apache.hadoop.security.authentication.util.*;
+ import org.slf4j.Logger;
+ import org.slf4j.LoggerFactory;
+ 
+@@ -144,6 +139,8 @@
+    */
+   public static final String SIGNATURE_SECRET = "signature.secret";
+ 
++  public static final String SIGNATURE_SECRET_FILE = SIGNATURE_SECRET + ".file";
++
+   /**
+    * Constant for the configuration property that indicates the validity of the generated token.
+    */
+@@ -281,7 +278,12 @@ protected void initializeSecretProvider(FilterConfig filterConfig)
+     // fallback to old behavior
+     if (signerSecretProviderName == null) {
+       String signatureSecret = config.getProperty(SIGNATURE_SECRET, null);
+-      if (signatureSecret != null) {
++      String signatureSecretFile = config.getProperty(
++          SIGNATURE_SECRET_FILE, null);
++      // The precedence from high to low : file, inline string, random
++      if (signatureSecretFile != null) {
++        providerClassName = FileSignerSecretProvider.class.getName();
++      } else if (signatureSecret != null) {
+         providerClassName = StringSignerSecretProvider.class.getName();
+       } else {
+         providerClassName = RandomSignerSecretProvider.class.getName();
+@@ -293,6 +295,8 @@ protected void initializeSecretProvider(FilterConfig filterConfig)
+         randomSecret = true;
+       } else if ("string".equals(signerSecretProviderName)) {
+         providerClassName = StringSignerSecretProvider.class.getName();
++      } else if ("file".equals(signerSecretProviderName)) {
++        providerClassName = FileSignerSecretProvider.class.getName();
+       } else if ("zookeeper".equals(signerSecretProviderName)) {
+         providerClassName = ZKSignerSecretProvider.class.getName();
+       } else {
+diff --git a/hadoop-common-project/hadoop-auth/src/test/java/org/apache/hadoop/security/authentication/server/TestAuthenticationFilter.java b/hadoop-common-project/hadoop-auth/src/test/java/org/apache/hadoop/security/authentication/server/TestAuthenticationFilter.java
+index c01c182..a03894b 100644
+--- a/hadoop-common-project/hadoop-auth/src/test/java/org/apache/hadoop/security/authentication/server/TestAuthenticationFilter.java
++++ b/hadoop-common-project/hadoop-auth/src/test/java/org/apache/hadoop/security/authentication/server/TestAuthenticationFilter.java
+@@ -13,7 +13,10 @@
+  */
+ package org.apache.hadoop.security.authentication.server;
+ 
++import java.io.File;
++import java.io.FileWriter;
+ import java.io.IOException;
++import java.io.Writer;
+ import java.net.HttpCookie;
+ import java.util.Arrays;
+ import java.util.HashMap;
+@@ -197,7 +200,7 @@ public void testInit() throws Exception {
+       filter.destroy();
+     }
+ 
+-    // custom secret
++    // custom secret as inline
+     filter = new AuthenticationFilter();
+     try {
+       FilterConfig config = Mockito.mock(FilterConfig.class);
+@@ -231,6 +234,39 @@ public void init(Properties config, ServletContext servletContext,
+       filter.destroy();
+     }
+ 
++    // custom secret by file
++    File testDir = new File(System.getProperty("test.build.data",
++        "target/test-dir"));
++    testDir.mkdirs();
++    String secretValue = "hadoop";
++    File secretFile = new File(testDir, "http-secret.txt");
++    Writer writer = new FileWriter(secretFile);
++    writer.write(secretValue);
++    writer.close();
++
++    filter = new AuthenticationFilter();
++    try {
++      FilterConfig config = Mockito.mock(FilterConfig.class);
++      Mockito.when(config.getInitParameter(
++          AuthenticationFilter.AUTH_TYPE)).thenReturn("simple");
++      Mockito.when(config.getInitParameter(
++          AuthenticationFilter.SIGNATURE_SECRET_FILE))
++          .thenReturn(secretFile.getAbsolutePath());
++      Mockito.when(config.getInitParameterNames()).thenReturn(
++          new Vector<String>(Arrays.asList(AuthenticationFilter.AUTH_TYPE,
++              AuthenticationFilter.SIGNATURE_SECRET_FILE)).elements());
++      ServletContext context = Mockito.mock(ServletContext.class);
++      Mockito.when(context.getAttribute(
++          AuthenticationFilter.SIGNER_SECRET_PROVIDER_ATTRIBUTE))
++          .thenReturn(null);
++      Mockito.when(config.getServletContext()).thenReturn(context);
++      filter.init(config);
++      Assert.assertFalse(filter.isRandomSecret());
++      Assert.assertFalse(filter.isCustomSignerSecretProvider());
++    } finally {
++      filter.destroy();
++    }
++
+     // custom cookie domain and cookie path
+     filter = new AuthenticationFilter();
+     try {
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/security/AuthenticationFilterInitializer.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/security/AuthenticationFilterInitializer.java
+index 4fb9e45..cb3830d 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/security/AuthenticationFilterInitializer.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/security/AuthenticationFilterInitializer.java
+@@ -24,9 +24,7 @@
+ import org.apache.hadoop.http.FilterInitializer;
+ import org.apache.hadoop.security.authentication.server.KerberosAuthenticationHandler;
+ 
+-import java.io.FileReader;
+ import java.io.IOException;
+-import java.io.Reader;
+ import java.util.HashMap;
+ import java.util.Map;
+ 
+@@ -47,8 +45,6 @@
+ 
+   static final String PREFIX = "hadoop.http.authentication.";
+ 
+-  static final String SIGNATURE_SECRET_FILE = AuthenticationFilter.SIGNATURE_SECRET + ".file";
+-
+   /**
+    * Initializes hadoop-auth AuthenticationFilter.
+    * <p/>
+@@ -74,25 +70,6 @@ public void initFilter(FilterContainer container, Configuration conf) {
+       }
+     }
+ 
+-    String signatureSecretFile = filterConfig.get(SIGNATURE_SECRET_FILE);
+-    if (signatureSecretFile == null) {
+-      throw new RuntimeException("Undefined property: " + SIGNATURE_SECRET_FILE);      
+-    }
+-    
+-    try {
+-      StringBuilder secret = new StringBuilder();
+-      Reader reader = new FileReader(signatureSecretFile);
+-      int c = reader.read();
+-      while (c > -1) {
+-        secret.append((char)c);
+-        c = reader.read();
+-      }
+-      reader.close();
+-      filterConfig.put(AuthenticationFilter.SIGNATURE_SECRET, secret.toString());
+-    } catch (IOException ex) {
+-      throw new RuntimeException("Could not read HTTP signature secret file: " + signatureSecretFile);            
+-    }
+-
+     //Resolve _HOST into bind address
+     String bindAddress = conf.get(HttpServer2.BIND_ADDRESS);
+     String principal = filterConfig.get(KerberosAuthenticationHandler.PRINCIPAL);
+diff --git a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/security/TestAuthenticationFilter.java b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/security/TestAuthenticationFilter.java
+index b6aae0e..c8179e2 100644
+--- a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/security/TestAuthenticationFilter.java
++++ b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/security/TestAuthenticationFilter.java
+@@ -37,17 +37,6 @@
+   public void testConfiguration() throws Exception {
+     Configuration conf = new Configuration();
+     conf.set("hadoop.http.authentication.foo", "bar");
+-    
+-    File testDir = new File(System.getProperty("test.build.data", 
+-                                               "target/test-dir"));
+-    testDir.mkdirs();
+-    File secretFile = new File(testDir, "http-secret.txt");
+-    Writer writer = new FileWriter(new File(testDir, "http-secret.txt"));
+-    writer.write("hadoop");
+-    writer.close();
+-    conf.set(AuthenticationFilterInitializer.PREFIX + 
+-             AuthenticationFilterInitializer.SIGNATURE_SECRET_FILE, 
+-             secretFile.getAbsolutePath());
+ 
+     conf.set(HttpServer2.BIND_ADDRESS, "barhost");
+     
+@@ -68,7 +57,6 @@ public Object answer(InvocationOnMock invocationOnMock)
+ 
+           assertEquals("simple", conf.get("type"));
+           assertEquals("36000", conf.get("token.validity"));
+-          assertEquals("hadoop", conf.get("signature.secret"));
+           assertNull(conf.get("cookie.domain"));
+           assertEquals("true", conf.get("simple.anonymous.allowed"));
+           assertEquals("HTTP/barhost@LOCALHOST",
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-applicationhistoryservice/src/main/java/org/apache/hadoop/yarn/server/timeline/security/TimelineAuthenticationFilterInitializer.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-applicationhistoryservice/src/main/java/org/apache/hadoop/yarn/server/timeline/security/TimelineAuthenticationFilterInitializer.java
+index d041d5d..35e7bb0 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-applicationhistoryservice/src/main/java/org/apache/hadoop/yarn/server/timeline/security/TimelineAuthenticationFilterInitializer.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-applicationhistoryservice/src/main/java/org/apache/hadoop/yarn/server/timeline/security/TimelineAuthenticationFilterInitializer.java
+@@ -18,17 +18,11 @@
+ 
+ package org.apache.hadoop.yarn.server.timeline.security;
+ 
+-import java.io.FileReader;
+-import java.io.IOException;
+-import java.io.Reader;
+-import java.util.HashMap;
+-import java.util.Map;
+-
++import com.google.common.annotations.VisibleForTesting;
+ import org.apache.hadoop.conf.Configuration;
+ import org.apache.hadoop.http.FilterContainer;
+ import org.apache.hadoop.http.FilterInitializer;
+ import org.apache.hadoop.http.HttpServer2;
+-import org.apache.hadoop.io.IOUtils;
+ import org.apache.hadoop.security.SecurityUtil;
+ import org.apache.hadoop.security.authentication.server.AuthenticationFilter;
+ import org.apache.hadoop.security.authentication.server.KerberosAuthenticationHandler;
+@@ -39,7 +33,9 @@
+ import org.apache.hadoop.security.token.delegation.web.PseudoDelegationTokenAuthenticationHandler;
+ import org.apache.hadoop.yarn.security.client.TimelineDelegationTokenIdentifier;
+ 
+-import com.google.common.annotations.VisibleForTesting;
++import java.io.IOException;
++import java.util.HashMap;
++import java.util.Map;
+ 
+ /**
+  * <p>
+@@ -61,9 +57,6 @@
+    */
+   public static final String PREFIX = "yarn.timeline-service.http-authentication.";
+ 
+-  private static final String SIGNATURE_SECRET_FILE =
+-      TimelineAuthenticationFilter.SIGNATURE_SECRET + ".file";
+-
+   @VisibleForTesting
+   Map<String, String> filterConfig;
+ 
+@@ -108,29 +101,6 @@ public void initFilter(FilterContainer container, Configuration conf) {
+       }
+     }
+ 
+-    String signatureSecretFile = filterConfig.get(SIGNATURE_SECRET_FILE);
+-    if (signatureSecretFile != null) {
+-      Reader reader = null;
+-      try {
+-        StringBuilder secret = new StringBuilder();
+-        reader = new FileReader(signatureSecretFile);
+-        int c = reader.read();
+-        while (c > -1) {
+-          secret.append((char) c);
+-          c = reader.read();
+-        }
+-        filterConfig
+-            .put(TimelineAuthenticationFilter.SIGNATURE_SECRET,
+-                secret.toString());
+-      } catch (IOException ex) {
+-        throw new RuntimeException(
+-            "Could not read HTTP signature secret file: "
+-                + signatureSecretFile);
+-      } finally {
+-        IOUtils.closeStream(reader);
+-      }
+-    }
+-
+     String authType = filterConfig.get(AuthenticationFilter.AUTH_TYPE);
+     if (authType.equals(PseudoAuthenticationHandler.TYPE)) {
+       filterConfig.put(AuthenticationFilter.AUTH_TYPE,
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-common/src/main/java/org/apache/hadoop/yarn/server/security/http/RMAuthenticationFilterInitializer.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-common/src/main/java/org/apache/hadoop/yarn/server/security/http/RMAuthenticationFilterInitializer.java
+index a62cda3..9fc1334 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-common/src/main/java/org/apache/hadoop/yarn/server/security/http/RMAuthenticationFilterInitializer.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-common/src/main/java/org/apache/hadoop/yarn/server/security/http/RMAuthenticationFilterInitializer.java
+@@ -43,14 +43,11 @@
+ public class RMAuthenticationFilterInitializer extends FilterInitializer {
+ 
+   String configPrefix;
+-  String signatureSecretFileProperty;
+   String kerberosPrincipalProperty;
+   String cookiePath;
+ 
+   public RMAuthenticationFilterInitializer() {
+     this.configPrefix = "hadoop.http.authentication.";
+-    this.signatureSecretFileProperty =
+-        AuthenticationFilter.SIGNATURE_SECRET + ".file";
+     this.kerberosPrincipalProperty = KerberosAuthenticationHandler.PRINCIPAL;
+     this.cookiePath = "/";
+   }
+@@ -77,34 +74,6 @@ public RMAuthenticationFilterInitializer() {
+       }
+     }
+ 
+-    String signatureSecretFile = filterConfig.get(signatureSecretFileProperty);
+-    if (signatureSecretFile != null) {
+-      Reader reader = null;
+-      try {
+-        StringBuilder secret = new StringBuilder();
+-        reader =
+-            new InputStreamReader(new FileInputStream(signatureSecretFile),
+-              "UTF-8");
+-        int c = reader.read();
+-        while (c > -1) {
+-          secret.append((char) c);
+-          c = reader.read();
+-        }
+-        filterConfig.put(AuthenticationFilter.SIGNATURE_SECRET,
+-          secret.toString());
+-      } catch (IOException ex) {
+-        // if running in non-secure mode, this filter only gets added
+-        // because the user has not setup his own filter so just generate
+-        // a random secret. in secure mode, the user needs to setup security
+-        if (UserGroupInformation.isSecurityEnabled()) {
+-          throw new RuntimeException(
+-            "Could not read HTTP signature secret file: " + signatureSecretFile);
+-        }
+-      } finally {
+-        IOUtils.closeQuietly(reader);
+-      }
+-    }
+-
+     // Resolve _HOST into bind address
+     String bindAddress = conf.get(HttpServer2.BIND_ADDRESS);
+     String principal = filterConfig.get(kerberosPrincipalProperty);
+-- 
+1.7.9.5
+

@@ -1,0 +1,82 @@
+From aa8f3e92ebf2987a845f9d59457cf4413e72d8d1 Mon Sep 17 00:00:00 2001
+From: Kihwal Lee <kihwal@apache.org>
+Date: Mon, 12 Jan 2015 15:38:17 -0600
+Subject: [PATCH 0906/1023] HDFS-7533. Datanode sometimes does not shutdown on
+ receiving upgrade shutdown command. Contributed
+ by Eric Payne. (cherry picked from commit
+ 6bbf9fdd041d2413dd78e2bce51abae15f3334c2)
+
+(cherry picked from commit 33534a0c9aef5024aa6f340e7ee24930c8fa8ed5)
+(cherry picked from commit e9a28251ee46e64e1b99b2dd54b0432bdc0b9578)
+(cherry picked from commit ae288f7291606fa5559e08353d22c2f3fa2cb200)
+
+Change-Id: Iab159bef4b2d5220575be0bb19c3c436b448c5f4
+(cherry picked from commit 5ee298cce9dce17db64f9ea0a1a305e86aed3043)
+---
+ .../hadoop/hdfs/server/datanode/DataNode.java      |   10 +++++++---
+ .../hdfs/server/datanode/TestDataNodeExit.java     |   16 ++++++++++++++++
+ 2 files changed, 23 insertions(+), 3 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java
+index 288def5..88f4e6a 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java
+@@ -1685,9 +1685,13 @@ public void shutdown() {
+     // in order to avoid any further acceptance of requests, but the peers
+     // for block writes are not closed until the clients are notified.
+     if (dataXceiverServer != null) {
+-      xserver.sendOOBToPeers();
+-      ((DataXceiverServer) this.dataXceiverServer.getRunnable()).kill();
+-      this.dataXceiverServer.interrupt();
++      try {
++        xserver.sendOOBToPeers();
++        ((DataXceiverServer) this.dataXceiverServer.getRunnable()).kill();
++        this.dataXceiverServer.interrupt();
++      } catch (Throwable e) {
++        // Ignore, since the out of band messaging is advisory.
++      }
+     }
+ 
+     // Interrupt the checkDiskErrorThread and terminate it.
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestDataNodeExit.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestDataNodeExit.java
+index 9d59496..c067b07 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestDataNodeExit.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestDataNodeExit.java
+@@ -21,6 +21,7 @@
+ import static org.junit.Assert.assertEquals;
+ import static org.junit.Assert.assertFalse;
+ import static org.junit.Assert.assertTrue;
++import static org.junit.Assert.fail;
+ 
+ import java.io.IOException;
+ 
+@@ -32,6 +33,7 @@
+ import org.junit.After;
+ import org.junit.Before;
+ import org.junit.Test;
++import org.mockito.Mockito;
+ 
+ /** 
+  * Tests if DataNode process exits if all Block Pool services exit. 
+@@ -88,4 +90,18 @@ public void testBPServiceExit() throws Exception {
+     stopBPServiceThreads(2, dn);
+     assertFalse("DataNode should exit", dn.isDatanodeUp());
+   }
++
++  @Test
++  public void testSendOOBToPeers() throws Exception {
++    DataNode dn = cluster.getDataNodes().get(0);
++    DataXceiverServer spyXserver = Mockito.spy(dn.getXferServer());
++    NullPointerException e = new NullPointerException();
++    Mockito.doThrow(e).when(spyXserver).sendOOBToPeers();
++    dn.xserver = spyXserver;
++    try {
++      dn.shutdown();
++    } catch (Throwable t) {
++      fail("DataNode shutdown should not have thrown exception " + t);
++    }
++  }
+ }
+-- 
+1.7.9.5
+

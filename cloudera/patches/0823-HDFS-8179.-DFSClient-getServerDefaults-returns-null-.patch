@@ -1,0 +1,124 @@
+From dd332380b9cfa96b6cb7cb3cb2dabc8e6a58e4d2 Mon Sep 17 00:00:00 2001
+From: Arpit Agarwal <arp@apache.org>
+Date: Mon, 20 Apr 2015 15:42:42 -0700
+Subject: [PATCH 0823/1023] HDFS-8179. DFSClient#getServerDefaults returns
+ null within 1 hour of system start. (Contributed
+ by Xiaoyu Yao)
+
+(cherry picked from commit 95a8d452c58a3e07e1128788abcf03e6e7a8b823)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt
+	hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSClient.java
+	hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDistributedFileSystem.java
+
+Change-Id: I6bb1be7a8213aa8ec14811f1aca09fc2f6549df5
+(cherry picked from commit 2956c52917a0ac89be7178c8cdca7adbcfc7ef6b)
+(cherry picked from commit f3342edeaa6198c3aa1b9b566fa545376540965e)
+---
+ .../src/main/java/org/apache/hadoop/fs/Trash.java  |    5 +++++
+ .../org/apache/hadoop/fs/TrashPolicyDefault.java   |    4 ++--
+ .../java/org/apache/hadoop/hdfs/DFSClient.java     |    4 +++-
+ .../hadoop/hdfs/TestDistributedFileSystem.java     |   15 +++++++++++++++
+ 4 files changed, 25 insertions(+), 3 deletions(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/Trash.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/Trash.java
+index 2d5f540..aae5cf7 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/Trash.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/Trash.java
+@@ -19,6 +19,7 @@
+ 
+ import java.io.IOException;
+ 
++import org.apache.commons.logging.LogFactory;
+ import org.apache.hadoop.classification.InterfaceAudience;
+ import org.apache.hadoop.classification.InterfaceStability;
+ import org.apache.hadoop.conf.Configuration;
+@@ -33,6 +34,9 @@
+ @InterfaceAudience.Public
+ @InterfaceStability.Stable
+ public class Trash extends Configured {
++  private static final org.apache.commons.logging.Log LOG =
++      LogFactory.getLog(Trash.class);
++
+   private TrashPolicy trashPolicy; // configured trash policy instance
+ 
+   /** 
+@@ -84,6 +88,7 @@ public static boolean moveToAppropriateTrash(FileSystem fs, Path p,
+     } catch (Exception e) {
+       // If we can not determine that trash is enabled server side then
+       // bail rather than potentially deleting a file when trash is enabled.
++      LOG.warn("Failed to get server trash configuration", e);
+       throw new IOException("Failed to get server trash configuration", e);
+     }
+     Trash trash = new Trash(fullyResolvedFs, conf);
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/TrashPolicyDefault.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/TrashPolicyDefault.java
+index cfb51e2..d6a9b4b 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/TrashPolicyDefault.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/TrashPolicyDefault.java
+@@ -134,11 +134,11 @@ public boolean moveToTrash(Path path) throws IOException {
+     for (int i = 0; i < 2; i++) {
+       try {
+         if (!fs.mkdirs(baseTrashPath, PERMISSION)) {      // create current
+-          LOG.warn("Can't create(mkdir) trash directory: "+baseTrashPath);
++          LOG.warn("Can't create(mkdir) trash directory: " + baseTrashPath);
+           return false;
+         }
+       } catch (IOException e) {
+-        LOG.warn("Can't create trash directory: "+baseTrashPath);
++        LOG.warn("Can't create trash directory: " + baseTrashPath, e);
+         cause = e;
+         break;
+       }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSClient.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSClient.java
+index 877b0e1..562ff28 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSClient.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSClient.java
+@@ -1048,10 +1048,12 @@ public long getBlockSize(String f) throws IOException {
+    */
+   public FsServerDefaults getServerDefaults() throws IOException {
+     long now = Time.now();
+-    if (now - serverDefaultsLastUpdate > SERVER_DEFAULTS_VALIDITY_PERIOD) {
++    if ((serverDefaults == null) ||
++        (now - serverDefaultsLastUpdate > SERVER_DEFAULTS_VALIDITY_PERIOD)) {
+       serverDefaults = namenode.getServerDefaults();
+       serverDefaultsLastUpdate = now;
+     }
++    assert serverDefaults != null;
+     return serverDefaults;
+   }
+   
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDistributedFileSystem.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDistributedFileSystem.java
+index c5e20c0..72aca89 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDistributedFileSystem.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDistributedFileSystem.java
+@@ -54,6 +54,7 @@
+ import org.apache.hadoop.fs.CreateFlag;
+ import org.apache.hadoop.fs.FSDataInputStream;
+ import org.apache.hadoop.fs.FSDataOutputStream;
++import org.apache.hadoop.fs.FsServerDefaults;
+ import org.apache.hadoop.fs.FileChecksum;
+ import org.apache.hadoop.fs.FileStatus;
+ import org.apache.hadoop.fs.FileSystem;
+@@ -1109,4 +1110,18 @@ public void testDFSClientPeerWriteTimeout() throws IOException {
+       cluster.shutdown();
+     }
+   }
++
++  @Test(timeout=60000)
++  public void testGetServerDefaults() throws IOException {
++    Configuration conf = new HdfsConfiguration();
++    MiniDFSCluster cluster = new MiniDFSCluster.Builder(conf).build();
++    try {
++      cluster.waitActive();
++      DistributedFileSystem dfs = cluster.getFileSystem();
++      FsServerDefaults fsServerDefaults = dfs.getServerDefaults();
++      Assert.assertNotNull(fsServerDefaults);
++    } finally {
++      cluster.shutdown();
++    }
++  }
+ }
+-- 
+1.7.9.5
+

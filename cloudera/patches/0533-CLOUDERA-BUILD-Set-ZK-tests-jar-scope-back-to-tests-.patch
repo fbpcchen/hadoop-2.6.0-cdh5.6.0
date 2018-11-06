@@ -1,0 +1,38 @@
+From 1c3981ad9cb6f328085f49320369c6b6a314849b Mon Sep 17 00:00:00 2001
+From: Robert Kanter <rkanter@cloudera.com>
+Date: Tue, 21 Apr 2015 13:57:55 -0700
+Subject: [PATCH 0533/1023] CLOUDERA-BUILD: Set ZK tests jar scope back to
+ tests (CDH-27186)
+
+---
+ hadoop-project/pom.xml                             |    1 +
+ .../hadoop-yarn-server-resourcemanager/pom.xml     |    1 +
+ 2 files changed, 2 insertions(+)
+
+diff --git a/hadoop-project/pom.xml b/hadoop-project/pom.xml
+index c623ae0..830c0f9 100644
+--- a/hadoop-project/pom.xml
++++ b/hadoop-project/pom.xml
+@@ -836,6 +836,7 @@
+         <artifactId>zookeeper</artifactId>
+         <version>${cdh.zookeeper.version}</version>
+         <type>test-jar</type>
++        <scope>test</scope>
+         <exclusions>
+           <exclusion>
+             <groupId>org.jboss.netty</groupId>
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/pom.xml b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/pom.xml
+index 5124ec0..ac28b6a 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/pom.xml
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/pom.xml
+@@ -200,6 +200,7 @@
+       <groupId>org.apache.zookeeper</groupId>
+       <artifactId>zookeeper</artifactId>
+       <type>test-jar</type>
++      <scope>test</scope>
+     </dependency>
+     <!-- 'mvn dependency:analyze' fails to detect use of this dependency -->
+     <dependency>
+-- 
+1.7.9.5
+

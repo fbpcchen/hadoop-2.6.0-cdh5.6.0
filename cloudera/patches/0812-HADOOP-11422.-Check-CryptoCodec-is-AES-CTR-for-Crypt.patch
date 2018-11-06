@@ -1,0 +1,135 @@
+From 3a4f7929c9972586f29f63a00e66d2ff61ef1591 Mon Sep 17 00:00:00 2001
+From: Colin Patrick Mccabe <cmccabe@cloudera.com>
+Date: Fri, 19 Dec 2014 13:11:38 -0800
+Subject: [PATCH 0812/1023] HADOOP-11422. Check CryptoCodec is AES-CTR for
+ Crypto input/output stream (Yi Liu via Colin P.
+ McCabe) (cherry picked from commit
+ e369d98ba24906abcb35c0906cd57750c0d21fdb)
+
+(cherry picked from commit c60e3bdc4b369317e463e7752f9dc1665237e32a)
+
+Conflicts:
+	hadoop-common-project/hadoop-common/CHANGES.txt
+
+Change-Id: Ie6530fef94f1e081519a5b4c7049d27af2835a55
+(cherry picked from commit 56acdd70dc164eb5c55a9a65c10492428fd76509)
+---
+ .../apache/hadoop/crypto/CryptoInputStream.java    |    1 +
+ .../apache/hadoop/crypto/CryptoOutputStream.java   |    1 +
+ .../apache/hadoop/crypto/CryptoStreamUtils.java    |    7 +++
+ .../hadoop/crypto/UnsupportedCodecException.java   |   60 ++++++++++++++++++++
+ 4 files changed, 69 insertions(+)
+ create mode 100644 hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/crypto/UnsupportedCodecException.java
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/crypto/CryptoInputStream.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/crypto/CryptoInputStream.java
+index 5445d8e..2e87f91 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/crypto/CryptoInputStream.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/crypto/CryptoInputStream.java
+@@ -113,6 +113,7 @@ public CryptoInputStream(InputStream in, CryptoCodec codec,
+   public CryptoInputStream(InputStream in, CryptoCodec codec,
+       int bufferSize, byte[] key, byte[] iv, long streamOffset) throws IOException {
+     super(in);
++    CryptoStreamUtils.checkCodec(codec);
+     this.bufferSize = CryptoStreamUtils.checkBufferSize(codec, bufferSize);
+     this.codec = codec;
+     this.key = key.clone();
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/crypto/CryptoOutputStream.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/crypto/CryptoOutputStream.java
+index 9e79fbf..1753019 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/crypto/CryptoOutputStream.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/crypto/CryptoOutputStream.java
+@@ -86,6 +86,7 @@ public CryptoOutputStream(OutputStream out, CryptoCodec codec,
+       int bufferSize, byte[] key, byte[] iv, long streamOffset) 
+       throws IOException {
+     super(out);
++    CryptoStreamUtils.checkCodec(codec);
+     this.bufferSize = CryptoStreamUtils.checkBufferSize(codec, bufferSize);
+     this.codec = codec;
+     this.key = key.clone();
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/crypto/CryptoStreamUtils.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/crypto/CryptoStreamUtils.java
+index 820d775..be85497 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/crypto/CryptoStreamUtils.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/crypto/CryptoStreamUtils.java
+@@ -49,6 +49,13 @@ public static int getBufferSize(Configuration conf) {
+         HADOOP_SECURITY_CRYPTO_BUFFER_SIZE_DEFAULT);
+   }
+   
++  /** AES/CTR/NoPadding is required */
++  public static void checkCodec(CryptoCodec codec) {
++    if (codec.getCipherSuite() != CipherSuite.AES_CTR_NOPADDING) {
++      throw new UnsupportedCodecException("AES/CTR/NoPadding is required");
++    }
++  }
++
+   /** Check and floor buffer size */
+   public static int checkBufferSize(CryptoCodec codec, int bufferSize) {
+     Preconditions.checkArgument(bufferSize >= MIN_BUFFER_SIZE, 
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/crypto/UnsupportedCodecException.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/crypto/UnsupportedCodecException.java
+new file mode 100644
+index 0000000..ad6b525
+--- /dev/null
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/crypto/UnsupportedCodecException.java
+@@ -0,0 +1,60 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.apache.hadoop.crypto;
++
++/**
++ * Thrown to indicate that the specific codec is not supported.
++ */
++public class UnsupportedCodecException extends RuntimeException {
++
++  /** Default constructor */
++  public UnsupportedCodecException() {
++  }
++
++  /**
++   * Constructs an UnsupportedCodecException with the specified
++   * detail message.
++   * 
++   * @param message the detail message
++   */
++  public UnsupportedCodecException(String message) {
++    super(message);
++  }
++
++  /**
++   * Constructs a new exception with the specified detail message and
++   * cause.
++   * 
++   * @param message the detail message
++   * @param cause the cause
++   */
++  public UnsupportedCodecException(String message, Throwable cause) {
++    super(message, cause);
++  }
++
++  /**
++   * Constructs a new exception with the specified cause.
++   * 
++   * @param cause the cause
++   */
++  public UnsupportedCodecException(Throwable cause) {
++    super(cause);
++  }
++
++  private static final long serialVersionUID = 6713920435487942224L;
++}
+\ No newline at end of file
+-- 
+1.7.9.5
+

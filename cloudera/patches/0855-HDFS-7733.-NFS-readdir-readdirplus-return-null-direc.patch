@@ -1,0 +1,44 @@
+From 6297724c4d35d4373ae70fa02f49b4c4caa92c36 Mon Sep 17 00:00:00 2001
+From: Arpit Agarwal <arp@apache.org>
+Date: Wed, 4 Feb 2015 16:25:31 -0800
+Subject: [PATCH 0855/1023] HDFS-7733. NFS: readdir/readdirplus return null
+ directory attribute on failure. (Contributed by
+ Arpit Agarwal) (cherry picked from commit
+ 5807afed0a4f08b6b2acd88f424bace506e03707)
+
+Change-Id: Id1b1440abf112b7a2cd41f681c0346e13a0b8d78
+(cherry picked from commit ed5b190f2dc94f59bfbbc3600b8460ebeb411b76)
+---
+ .../hadoop/hdfs/nfs/nfs3/RpcProgramNfs3.java       |    9 +++++++--
+ 1 file changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs-nfs/src/main/java/org/apache/hadoop/hdfs/nfs/nfs3/RpcProgramNfs3.java b/hadoop-hdfs-project/hadoop-hdfs-nfs/src/main/java/org/apache/hadoop/hdfs/nfs/nfs3/RpcProgramNfs3.java
+index a109315..8947d68 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs-nfs/src/main/java/org/apache/hadoop/hdfs/nfs/nfs3/RpcProgramNfs3.java
++++ b/hadoop-hdfs-project/hadoop-hdfs-nfs/src/main/java/org/apache/hadoop/hdfs/nfs/nfs3/RpcProgramNfs3.java
+@@ -1582,7 +1582,9 @@ public READDIR3Response readdir(XDR xdr, SecurityHandler securityHandler,
+         } else {
+           LOG.error("CookieVerf mismatch. request cookieVerf: " + cookieVerf
+               + " dir cookieVerf: " + dirStatus.getModificationTime());
+-          return new READDIR3Response(Nfs3Status.NFS3ERR_BAD_COOKIE);
++          return new READDIR3Response(
++              Nfs3Status.NFS3ERR_BAD_COOKIE,
++              Nfs3Utils.getFileAttr(dfsClient, dirFileIdPath, iug));
+         }
+       }
+ 
+@@ -1745,7 +1747,10 @@ READDIRPLUS3Response readdirplus(XDR xdr, SecurityHandler securityHandler,
+         } else {
+           LOG.error("cookieverf mismatch. request cookieverf: " + cookieVerf
+               + " dir cookieverf: " + dirStatus.getModificationTime());
+-          return new READDIRPLUS3Response(Nfs3Status.NFS3ERR_BAD_COOKIE);
++          return new READDIRPLUS3Response(
++              Nfs3Status.NFS3ERR_BAD_COOKIE,
++              Nfs3Utils.getFileAttr(dfsClient, dirFileIdPath, iug),
++              0, null);
+         }
+       }
+ 
+-- 
+1.7.9.5
+

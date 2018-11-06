@@ -1,0 +1,49 @@
+From 9a1077681c9ca7f5d55296f829eb866a79cb57dc Mon Sep 17 00:00:00 2001
+From: Kihwal Lee <kihwal@apache.org>
+Date: Tue, 20 Oct 2015 15:08:16 -0500
+Subject: [PATCH 0918/1023] HADOOP-12418. TestRPC.testRPCInterruptedSimple
+ fails intermittently. Contributed Kihwal Lee.
+
+(cherry picked from commit 01b103f4ff2e8ee7e71d082885436c5cb7c6be0b)
+
+Conflicts:
+	hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/ipc/TestRPC.java
+
+Change-Id: I6baaf4fb0c60ccbbbe940fc6b4a2f6353ba7f116
+---
+ .../test/java/org/apache/hadoop/ipc/TestRPC.java   |   11 +++++++----
+ 1 file changed, 7 insertions(+), 4 deletions(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/ipc/TestRPC.java b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/ipc/TestRPC.java
+index b64a943..ff00ac3 100644
+--- a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/ipc/TestRPC.java
++++ b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/ipc/TestRPC.java
+@@ -28,6 +28,7 @@
+ import static org.junit.Assert.fail;
+ 
+ import java.io.Closeable;
++import java.io.InterruptedIOException;
+ import java.io.IOException;
+ import java.lang.management.ManagementFactory;
+ import java.lang.management.ThreadInfo;
+@@ -879,11 +880,13 @@ public void testRPCInterruptedSimple() throws Exception {
+       proxy.ping();
+       fail("Interruption did not cause IPC to fail");
+     } catch (IOException ioe) {
+-      if (!ioe.toString().contains("InterruptedException")) {
+-        throw ioe;
++      if (ioe.toString().contains("InterruptedException") ||
++          ioe instanceof InterruptedIOException) {
++        // clear interrupt status for future tests
++        Thread.interrupted();
++        return;
+       }
+-      // clear interrupt status for future tests
+-      Thread.interrupted();
++      throw ioe;
+     } finally {
+       server.stop();
+     }
+-- 
+1.7.9.5
+

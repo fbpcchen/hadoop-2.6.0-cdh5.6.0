@@ -1,0 +1,194 @@
+From a03c03b7cecad8cdf90550dcf8da464456ac85b1 Mon Sep 17 00:00:00 2001
+From: Dongming Liang <dongming.liang@capitalone.com>
+Date: Wed, 4 Mar 2015 17:47:05 -0800
+Subject: [PATCH 0934/1023] HDFS-1522. Combine two BLOCK_FILE_PREFIX constants
+ into one. Contributed by Dongming Liang.
+
+(cherry picked from commit ada545d3b70e30759c9067159f3de16abd885c6b)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataStorage.java
+
+Change-Id: Ifeaf98b823f95c3285fb85648de440abb0209c62
+---
+ .../org/apache/hadoop/hdfs/RemoteBlockReader.java  |    4 +++-
+ .../hadoop/hdfs/server/datanode/DataStorage.java   |    3 ++-
+ .../hdfs/server/datanode/DirectoryScanner.java     |    2 +-
+ .../datanode/fsdataset/impl/FsVolumeImpl.java      |    3 ++-
+ .../hadoop/hdfs/server/namenode/NamenodeFsck.java  |    2 +-
+ .../org/apache/hadoop/hdfs/MiniDFSCluster.java     |    4 ++--
+ .../org/apache/hadoop/hdfs/TestCrcCorruption.java  |    3 ++-
+ .../org/apache/hadoop/hdfs/TestFileCorruption.java |    2 +-
+ .../org/apache/hadoop/hdfs/TestReplication.java    |    3 ++-
+ .../server/datanode/TestDataNodeVolumeFailure.java |    2 +-
+ 10 files changed, 17 insertions(+), 11 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/RemoteBlockReader.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/RemoteBlockReader.java
+index 8a5c961..7c16f4a 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/RemoteBlockReader.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/RemoteBlockReader.java
+@@ -30,6 +30,7 @@
+ import org.apache.hadoop.fs.Path;
+ import org.apache.hadoop.fs.ReadOption;
+ import org.apache.hadoop.hdfs.net.Peer;
++import org.apache.hadoop.hdfs.protocol.Block;
+ import org.apache.hadoop.hdfs.protocol.DatanodeID;
+ import org.apache.hadoop.hdfs.protocol.ExtendedBlock;
+ import org.apache.hadoop.hdfs.protocol.datatransfer.DataTransferProtoUtil;
+@@ -353,7 +354,8 @@ private RemoteBlockReader(String file, String bpid, long blockId,
+       long startOffset, long firstChunkOffset, long bytesToRead, Peer peer,
+       DatanodeID datanodeID, PeerCache peerCache, Tracer tracer) {
+     // Path is used only for printing block and file information in debug
+-    super(new Path("/blk_" + blockId + ":" + bpid + ":of:"+ file)/*too non path-like?*/,
++    super(new Path("/" + Block.BLOCK_FILE_PREFIX + blockId +
++                    ":" + bpid + ":of:"+ file)/*too non path-like?*/,
+           1, verifyChecksum,
+           checksum.getChecksumSize() > 0? checksum : null, 
+           checksum.getBytesPerChecksum(),
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataStorage.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataStorage.java
+index d9b6c3f..95dc13f 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataStorage.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataStorage.java
+@@ -83,6 +83,7 @@
+ 
+   public final static String BLOCK_SUBDIR_PREFIX = "subdir";
+   final static String BLOCK_FILE_PREFIX = "blk_";
++  final static String COPY_FILE_PREFIX = "dncp_";
+   final static String STORAGE_DIR_DETACHED = "detach";
+   public final static String STORAGE_DIR_RBW = "rbw";
+   public final static String STORAGE_DIR_FINALIZED = "finalized";
+@@ -1230,7 +1231,7 @@ static void linkBlocksHelper(File from, File to, int oldLV, HardLink hl,
+     String[] blockNames = from.list(new java.io.FilenameFilter() {
+       @Override
+       public boolean accept(File dir, String name) {
+-        return name.startsWith(BLOCK_FILE_PREFIX);
++        return name.startsWith(Block.BLOCK_FILE_PREFIX);
+       }
+     });
+ 
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DirectoryScanner.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DirectoryScanner.java
+index 6c22880..fd05a7e 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DirectoryScanner.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DirectoryScanner.java
+@@ -626,7 +626,7 @@ public ScanInfoPerBlockPool call() throws Exception {
+           continue;
+         }
+         if (!Block.isBlockFilename(files[i])) {
+-          if (isBlockMetaFile("blk_", files[i].getName())) {
++          if (isBlockMetaFile(Block.BLOCK_FILE_PREFIX, files[i].getName())) {
+             long blockId = Block.getBlockId(files[i].getName());
+             report.add(new ScanInfo(blockId, null, files[i], vol));
+           }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsVolumeImpl.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsVolumeImpl.java
+index cd859d2..cc88c68 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsVolumeImpl.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsVolumeImpl.java
+@@ -434,7 +434,8 @@ public boolean accept(File dir, String name) {
+ 
+     @Override
+     public boolean accept(File dir, String name) {
+-      return !name.endsWith(".meta") && name.startsWith("blk_");
++      return !name.endsWith(".meta") &&
++              name.startsWith(Block.BLOCK_FILE_PREFIX);
+     }
+   }
+ 
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NamenodeFsck.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NamenodeFsck.java
+index 79a25d1..9d49fca 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NamenodeFsck.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NamenodeFsck.java
+@@ -302,7 +302,7 @@ public void fsck() {
+         out.println(sb.toString());
+         sb.append(" for blockIds: \n");
+         for (String blk: blocks) {
+-          if(blk == null || !blk.contains("blk_")) {
++          if(blk == null || !blk.contains(Block.BLOCK_FILE_PREFIX)) {
+             out.println("Incorrect blockId format: " + blk);
+             continue;
+           }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/MiniDFSCluster.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/MiniDFSCluster.java
+index 9969e26..7bf0c6f 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/MiniDFSCluster.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/MiniDFSCluster.java
+@@ -2608,8 +2608,8 @@ public static File getBlockMetadataFile(File storageDir, ExtendedBlock blk) {
+       return null;
+     }
+     for (File f : files) {
+-      if (f.getName().startsWith("blk_") && f.getName().endsWith(
+-          Block.METADATA_EXTENSION)) {
++      if (f.getName().startsWith(Block.BLOCK_FILE_PREFIX) &&
++              f.getName().endsWith(Block.METADATA_EXTENSION)) {
+         results.add(f);
+       } else if (f.isDirectory()) {
+         List<File> subdirResults = getAllBlockMetadataFiles(f);
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestCrcCorruption.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestCrcCorruption.java
+index 969cdd5..f0c4c42 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestCrcCorruption.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestCrcCorruption.java
+@@ -35,6 +35,7 @@
+ import org.apache.hadoop.fs.FSDataOutputStream;
+ import org.apache.hadoop.fs.Path;
+ import org.apache.hadoop.hdfs.DFSClientFaultInjector;
++import org.apache.hadoop.hdfs.protocol.Block;
+ import org.apache.hadoop.hdfs.protocol.ExtendedBlock;
+ import org.apache.hadoop.io.IOUtils;
+ import org.junit.Before;
+@@ -176,7 +177,7 @@ private void thistest(Configuration conf, DFSTestUtil util) throws Exception {
+       assertTrue("Blocks do not exist in data-dir", (blocks != null) && (blocks.length > 0));
+       int num = 0;
+       for (int idx = 0; idx < blocks.length; idx++) {
+-        if (blocks[idx].getName().startsWith("blk_") &&
++        if (blocks[idx].getName().startsWith(Block.BLOCK_FILE_PREFIX) &&
+             blocks[idx].getName().endsWith(".meta")) {
+           num++;
+           if (num % 3 == 0) {
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestFileCorruption.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestFileCorruption.java
+index 7d3946a..8001bfb 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestFileCorruption.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestFileCorruption.java
+@@ -77,7 +77,7 @@ public void testFileCorruption() throws Exception {
+       File[] blocks = data_dir.listFiles();
+       assertTrue("Blocks do not exist in data-dir", (blocks != null) && (blocks.length > 0));
+       for (int idx = 0; idx < blocks.length; idx++) {
+-        if (!blocks[idx].getName().startsWith("blk_")) {
++        if (!blocks[idx].getName().startsWith(Block.BLOCK_FILE_PREFIX)) {
+           continue;
+         }
+         System.out.println("Deliberately removing file "+blocks[idx].getName());
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestReplication.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestReplication.java
+index 281c0ea..0027bbe 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestReplication.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestReplication.java
+@@ -46,6 +46,7 @@
+ import org.apache.hadoop.hdfs.protocol.HdfsConstants.DatanodeReportType;
+ import org.apache.hadoop.hdfs.protocol.LocatedBlock;
+ import org.apache.hadoop.hdfs.protocol.LocatedBlocks;
++import org.apache.hadoop.hdfs.protocol.Block;
+ import org.apache.hadoop.hdfs.server.datanode.SimulatedFSDataset;
+ import org.apache.hadoop.util.Time;
+ import org.junit.Test;
+@@ -520,7 +521,7 @@ public void testReplicationWhenBlockCorruption() throws Exception {
+       String blockFile = null;
+       File[] listFiles = participatedNodeDirs.listFiles();
+       for (File file : listFiles) {
+-        if (file.getName().startsWith("blk_")
++        if (file.getName().startsWith(Block.BLOCK_FILE_PREFIX)
+             && !file.getName().endsWith("meta")) {
+           blockFile = file.getName();
+           for (File file1 : nonParticipatedNodeDirs) {
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestDataNodeVolumeFailure.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestDataNodeVolumeFailure.java
+index 2e58289..43379be 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestDataNodeVolumeFailure.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestDataNodeVolumeFailure.java
+@@ -477,7 +477,7 @@ private void triggerFailure(String path, long size) throws IOException {
+   private boolean deteteBlocks(File dir) {
+     File [] fileList = dir.listFiles();
+     for(File f : fileList) {
+-      if(f.getName().startsWith("blk_")) {
++      if(f.getName().startsWith(Block.BLOCK_FILE_PREFIX)) {
+         if(!f.delete())
+           return false;
+         
+-- 
+1.7.9.5
+

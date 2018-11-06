@@ -1,0 +1,42 @@
+From bfc6b0b3d89aa8133cc0e1912d47ba625481e562 Mon Sep 17 00:00:00 2001
+From: Jing Zhao <jing9@apache.org>
+Date: Tue, 11 Aug 2015 10:28:18 -0700
+Subject: [PATCH 0954/1023] HDFS-8805. Archival Storage: getStoragePolicy
+ should not need superuser privilege. Contributed
+ by Brahma Reddy Battula.
+
+(cherry picked from commit 1fc3c779a422bafdb86ad1a5b2349802dda1cb62)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSDirAppendOp.java
+	hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSDirStatAndListingOp.java
+	hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSDirWriteFileOp.java
+
+Change-Id: I8d60c84d818872412e2d683d26d5398d92340863
+---
+ .../hadoop/hdfs/server/namenode/FSNamesystem.java  |    4 +---
+ 1 file changed, 1 insertion(+), 3 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSNamesystem.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSNamesystem.java
+index aba705c..11f589d 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSNamesystem.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSNamesystem.java
+@@ -4222,14 +4222,12 @@ HdfsFileStatus getFileInfo(final String srcArg, boolean resolveLink)
+     try {
+       checkOperation(OperationCategory.READ);
+       src = resolvePath(src, pathComponents);
+-      boolean isSuperUser = true;
+       if (isPermissionEnabled) {
+         checkPermission(pc, src, false, null, null, null, null, false,
+             resolveLink);
+-        isSuperUser = pc.isSuperUser();
+       }
+       stat = dir.getFileInfo(src, resolveLink,
+-          FSDirectory.isReservedRawName(srcArg), isSuperUser);
++          FSDirectory.isReservedRawName(srcArg), true);
+     } catch (AccessControlException e) {
+       logAuditEvent(false, "getfileinfo", srcArg);
+       throw e;
+-- 
+1.7.9.5
+

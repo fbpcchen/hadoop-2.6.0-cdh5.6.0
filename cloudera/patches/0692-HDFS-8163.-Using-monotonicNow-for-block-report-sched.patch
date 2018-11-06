@@ -1,0 +1,584 @@
+From f7fee425689e289fcdf1b150b59315bc6efe1839 Mon Sep 17 00:00:00 2001
+From: Arpit Agarwal <arp@apache.org>
+Date: Tue, 21 Apr 2015 10:58:05 -0700
+Subject: [PATCH 0692/1023] HDFS-8163. Using monotonicNow for block report
+ scheduling causes test failures on recently
+ restarted systems. (Arpit Agarwal)
+
+(cherry picked from commit 7b3acc5c9dc6240fc15ff399061ffc8b5017bfd8)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BPServiceActor.java
+---
+ .../src/main/java/org/apache/hadoop/util/Time.java |    2 +
+ .../hdfs/server/datanode/BPOfferService.java       |    2 +-
+ .../hdfs/server/datanode/BPServiceActor.java       |  214 ++++++++++++--------
+ .../datanode/TestBpServiceActorScheduler.java      |  163 +++++++++++++++
+ 4 files changed, 301 insertions(+), 80 deletions(-)
+ create mode 100644 hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestBpServiceActorScheduler.java
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/util/Time.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/util/Time.java
+index 347cdc5..987e1b0 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/util/Time.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/util/Time.java
+@@ -42,6 +42,8 @@ public static long now() {
+    * milliseconds, and not affected by settimeofday or similar system clock
+    * changes.  This is appropriate to use when computing how much longer to
+    * wait for an interval to expire.
++   * This function can return a negative value and it must be handled correctly
++   * by callers. See the documentation of System#nanoTime for caveats.
+    * @return a monotonic clock that counts in milliseconds.
+    */
+   public static long monotonicNow() {
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BPOfferService.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BPOfferService.java
+index c786661..0822898 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BPOfferService.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BPOfferService.java
+@@ -430,7 +430,7 @@ void trySendErrorReport(int errCode, String errMsg) {
+    */
+   void scheduleBlockReport(long delay) {
+     for (BPServiceActor actor : bpServices) {
+-      actor.scheduleBlockReport(delay);
++      actor.getScheduler().scheduleBlockReport(delay);
+     }
+   }
+ 
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BPServiceActor.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BPServiceActor.java
+index fbdcb5b..7392470 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BPServiceActor.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BPServiceActor.java
+@@ -17,7 +17,7 @@
+  */
+ package org.apache.hadoop.hdfs.server.datanode;
+ 
+-import static org.apache.hadoop.util.Time.now;
++import static org.apache.hadoop.util.Time.monotonicNow;
+ 
+ import java.io.IOException;
+ import java.net.InetSocketAddress;
+@@ -82,19 +82,11 @@
+ 
+   final BPOfferService bpos;
+   
+-  // lastBlockReport and lastHeartbeat may be assigned/read
+-  // by testing threads (through BPServiceActor#triggerXXX), while also 
+-  // assigned/read by the actor thread. Thus they should be declared as volatile
+-  // to make sure the "happens-before" consistency.
+-  volatile long lastBlockReport = 0;
+-
+-  boolean resetBlockReportTime = true;
+-
+   volatile long lastCacheReport = 0;
++  private final Scheduler scheduler;
+ 
+   Thread bpThread;
+   DatanodeProtocolClientSideTranslatorPB bpNamenode;
+-  private volatile long lastHeartbeat = 0;
+ 
+   static enum RunningState {
+     CONNECTING, INIT_FAILED, RUNNING, EXITED, FAILED;
+@@ -130,6 +122,7 @@
+     this.nnAddr = nnAddr;
+     this.dnConf = dn.getDnConf();
+     prevBlockReportId = DFSUtil.getRandom().nextLong();
++    scheduler = new Scheduler(dnConf.heartBeatInterval, dnConf.blockReportInterval);
+   }
+ 
+   boolean isAlive() {
+@@ -232,33 +225,6 @@ private void connectToNNAndHandshake() throws IOException {
+     register(nsInfo);
+   }
+ 
+-  // This is useful to make sure NN gets Heartbeat before Blockreport
+-  // upon NN restart while DN keeps retrying Otherwise,
+-  // 1. NN restarts.
+-  // 2. Heartbeat RPC will retry and succeed. NN asks DN to reregister.
+-  // 3. After reregistration completes, DN will send Blockreport first.
+-  // 4. Given NN receives Blockreport after Heartbeat, it won't mark
+-  //    DatanodeStorageInfo#blockContentsStale to false until the next
+-  //    Blockreport.
+-  void scheduleHeartbeat() {
+-    lastHeartbeat = 0;
+-  }
+-
+-  /**
+-   * This methods  arranges for the data node to send the block report at 
+-   * the next heartbeat.
+-   */
+-  void scheduleBlockReport(long delay) {
+-    if (delay > 0) { // send BR after random delay
+-      lastBlockReport = Time.now()
+-      - ( dnConf.blockReportInterval - DFSUtil.getRandom().nextInt((int)(delay)));
+-    } else { // send at next heartbeat
+-      lastBlockReport = lastHeartbeat - dnConf.blockReportInterval;
+-    }
+-    resetBlockReportTime = true; // reset future BRs for randomness
+-  }
+-
+-  
+   /**
+    * Report received blocks and delete hints to the Namenode for each
+    * storage.
+@@ -387,10 +353,10 @@ void notifyNamenodeDeletedBlock(
+   @VisibleForTesting
+   void triggerBlockReportForTests() {
+     synchronized (pendingIncrementalBRperStorage) {
+-      lastBlockReport = 0;
+-      lastHeartbeat = 0;
++      scheduler.scheduleHeartbeat();
++      long nextBlockReportTime = scheduler.scheduleBlockReport(0);
+       pendingIncrementalBRperStorage.notifyAll();
+-      while (lastBlockReport == 0) {
++      while (nextBlockReportTime - scheduler.nextBlockReportTime >= 0) {
+         try {
+           pendingIncrementalBRperStorage.wait(100);
+         } catch (InterruptedException e) {
+@@ -403,9 +369,9 @@ void triggerBlockReportForTests() {
+   @VisibleForTesting
+   void triggerHeartbeatForTests() {
+     synchronized (pendingIncrementalBRperStorage) {
+-      lastHeartbeat = 0;
++      final long nextHeartbeatTime = scheduler.scheduleHeartbeat();
+       pendingIncrementalBRperStorage.notifyAll();
+-      while (lastHeartbeat == 0) {
++      while (nextHeartbeatTime - scheduler.nextHeartbeatTime >= 0) {
+         try {
+           pendingIncrementalBRperStorage.wait(100);
+         } catch (InterruptedException e) {
+@@ -454,8 +420,7 @@ private long generateUniqueBlockReportId() {
+    */
+   List<DatanodeCommand> blockReport() throws IOException {
+     // send block report if timer has expired.
+-    final long startTime = now();
+-    if (startTime - lastBlockReport <= dnConf.blockReportInterval) {
++    if (!scheduler.isBlockReportDue()) {
+       return null;
+     }
+ 
+@@ -467,7 +432,7 @@ private long generateUniqueBlockReportId() {
+     // a FINALIZED one.
+     reportReceivedDeletedBlocks();
+ 
+-    long brCreateStartTime = now();
++    long brCreateStartTime = monotonicNow();
+     Map<DatanodeStorage, BlockListAsLongs> perVolumeBlockLists =
+         dn.getFSDataset().getBlockReports(bpos.getBlockPoolId());
+ 
+@@ -487,7 +452,7 @@ private long generateUniqueBlockReportId() {
+     int numReportsSent = 0;
+     int numRPCs = 0;
+     boolean success = false;
+-    long brSendStartTime = now();
++    long brSendStartTime = monotonicNow();
+     long reportId = generateUniqueBlockReportId();
+     try {
+       if (totalBlockCount < dnConf.blockReportSplitThreshold) {
+@@ -517,7 +482,7 @@ private long generateUniqueBlockReportId() {
+       success = true;
+     } finally {
+       // Log the block report processing stats from Datanode perspective
+-      long brSendCost = now() - brSendStartTime;
++      long brSendCost = monotonicNow() - brSendStartTime;
+       long brCreateCost = brSendStartTime - brCreateStartTime;
+       dn.getMetrics().addBlockReport(brSendCost);
+       final int nCmds = cmds.size();
+@@ -536,29 +501,10 @@ private long generateUniqueBlockReportId() {
+                   (nCmds + " commands: " + Joiner.on("; ").join(cmds)))) +
+           ".");
+     }
+-    scheduleNextBlockReport(startTime);
++    scheduler.scheduleNextBlockReport();
+     return cmds.size() == 0 ? null : cmds;
+   }
+ 
+-  private void scheduleNextBlockReport(long previousReportStartTime) {
+-    // If we have sent the first set of block reports, then wait a random
+-    // time before we start the periodic block reports.
+-    if (resetBlockReportTime) {
+-      lastBlockReport = previousReportStartTime -
+-          DFSUtil.getRandom().nextInt((int)(dnConf.blockReportInterval));
+-      resetBlockReportTime = false;
+-    } else {
+-      /* say the last block report was at 8:20:14. The current report
+-       * should have started around 9:20:14 (default 1 hour interval).
+-       * If current time is :
+-       *   1) normal like 9:20:18, next report should be at 10:20:14
+-       *   2) unexpected like 11:35:43, next report should be at 12:20:14
+-       */
+-      lastBlockReport += (now() - lastBlockReport) /
+-          dnConf.blockReportInterval * dnConf.blockReportInterval;
+-    }
+-  }
+-
+   DatanodeCommand cacheReport() throws IOException {
+     // If caching is disabled, do not send a cache report
+     if (dn.getFSDataset().getCacheCapacity() == 0) {
+@@ -684,13 +630,12 @@ private void offerService() throws Exception {
+     //
+     while (shouldRun()) {
+       try {
+-        final long startTime = now();
++        final long startTime = scheduler.monotonicNow();
+ 
+         //
+         // Every so often, send heartbeat or block-report
+         //
+-        boolean sendHeartbeat =
+-            startTime - lastHeartbeat >= dnConf.heartBeatInterval;
++        final boolean sendHeartbeat = scheduler.isHeartbeatDue(startTime);
+         if (sendHeartbeat) {
+           //
+           // All heartbeat messages include following info:
+@@ -699,11 +644,11 @@ private void offerService() throws Exception {
+           // -- Total capacity
+           // -- Bytes remaining
+           //
+-          lastHeartbeat = startTime;
++          scheduler.scheduleNextHeartbeat();
+           if (!dn.areHeartbeatsDisabledForTests()) {
+             HeartbeatResponse resp = sendHeartBeat();
+             assert resp != null;
+-            dn.getMetrics().addHeartbeat(now() - startTime);
++            dn.getMetrics().addHeartbeat(scheduler.monotonicNow() - startTime);
+ 
+             // If the state of this NN has changed (eg STANDBY->ACTIVE)
+             // then let the BPOfferService update itself.
+@@ -719,10 +664,10 @@ private void offerService() throws Exception {
+               handleRollingUpgradeStatus(resp);
+             }
+ 
+-            long startProcessCommands = now();
++            long startProcessCommands = monotonicNow();
+             if (!processCommand(resp.getCommands()))
+               continue;
+-            long endProcessCommands = now();
++            long endProcessCommands = monotonicNow();
+             if (endProcessCommands - startProcessCommands > 2000) {
+               LOG.info("Took " + (endProcessCommands - startProcessCommands)
+                   + "ms to process " + resp.getCommands().length
+@@ -746,8 +691,7 @@ private void offerService() throws Exception {
+         // There is no work to do;  sleep until hearbeat timer elapses, 
+         // or work arrives, and then iterate again.
+         //
+-        long waitTime = dnConf.heartBeatInterval - 
+-        (Time.now() - lastHeartbeat);
++        long waitTime = scheduler.getHeartbeatWaitTime();
+         synchronized(pendingIncrementalBRperStorage) {
+           if (waitTime > 0 && !sendImmediateIBR) {
+             try {
+@@ -816,7 +760,7 @@ void register(NamespaceInfo nsInfo) throws IOException {
+     bpos.registrationSucceeded(this, bpRegistration);
+ 
+     // random short delay - helps scatter the BR from all DNs
+-    scheduleBlockReport(dnConf.initialBlockReportDelay);
++    scheduler.scheduleBlockReport(dnConf.initialBlockReportDelay);
+   }
+ 
+ 
+@@ -931,7 +875,7 @@ void reRegister() throws IOException {
+       NamespaceInfo nsInfo = retrieveNamespaceInfo();
+       // and re-register
+       register(nsInfo);
+-      scheduleHeartbeat();
++      scheduler.scheduleHeartbeat();
+     }
+   }
+ 
+@@ -1009,7 +953,7 @@ void triggerBlockReport(BlockReportOptions options) throws IOException {
+     } else {
+       LOG.info(bpos.toString() + ": scheduling a full block report.");
+       synchronized(pendingIncrementalBRperStorage) {
+-        lastBlockReport = 0;
++        scheduler.scheduleBlockReport(0);
+         pendingIncrementalBRperStorage.notifyAll();
+       }
+     }
+@@ -1040,4 +984,116 @@ private void processQueueMessages() {
+       }
+     }
+   }
++
++  Scheduler getScheduler() {
++    return scheduler;
++  }
++
++  /**
++   * Utility class that wraps the timestamp computations for scheduling
++   * heartbeats and block reports.
++   */
++  static class Scheduler {
++    // nextBlockReportTime and nextHeartbeatTime may be assigned/read
++    // by testing threads (through BPServiceActor#triggerXXX), while also
++    // assigned/read by the actor thread.
++    @VisibleForTesting
++    volatile long nextBlockReportTime = monotonicNow();
++
++    @VisibleForTesting
++    volatile long nextHeartbeatTime = monotonicNow();
++
++    @VisibleForTesting
++    boolean resetBlockReportTime = true;
++
++    private final long heartbeatIntervalMs;
++    private final long blockReportIntervalMs;
++
++    Scheduler(long heartbeatIntervalMs, long blockReportIntervalMs) {
++      this.heartbeatIntervalMs = heartbeatIntervalMs;
++      this.blockReportIntervalMs = blockReportIntervalMs;
++    }
++
++    // This is useful to make sure NN gets Heartbeat before Blockreport
++    // upon NN restart while DN keeps retrying Otherwise,
++    // 1. NN restarts.
++    // 2. Heartbeat RPC will retry and succeed. NN asks DN to reregister.
++    // 3. After reregistration completes, DN will send Blockreport first.
++    // 4. Given NN receives Blockreport after Heartbeat, it won't mark
++    //    DatanodeStorageInfo#blockContentsStale to false until the next
++    //    Blockreport.
++    long scheduleHeartbeat() {
++      nextHeartbeatTime = monotonicNow();
++      return nextHeartbeatTime;
++    }
++
++    long scheduleNextHeartbeat() {
++      // Numerical overflow is possible here and is okay.
++      nextHeartbeatTime += heartbeatIntervalMs;
++      return nextHeartbeatTime;
++    }
++
++    boolean isHeartbeatDue(long startTime) {
++      return (nextHeartbeatTime - startTime <= 0);
++    }
++
++    boolean isBlockReportDue() {
++      return nextBlockReportTime - monotonicNow() <= 0;
++    }
++
++    /**
++     * This methods  arranges for the data node to send the block report at
++     * the next heartbeat.
++     */
++    long scheduleBlockReport(long delay) {
++      if (delay > 0) { // send BR after random delay
++        // Numerical overflow is possible here and is okay.
++        nextBlockReportTime =
++            monotonicNow() + DFSUtil.getRandom().nextInt((int) (delay));
++      } else { // send at next heartbeat
++        nextBlockReportTime = monotonicNow();
++      }
++      resetBlockReportTime = true; // reset future BRs for randomness
++      return nextBlockReportTime;
++    }
++
++    /**
++     * Schedule the next block report after the block report interval. If the
++     * current block report was delayed then the next block report is sent per
++     * the original schedule.
++     * Numerical overflow is possible here.
++     */
++    void scheduleNextBlockReport() {
++      // If we have sent the first set of block reports, then wait a random
++      // time before we start the periodic block reports.
++      if (resetBlockReportTime) {
++        nextBlockReportTime = monotonicNow() +
++            DFSUtil.getRandom().nextInt((int)(blockReportIntervalMs));
++        resetBlockReportTime = false;
++      } else {
++        /* say the last block report was at 8:20:14. The current report
++         * should have started around 9:20:14 (default 1 hour interval).
++         * If current time is :
++         *   1) normal like 9:20:18, next report should be at 10:20:14
++         *   2) unexpected like 11:35:43, next report should be at 12:20:14
++         */
++        nextBlockReportTime +=
++              (((monotonicNow() - nextBlockReportTime + blockReportIntervalMs) /
++                  blockReportIntervalMs)) * blockReportIntervalMs;
++      }
++    }
++
++    long getHeartbeatWaitTime() {
++      return nextHeartbeatTime - monotonicNow();
++    }
++
++    /**
++     * Wrapped for testing.
++     * @return
++     */
++    @VisibleForTesting
++    public long monotonicNow() {
++      return Time.monotonicNow();
++    }
++  }
+ }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestBpServiceActorScheduler.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestBpServiceActorScheduler.java
+new file mode 100644
+index 0000000..0d7484c
+--- /dev/null
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestBpServiceActorScheduler.java
+@@ -0,0 +1,163 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ * <p/>
++ * http://www.apache.org/licenses/LICENSE-2.0
++ * <p/>
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package org.apache.hadoop.hdfs.server.datanode;
++
++import org.apache.commons.logging.Log;
++import org.apache.commons.logging.LogFactory;
++import org.junit.Rule;
++import org.junit.Test;
++import org.junit.rules.Timeout;
++
++import static java.lang.Math.abs;
++import static org.hamcrest.core.Is.is;
++import static org.junit.Assert.assertFalse;
++import static org.junit.Assert.assertThat;
++import static org.junit.Assert.assertTrue;
++import static org.mockito.Mockito.doReturn;
++import static org.mockito.Mockito.spy;
++import org.apache.hadoop.hdfs.server.datanode.BPServiceActor.Scheduler;
++
++import java.util.Arrays;
++import java.util.List;
++import java.util.Random;
++
++
++/**
++ * Verify the block report and heartbeat scheduling logic of BPServiceActor
++ * using a few different values .
++ */
++public class TestBpServiceActorScheduler {
++  protected static final Log LOG = LogFactory.getLog(TestBpServiceActorScheduler.class);
++
++  @Rule
++  public Timeout timeout = new Timeout(300000);
++
++  private static final long HEARTBEAT_INTERVAL_MS = 5000;      // 5 seconds
++  private static final long BLOCK_REPORT_INTERVAL_MS = 10000;  // 10 seconds
++  private final Random random = new Random(System.nanoTime());
++
++  @Test
++  public void testInit() {
++    for (final long now : getTimestamps()) {
++      Scheduler scheduler = makeMockScheduler(now);
++      assertTrue(scheduler.isHeartbeatDue(now));
++      assertTrue(scheduler.isBlockReportDue());
++    }
++  }
++
++  @Test
++  public void testScheduleBlockReportImmediate() {
++    for (final long now : getTimestamps()) {
++      Scheduler scheduler = makeMockScheduler(now);
++      scheduler.scheduleBlockReport(0);
++      assertTrue(scheduler.resetBlockReportTime);
++      assertThat(scheduler.nextBlockReportTime, is(now));
++    }
++  }
++
++  @Test
++  public void testScheduleBlockReportDelayed() {
++    for (final long now : getTimestamps()) {
++      Scheduler scheduler = makeMockScheduler(now);
++      final long delayMs = 10;
++      scheduler.scheduleBlockReport(delayMs);
++      assertTrue(scheduler.resetBlockReportTime);
++      assertTrue(scheduler.nextBlockReportTime - now >= 0);
++      assertTrue(scheduler.nextBlockReportTime - (now + delayMs) < 0);
++    }
++  }
++
++  /**
++   * If resetBlockReportTime is true then the next block report must be scheduled
++   * in the range [now, now + BLOCK_REPORT_INTERVAL_SEC).
++   */
++  @Test
++  public void testScheduleNextBlockReport() {
++    for (final long now : getTimestamps()) {
++      Scheduler scheduler = makeMockScheduler(now);
++      assertTrue(scheduler.resetBlockReportTime);
++      scheduler.scheduleNextBlockReport();
++      assertTrue(scheduler.nextBlockReportTime - (now + BLOCK_REPORT_INTERVAL_MS) < 0);
++    }
++  }
++
++  /**
++   * If resetBlockReportTime is false then the next block report must be scheduled
++   * exactly at (now + BLOCK_REPORT_INTERVAL_SEC).
++   */
++  @Test
++  public void testScheduleNextBlockReport2() {
++    for (final long now : getTimestamps()) {
++      Scheduler scheduler = makeMockScheduler(now);
++      scheduler.resetBlockReportTime = false;
++      scheduler.scheduleNextBlockReport();
++      assertThat(scheduler.nextBlockReportTime, is(now + BLOCK_REPORT_INTERVAL_MS));
++    }
++  }
++
++  /**
++   * Tests the case when a block report was delayed past its scheduled time.
++   * In that case the next block report should not be delayed for a full interval.
++   */
++  @Test
++  public void testScheduleNextBlockReport3() {
++    for (final long now : getTimestamps()) {
++      Scheduler scheduler = makeMockScheduler(now);
++      scheduler.resetBlockReportTime = false;
++
++      // Make it look like the block report was scheduled to be sent between 1-3
++      // intervals ago but sent just now.
++      final long blockReportDelay =
++          BLOCK_REPORT_INTERVAL_MS + random.nextInt(2 * (int) BLOCK_REPORT_INTERVAL_MS);
++      final long origBlockReportTime = now - blockReportDelay;
++      scheduler.nextBlockReportTime = origBlockReportTime;
++      scheduler.scheduleNextBlockReport();
++      assertTrue(scheduler.nextBlockReportTime - now < BLOCK_REPORT_INTERVAL_MS);
++      assertTrue(((scheduler.nextBlockReportTime - origBlockReportTime) % BLOCK_REPORT_INTERVAL_MS) == 0);
++    }
++  }
++
++  @Test
++  public void testScheduleHeartbeat() {
++    for (final long now : getTimestamps()) {
++      Scheduler scheduler = makeMockScheduler(now);
++      scheduler.scheduleNextHeartbeat();
++      assertFalse(scheduler.isHeartbeatDue(now));
++      scheduler.scheduleHeartbeat();
++      assertTrue(scheduler.isHeartbeatDue(now));
++    }
++  }
++
++  private Scheduler makeMockScheduler(long now) {
++    LOG.info("Using now = " + now);
++    Scheduler mockScheduler = spy(new Scheduler(HEARTBEAT_INTERVAL_MS, BLOCK_REPORT_INTERVAL_MS));
++    doReturn(now).when(mockScheduler).monotonicNow();
++    mockScheduler.nextBlockReportTime = now;
++    mockScheduler.nextHeartbeatTime = now;
++    return mockScheduler;
++  }
++
++  List<Long> getTimestamps() {
++    return Arrays.asList(
++        0L, Long.MIN_VALUE, Long.MAX_VALUE, // test boundaries
++        Long.MAX_VALUE - 1,                 // test integer overflow
++        abs(random.nextLong()),             // positive random
++        -abs(random.nextLong()));           // negative random
++  }
++}
+-- 
+1.7.9.5
+

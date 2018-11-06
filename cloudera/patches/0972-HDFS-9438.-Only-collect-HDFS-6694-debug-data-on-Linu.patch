@@ -1,0 +1,83 @@
+From 69a6f802d53e54e650d5529ca4c681e2204eb852 Mon Sep 17 00:00:00 2001
+From: John Zhuge <jzhuge@cloudera.com>
+Date: Mon, 23 Nov 2015 14:11:09 -0800
+Subject: [PATCH 0972/1023] HDFS-9438. Only collect HDFS-6694 debug data on
+ Linux, Mac, and Solaris.
+
+The shell commands used to collect HDFS-6694 debug data are only valid on
+Linux, Mac, and Solaris, thus we should skip any unsupported OS. Run
+"ifconfig" with option "-a" in order to work on Solaris. Remove "whoami".
+
+Change-Id: Idcd0b33b2f2e7e6fb06a3c39abe4e5fea923ffa3
+(cherry picked from commit 8a0ef0f041c99fa1e4957a9f42df3abf6134c004)
+(cherry picked from commit 6728b11fbc80eda76329665c974269af49391a5d)
+---
+ .../server/namenode/ha/TestPipelinesFailover.java  |   45 ++++++++++----------
+ 1 file changed, 23 insertions(+), 22 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/ha/TestPipelinesFailover.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/ha/TestPipelinesFailover.java
+index 218a0d5..7616d7f 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/ha/TestPipelinesFailover.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/ha/TestPipelinesFailover.java
+@@ -59,6 +59,7 @@
+ import org.apache.hadoop.test.GenericTestUtils.DelayAnswer;
+ import org.apache.hadoop.test.MultithreadedTestUtil.RepeatingTestThread;
+ import org.apache.hadoop.test.MultithreadedTestUtil.TestContext;
++import org.apache.hadoop.util.Shell;
+ import org.apache.hadoop.util.Shell.ShellCommandExecutor;
+ import org.apache.log4j.Level;
+ import org.apache.log4j.Logger;
+@@ -424,28 +425,28 @@ public void testPipelineRecoveryStress() throws Exception {
+     // The following section of code is to help debug HDFS-6694 about
+     // this test that fails from time to time due to "too many open files".
+     //
+-    String[] scmd = new String[] {"/bin/sh", "-c", "ulimit -a"};
+-    ShellCommandExecutor sce = new ShellCommandExecutor(scmd);
+-    sce.execute();
+-
+-    System.out.println("HDFS-6694 Debug Data BEGIN===");
+-    System.out.println("'ulimit -a' output:\n" + sce.getOutput());
+-
+-    scmd = new String[] {"hostname"};
+-    sce = new ShellCommandExecutor(scmd);
+-    sce.execute();
+-    System.out.println("'hostname' output:\n" + sce.getOutput());
+-
+-    scmd = new String[] {"ifconfig"};
+-    sce = new ShellCommandExecutor(scmd);
+-    sce.execute();
+-    System.out.println("'ifconfig' output:\n" + sce.getOutput());
+-
+-    scmd = new String[] {"whoami"};
+-    sce = new ShellCommandExecutor(scmd);
+-    sce.execute();
+-    System.out.println("'whoami' output:\n" + sce.getOutput());
+-    System.out.println("===HDFS-6694 Debug Data END");
++
++    // Only collect debug data on these OSes.
++    if (Shell.LINUX || Shell.SOLARIS || Shell.MAC) {
++      System.out.println("HDFS-6694 Debug Data BEGIN===");
++
++      String[] scmd = new String[] {"/bin/sh", "-c", "ulimit -a"};
++      ShellCommandExecutor sce = new ShellCommandExecutor(scmd);
++      sce.execute();
++      System.out.println("'ulimit -a' output:\n" + sce.getOutput());
++
++      scmd = new String[] {"hostname"};
++      sce = new ShellCommandExecutor(scmd);
++      sce.execute();
++      System.out.println("'hostname' output:\n" + sce.getOutput());
++
++      scmd = new String[] {"ifconfig", "-a"};
++      sce = new ShellCommandExecutor(scmd);
++      sce.execute();
++      System.out.println("'ifconfig' output:\n" + sce.getOutput());
++
++      System.out.println("===HDFS-6694 Debug Data END");
++    }
+ 
+     HAStressTestHarness harness = new HAStressTestHarness();
+     // Disable permissions so that another user can recover the lease.
+-- 
+1.7.9.5
+

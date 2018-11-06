@@ -1,0 +1,85 @@
+From b20067d85bbab3912da06fe351a82eb5cca35de6 Mon Sep 17 00:00:00 2001
+From: Haohui Mai <wheat9@apache.org>
+Date: Fri, 6 Mar 2015 14:26:23 -0800
+Subject: [PATCH 0752/1023] HDFS-7818. OffsetParam should return the default
+ value instead of throwing NPE when the value is
+ unspecified. Contributed by Eric Payne.
+
+(cherry picked from commit c79710302ee51e1a9ee17dadb161c69bb3aba5c9)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt
+
+Change-Id: I535ed9edca517fbb53dcf1c7aebe7ec689bc844b
+---
+ .../datanode/web/webhdfs/ParameterParser.java      |    2 +-
+ .../hadoop/hdfs/web/resources/OffsetParam.java     |    5 +++++
+ .../datanode/web/webhdfs/TestParameterParser.java  |   19 +++++++++++++++++++
+ 3 files changed, 25 insertions(+), 1 deletion(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/web/webhdfs/ParameterParser.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/web/webhdfs/ParameterParser.java
+index 5749504..2baafe8 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/web/webhdfs/ParameterParser.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/web/webhdfs/ParameterParser.java
+@@ -62,7 +62,7 @@ String op() {
+   }
+ 
+   long offset() {
+-    return new OffsetParam(param(OffsetParam.NAME)).getValue();
++    return new OffsetParam(param(OffsetParam.NAME)).getOffset();
+   }
+ 
+   String namenodeId() {
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/web/resources/OffsetParam.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/web/resources/OffsetParam.java
+index 6973787..6d88703 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/web/resources/OffsetParam.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/web/resources/OffsetParam.java
+@@ -46,4 +46,9 @@ public OffsetParam(final String str) {
+   public String getName() {
+     return NAME;
+   }
++
++  public Long getOffset() {
++    Long offset = getValue();
++    return (offset == null) ? Long.valueOf(0) : offset;
++  }
+ }
+\ No newline at end of file
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/web/webhdfs/TestParameterParser.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/web/webhdfs/TestParameterParser.java
+index 6a6c5d0..8aee1d8 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/web/webhdfs/TestParameterParser.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/web/webhdfs/TestParameterParser.java
+@@ -23,6 +23,7 @@
+ import org.apache.hadoop.hdfs.security.token.delegation.DelegationTokenIdentifier;
+ import org.apache.hadoop.hdfs.web.resources.DelegationParam;
+ import org.apache.hadoop.hdfs.web.resources.NamenodeAddressParam;
++import org.apache.hadoop.hdfs.web.resources.OffsetParam;
+ import org.apache.hadoop.security.token.Token;
+ import org.junit.Assert;
+ import org.junit.Test;
+@@ -65,4 +66,22 @@ public void testDecodePath() {
+     ParameterParser testParser = new ParameterParser(decoder, conf);
+     Assert.assertEquals(EXPECTED_PATH, testParser.path());
+   }
++
++  @Test
++  public void testOffset() throws IOException {
++    final long X = 42;
++
++    long offset = new OffsetParam(Long.toString(X)).getOffset();
++    Assert.assertEquals("OffsetParam: ", X, offset);
++
++    offset = new OffsetParam((String) null).getOffset();
++    Assert.assertEquals("OffsetParam with null should have defaulted to 0", 0, offset);
++
++    try {
++      offset = new OffsetParam("abc").getValue();
++      Assert.fail("OffsetParam with nondigit value should have thrown IllegalArgumentException");
++    } catch (IllegalArgumentException iae) {
++      // Ignore
++    }
++  }
+ }
+-- 
+1.7.9.5
+

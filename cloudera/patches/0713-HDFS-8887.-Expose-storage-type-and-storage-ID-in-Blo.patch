@@ -1,0 +1,293 @@
+From cd9619a35721d9ec72101d618befc7c38d27ae84 Mon Sep 17 00:00:00 2001
+From: Andrew Wang <wang@apache.org>
+Date: Tue, 11 Aug 2015 23:25:33 -0700
+Subject: [PATCH 0713/1023] HDFS-8887. Expose storage type and storage ID in
+ BlockLocation.
+
+Note that we are missing a major refactor, HDFS-7806, which means
+this commit only exposes storage IDs and not types.
+
+Also missing refactor HDFS-7758 requiring a test change.
+
+(cherry picked from commit 1ea1a8334ea01814121490a5bfd2a0205c66d6e4)
+(cherry picked from commit d53296281a228fa00edd8037b05b1df514bd0ace)
+---
+ .../java/org/apache/hadoop/fs/BlockLocation.java   |   31 +++++++++++-
+ .../org/apache/hadoop/fs/TestBlockLocation.java    |   17 +++++--
+ .../org/apache/hadoop/fs/BlockStorageLocation.java |    1 +
+ .../main/java/org/apache/hadoop/hdfs/DFSUtil.java  |    1 +
+ .../apache/hadoop/hdfs/DistributedFileSystem.java  |    6 +++
+ .../hadoop/hdfs/TestDistributedFileSystem.java     |   53 +++++++++++++++++++-
+ 6 files changed, 103 insertions(+), 6 deletions(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/BlockLocation.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/BlockLocation.java
+index 286d851..d697649 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/BlockLocation.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/BlockLocation.java
+@@ -34,6 +34,7 @@
+   private String[] cachedHosts; // Datanode hostnames with a cached replica
+   private String[] names; // Datanode IP:xferPort for accessing the block
+   private String[] topologyPaths; // Full path name in network topology
++  private String[] storageIds; // Storage ID of each replica
+   private long offset;  // Offset of the block in the file
+   private long length;
+   private boolean corrupt;
+@@ -58,6 +59,7 @@ public BlockLocation(BlockLocation that) {
+     this.offset = that.offset;
+     this.length = that.length;
+     this.corrupt = that.corrupt;
++    this.storageIds = that.storageIds;
+   }
+ 
+   /**
+@@ -95,6 +97,13 @@ public BlockLocation(String[] names, String[] hosts, String[] topologyPaths,
+ 
+   public BlockLocation(String[] names, String[] hosts, String[] cachedHosts,
+       String[] topologyPaths, long offset, long length, boolean corrupt) {
++    this(names, hosts, cachedHosts, topologyPaths, null, offset, length,
++        corrupt);
++  }
++
++  public BlockLocation(String[] names, String[] hosts, String[] cachedHosts,
++      String[] topologyPaths, String[] storageIds,
++      long offset, long length, boolean corrupt) {
+     if (names == null) {
+       this.names = EMPTY_STR_ARRAY;
+     } else {
+@@ -115,6 +124,11 @@ public BlockLocation(String[] names, String[] hosts, String[] cachedHosts,
+     } else {
+       this.topologyPaths = topologyPaths;
+     }
++    if (storageIds == null) {
++      this.storageIds = EMPTY_STR_ARRAY;
++    } else {
++      this.storageIds = storageIds;
++    }
+     this.offset = offset;
+     this.length = length;
+     this.corrupt = corrupt;
+@@ -148,7 +162,14 @@ public BlockLocation(String[] names, String[] hosts, String[] cachedHosts,
+   public String[] getTopologyPaths() throws IOException {
+     return topologyPaths;
+   }
+-  
++
++  /**
++   * Get the storageID of each replica of the block.
++   */
++  public String[] getStorageIds() {
++    return storageIds;
++  }
++
+   /**
+    * Get the start offset of file associated with this block
+    */
+@@ -235,6 +256,14 @@ public void setTopologyPaths(String[] topologyPaths) throws IOException {
+     }
+   }
+ 
++  public void setStorageIds(String[] storageIds) {
++    if (storageIds == null) {
++      this.storageIds = EMPTY_STR_ARRAY;
++    } else {
++      this.storageIds = storageIds;
++    }
++  }
++
+   @Override
+   public String toString() {
+     StringBuilder result = new StringBuilder();
+diff --git a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/TestBlockLocation.java b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/TestBlockLocation.java
+index 3cb608a..18ae5aa 100644
+--- a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/TestBlockLocation.java
++++ b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/TestBlockLocation.java
+@@ -36,22 +36,27 @@ private static void checkBlockLocation(final BlockLocation loc,
+       final long offset, final long length, final boolean corrupt)
+       throws Exception {
+     checkBlockLocation(loc, EMPTY_STR_ARRAY, EMPTY_STR_ARRAY, EMPTY_STR_ARRAY,
+-        EMPTY_STR_ARRAY, offset, length, corrupt);
++        EMPTY_STR_ARRAY, EMPTY_STR_ARRAY, offset,
++        length, corrupt);
+   }
+ 
+   private static void checkBlockLocation(final BlockLocation loc,
+       String[] names, String[] hosts, String[] cachedHosts,
+-      String[] topologyPaths, final long offset, final long length,
++      String[] topologyPaths,
++      String[] storageIds,
++      final long offset, final long length,
+       final boolean corrupt) throws Exception {
+     assertNotNull(loc.getHosts());
+     assertNotNull(loc.getCachedHosts());
+     assertNotNull(loc.getNames());
+     assertNotNull(loc.getTopologyPaths());
++    assertNotNull(loc.getStorageIds());
+ 
+     assertArrayEquals(hosts, loc.getHosts());
+     assertArrayEquals(cachedHosts, loc.getCachedHosts());
+     assertArrayEquals(names, loc.getNames());
+     assertArrayEquals(topologyPaths, loc.getTopologyPaths());
++    assertArrayEquals(storageIds, loc.getStorageIds());
+ 
+     assertEquals(offset, loc.getOffset());
+     assertEquals(length, loc.getLength());
+@@ -75,6 +80,8 @@ public void testBlockLocationConstructors() throws Exception {
+     checkBlockLocation(loc, 1, 2, true);
+     loc = new BlockLocation(null, null, null, null, 1, 2, true);
+     checkBlockLocation(loc, 1, 2, true);
++    loc = new BlockLocation(null, null, null, null, null, 1, 2, true);
++    checkBlockLocation(loc, 1, 2, true);
+   }
+ 
+   /**
+@@ -95,14 +102,16 @@ public void testBlockLocationSetters() throws Exception {
+     String[] hosts = new String[] { "host" };
+     String[] cachedHosts = new String[] { "cachedHost" };
+     String[] topologyPaths = new String[] { "path" };
++    String[] storageIds = new String[] { "storageId" };
+     loc.setNames(names);
+     loc.setHosts(hosts);
+     loc.setCachedHosts(cachedHosts);
+     loc.setTopologyPaths(topologyPaths);
++    loc.setStorageIds(storageIds);
+     loc.setOffset(1);
+     loc.setLength(2);
+     loc.setCorrupt(true);
+-    checkBlockLocation(loc, names, hosts, cachedHosts, topologyPaths, 1, 2,
+-        true);
++    checkBlockLocation(loc, names, hosts, cachedHosts, topologyPaths,
++        storageIds, 1, 2, true);
+   }
+ }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/fs/BlockStorageLocation.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/fs/BlockStorageLocation.java
+index abf3e38..2200994 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/fs/BlockStorageLocation.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/fs/BlockStorageLocation.java
+@@ -28,6 +28,7 @@
+  */
+ @InterfaceStability.Unstable
+ @InterfaceAudience.Public
++@Deprecated
+ public class BlockStorageLocation extends BlockLocation {
+ 
+   private final VolumeId[] volumeIds;
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSUtil.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSUtil.java
+index 6c7ad24..bcdeaf1 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSUtil.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSUtil.java
+@@ -521,6 +521,7 @@ public static String path2String(final Object path) {
+       }
+       blkLocations[idx] = new BlockLocation(xferAddrs, hosts, cachedHosts,
+                                             racks,
++                                            blk.getStorageIDs(),
+                                             blk.getStartOffset(),
+                                             blk.getBlockSize(),
+                                             blk.isCorrupt());
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DistributedFileSystem.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DistributedFileSystem.java
+index bc7232e..1ede4b2 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DistributedFileSystem.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DistributedFileSystem.java
+@@ -228,6 +228,11 @@ private String getPathName(Path file) {
+   }
+ 
+   /**
++   * This API has been deprecated since the NameNode now tracks datanode
++   * storages separately. Storage IDs can be gotten from {@link
++   * BlockLocation#getStorageIds()}, which are functionally equivalent to
++   * the volume IDs returned here (although a String rather than a byte[]).
++   *
+    * Used to query storage location information for a list of blocks. This list
+    * of blocks is normally constructed via a series of calls to
+    * {@link DistributedFileSystem#getFileBlockLocations(Path, long, long)} to
+@@ -251,6 +256,7 @@ private String getPathName(Path file) {
+    *         information for each replica of each block.
+    */
+   @InterfaceStability.Unstable
++  @Deprecated
+   public BlockStorageLocation[] getFileBlockStorageLocations(
+       List<BlockLocation> blocks) throws IOException, 
+       UnsupportedOperationException, InvalidBlockTokenException {
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDistributedFileSystem.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDistributedFileSystem.java
+index 7c0a7d9..3f2193a 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDistributedFileSystem.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDistributedFileSystem.java
+@@ -39,8 +39,10 @@
+ import java.util.ArrayList;
+ import java.util.Arrays;
+ import java.util.EnumSet;
++import java.util.HashSet;
+ import java.util.List;
+ import java.util.Random;
++import java.util.Set;
+ 
+ import org.apache.commons.lang.ArrayUtils;
+ import org.apache.commons.logging.impl.Log4JLogger;
+@@ -64,7 +66,10 @@
+ import org.apache.hadoop.fs.permission.FsPermission;
+ import org.apache.hadoop.hdfs.MiniDFSCluster.DataNodeProperties;
+ import org.apache.hadoop.hdfs.net.Peer;
++import org.apache.hadoop.hdfs.server.datanode.DataNode;
+ import org.apache.hadoop.hdfs.server.datanode.DataNodeFaultInjector;
++import org.apache.hadoop.hdfs.server.datanode.fsdataset.FsDatasetSpi;
++import org.apache.hadoop.hdfs.server.datanode.fsdataset.FsVolumeSpi;
+ import org.apache.hadoop.hdfs.server.namenode.ha.HATestUtil;
+ import org.apache.hadoop.hdfs.web.HftpFileSystem;
+ import org.apache.hadoop.hdfs.web.WebHdfsFileSystem;
+@@ -688,7 +693,53 @@ public void testAllWithNoXmlDefaults() throws Exception {
+      noXmlDefaults = false; 
+     }
+   }
+-  
++
++  @Test(timeout=120000)
++  public void testLocatedFileStatusStorageIdsTypes() throws Exception {
++    final Configuration conf = getTestConfiguration();
++    final MiniDFSCluster cluster = new MiniDFSCluster.Builder(conf)
++        .numDataNodes(3).build();
++    try {
++      final DistributedFileSystem fs = cluster.getFileSystem();
++      final Path testFile = new Path("/testListLocatedStatus");
++      final int blockSize = 4096;
++      final int numBlocks = 10;
++      // Create a test file
++      final int repl = 2;
++      DFSTestUtil.createFile(fs, testFile, blockSize, numBlocks * blockSize,
++          blockSize, (short) repl, 0xADDED);
++      // Get the listing
++      RemoteIterator<LocatedFileStatus> it = fs.listLocatedStatus(testFile);
++      assertTrue("Expected file to be present", it.hasNext());
++      LocatedFileStatus stat = it.next();
++      BlockLocation[] locs = stat.getBlockLocations();
++      assertEquals("Unexpected number of locations", numBlocks, locs.length);
++
++      Set<String> dnStorageIds = new HashSet<>();
++      for (DataNode d : cluster.getDataNodes()) {
++        for (FsVolumeSpi vol : d.getFSDataset().getVolumes()) {
++          dnStorageIds.add(vol.getStorageID());
++        }
++      }
++
++      for (BlockLocation loc : locs) {
++        String[] ids = loc.getStorageIds();
++        // Run it through a set to deduplicate, since there should be no dupes
++        Set<String> storageIds = new HashSet<>();
++        for (String id: ids) {
++          storageIds.add(id);
++        }
++        assertEquals("Unexpected num storage ids", repl, storageIds.size());
++        // Make sure these are all valid storage IDs
++        assertTrue("Unknown storage IDs found!", dnStorageIds.containsAll
++            (storageIds));
++      }
++    } finally {
++      if (cluster != null) {
++        cluster.shutdown();
++      }
++    }
++  }
+ 
+   /**
+    * Tests the normal path of batching up BlockLocation[]s to be passed to a
+-- 
+1.7.9.5
+

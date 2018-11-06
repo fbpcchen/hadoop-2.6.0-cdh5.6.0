@@ -1,0 +1,30 @@
+From 9b5ffb2c56fcdb7da4997b70494eab6747f13a3b Mon Sep 17 00:00:00 2001
+From: Wangda Tan <wangda@apache.org>
+Date: Thu, 30 Apr 2015 11:03:13 -0700
+Subject: [PATCH 0932/1023] YARN-3564. Fix
+ TestContainerAllocation.testAMContainerAllocationWhenDNSUnavailable
+ fails randomly. (Jian He via wangda)
+
+(cherry picked from commit e2e8f771183df798e926abc97116316a05b19c9a)
+
+Change-Id: I041d4a9b4fa89f0f88b783205644953ef3e622c3
+(cherry picked from commit baed9d7699772a30363baba869a2ddd7e3811a3c)
+---
+ .../capacity/TestContainerAllocation.java          |    1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/capacity/TestContainerAllocation.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/capacity/TestContainerAllocation.java
+index 829aa93..c65d759 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/capacity/TestContainerAllocation.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/capacity/TestContainerAllocation.java
+@@ -318,7 +318,6 @@ protected RMSecretManagerService createRMSecretManagerService() {
+     }
+ 
+     SecurityUtilTestHelper.setTokenServiceUseIp(false);
+-    rm1.waitForState(attempt.getAppAttemptId(), RMAppAttemptState.ALLOCATED);
+     MockRM.launchAndRegisterAM(app1, rm1, nm1);
+   }
+   
+-- 
+1.7.9.5
+

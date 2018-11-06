@@ -1,0 +1,82 @@
+From 5a2518c78de90b1e3cda5000c14a914a6b2da9ec Mon Sep 17 00:00:00 2001
+From: Colin Patrick Mccabe <cmccabe@cloudera.com>
+Date: Fri, 3 Apr 2015 16:34:23 -0700
+Subject: [PATCH 0787/1023] HDFS-8051. FsVolumeList#addVolume should release
+ volume reference if not put it into BlockScanner.
+ (Lei (Eddy) Xu via Colin P. McCabe)
+
+(cherry picked from commit b26ba22a9023ac2ae058abf509db67aa8ef64b41)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt
+	hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsVolumeList.java
+
+Change-Id: Idca9aece59b2c8d6b96d5f6e68ba3a8b5826e3ad
+(cherry picked from commit e2b2286d44610ddadd462a6eb0caf2a657ce5c78)
+(cherry picked from commit 1c1c97a51850f770d2ae367c2c86d7c100fcf390)
+---
+ .../datanode/fsdataset/impl/FsVolumeList.java      |    5 +++++
+ .../datanode/fsdataset/impl/TestFsVolumeList.java  |   19 +++++++++++++++++++
+ 2 files changed, 24 insertions(+)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsVolumeList.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsVolumeList.java
+index 681265c..996edd2 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsVolumeList.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsVolumeList.java
+@@ -40,6 +40,7 @@
+ import org.apache.hadoop.hdfs.server.datanode.fsdataset.FsVolumeSpi;
+ import org.apache.hadoop.hdfs.server.datanode.fsdataset.VolumeChoosingPolicy;
+ import org.apache.hadoop.hdfs.server.datanode.BlockScanner;
++import org.apache.hadoop.io.IOUtils;
+ import org.apache.hadoop.util.DiskChecker.DiskErrorException;
+ import org.apache.hadoop.util.Time;
+ 
+@@ -291,6 +292,10 @@ void addVolume(FsVolumeReference ref) {
+     }
+     if (blockScanner != null) {
+       blockScanner.addVolumeScanner(ref);
++    } else {
++      // If the volume is not put into a volume scanner, it does not need to
++      // hold the reference.
++      IOUtils.cleanup(FsDatasetImpl.LOG, ref);
+     }
+     // If the volume is used to replace a failed volume, it needs to reset the
+     // volume failure info for this volume.
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/TestFsVolumeList.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/TestFsVolumeList.java
+index f87c404..270d6e4 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/TestFsVolumeList.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/TestFsVolumeList.java
+@@ -35,6 +35,7 @@
+ import java.util.List;
+ 
+ import static org.junit.Assert.assertNotEquals;
++import static org.junit.Assert.fail;
+ import static org.mockito.Mockito.mock;
+ 
+ public class TestFsVolumeList {
+@@ -101,4 +102,22 @@ public void testCheckDirsWithClosedVolume() throws IOException {
+     // checkDirs() should ignore the 2nd volume since it is closed.
+     volumeList.checkDirs();
+   }
++
++  @Test
++  public void testReleaseVolumeRefIfNoBlockScanner() throws IOException {
++    FsVolumeList volumeList = new FsVolumeList(
++        Collections.<VolumeFailureInfo>emptyList(), null, blockChooser);
++    File volDir = new File(baseDir, "volume-0");
++    volDir.mkdirs();
++    FsVolumeImpl volume = new FsVolumeImpl(dataset, "storage-id", volDir,
++        conf, StorageType.DEFAULT);
++    FsVolumeReference ref = volume.obtainReference();
++    volumeList.addVolume(ref);
++    try {
++      ref.close();
++      fail("Should throw exception because the reference is closed in "
++          + "VolumeList#addVolume().");
++    } catch (IllegalStateException e) {
++    }
++  }
+ }
+-- 
+1.7.9.5
+

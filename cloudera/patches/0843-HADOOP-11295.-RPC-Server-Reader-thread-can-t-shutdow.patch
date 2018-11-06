@@ -1,0 +1,38 @@
+From ffd919f1c3ab3b8ee5cfdc0392fb5eda8f963a0a Mon Sep 17 00:00:00 2001
+From: Kihwal Lee <kihwal@apache.org>
+Date: Tue, 17 Feb 2015 17:14:58 -0600
+Subject: [PATCH 0843/1023] HADOOP-11295. RPC Server Reader thread can't
+ shutdown if RPCCallQueue is full. Contributed by
+ Ming Ma.
+
+  (cherry picked from commit 685af8a3d0504724fe588daf3722519fedc45b01)
+  (cherry picked from commit 6c01e586198a3c3ebaa7561778c124ae62553246)
+(cherry picked from commit 4ec7b6174df4db30eb0d7354cd5ad0f40ab874dd)
+
+Note: The changes in hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/ipc/TestRPC.java was somehow already backported at commit b24f1b8530ef57b57ea4a41595dc963ba5125ea9
+      This backport only brings in the fix in Server.java.
+      The fix was good but the unit test was flawed, which is why the already backported TestRPC passes. Suggested unit test change on original JIRA HADOOP-11295.
+
+Change-Id: Iaaf3c9fb4df18767c854521d6bf97f172ec3ecde
+(cherry picked from commit 76394a7a5b140d9a9c1e8bfe7f2e681dc3b1a20c)
+---
+ .../main/java/org/apache/hadoop/ipc/Server.java    |    3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/Server.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/Server.java
+index 82a5b70..ffa3cf5 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/Server.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/Server.java
+@@ -673,7 +673,8 @@ void shutdown() {
+         assert !running;
+         readSelector.wakeup();
+         try {
+-          join();
++          super.interrupt();
++          super.join();
+         } catch (InterruptedException ie) {
+           Thread.currentThread().interrupt();
+         }
+-- 
+1.7.9.5
+

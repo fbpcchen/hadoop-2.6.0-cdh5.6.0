@@ -1,0 +1,27 @@
+From 0c5a21b4196bd3fb12e63bf6726e295c7a853d4f Mon Sep 17 00:00:00 2001
+From: Harsh J <harsh@cloudera.com>
+Date: Tue, 17 Mar 2015 14:01:15 +0530
+Subject: [PATCH 0718/1023] MAPREDUCE-4653. TestRandomAlgorithm has an unused
+ import statement. Contributed by Amir Sanjar.
+
+(cherry picked from commit e5370477c2d00745e695507ecfdf86de59c5f5b9)
+---
+ .../hadoop/mapred/gridmix/TestRandomAlgorithm.java |    2 --
+ 1 file changed, 2 deletions(-)
+
+diff --git a/hadoop-tools/hadoop-gridmix/src/test/java/org/apache/hadoop/mapred/gridmix/TestRandomAlgorithm.java b/hadoop-tools/hadoop-gridmix/src/test/java/org/apache/hadoop/mapred/gridmix/TestRandomAlgorithm.java
+index cd55483..4e85ce2 100644
+--- a/hadoop-tools/hadoop-gridmix/src/test/java/org/apache/hadoop/mapred/gridmix/TestRandomAlgorithm.java
++++ b/hadoop-tools/hadoop-gridmix/src/test/java/org/apache/hadoop/mapred/gridmix/TestRandomAlgorithm.java
+@@ -30,8 +30,6 @@
+ 
+ import org.junit.Test;
+ 
+-import com.sun.tools.javac.code.Attribute.Array;
+-
+ public class TestRandomAlgorithm {
+   private static final int[][] parameters = new int[][] {
+     {5, 1, 1}, 
+-- 
+1.7.9.5
+

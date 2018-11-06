@@ -1,0 +1,210 @@
+From aef0847e9203b82502ff82a8e239c0a2258706dc Mon Sep 17 00:00:00 2001
+From: Robert Kanter <rkanter@cloudera.com>
+Date: Tue, 20 Oct 2015 17:34:34 -0700
+Subject: [PATCH 0912/1023] MAPREDUCE-6495. Docs for archive-logs tool
+ (rkanter)
+
+(cherry picked from commit 0c4af0f99811a7138954391df3761aef9ff09155)
+(cherry picked from commit 492142097bc04ad9bd0abff2fc7176a9ad63fc73)
+
+Conflicts:
+	hadoop-mapreduce-project/CHANGES.txt
+	hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/site/markdown/MapredCommands.md
+	hadoop-project/src/site/site.xml
+
+Change-Id: I21393412890069f5e9e6b4d0aca5857b164465d7
+(cherry picked from commit 1c280efbc0b78710fa9285c261fd3388b13193e9)
+---
+ .../src/site/apt/MapredCommands.apt.vm             |    6 ++
+ hadoop-project/src/site/site.xml                   |    4 +
+ .../org/apache/hadoop/tools/HadoopArchiveLogs.java |    4 +-
+ .../src/site/markdown/HadoopArchiveLogs.md         |   85 ++++++++++++++++++++
+ .../src/site/resources/css/site.css                |   30 +++++++
+ 5 files changed, 127 insertions(+), 2 deletions(-)
+ create mode 100644 hadoop-tools/hadoop-archive-logs/src/site/markdown/HadoopArchiveLogs.md
+ create mode 100644 hadoop-tools/hadoop-archive-logs/src/site/resources/css/site.css
+
+diff --git a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/site/apt/MapredCommands.apt.vm b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/site/apt/MapredCommands.apt.vm
+index 795eb34..8f8afff 100644
+--- a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/site/apt/MapredCommands.apt.vm
++++ b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/site/apt/MapredCommands.apt.vm
+@@ -177,6 +177,12 @@ MapReduce Commands Guide
+    Creates a hadoop archive. More information can be found at
+    {{{./HadoopArchives.html}Hadoop Archives Guide}}.
+ 
++** <<<archive-logs>>>
++
++   A tool to combine YARN aggregated logs into Hadoop archives to reduce the number
++   of files in HDFS. More information can be found at
++   {{{../../hadoop-archive-logs/HadoopArchiveLogs.html}Hadoop Archive Logs Guide}}.
++
+ * Administration Commands
+ 
+    Commands useful for administrators of a hadoop cluster.
+diff --git a/hadoop-project/src/site/site.xml b/hadoop-project/src/site/site.xml
+index 1b649fc..d042c90 100644
+--- a/hadoop-project/src/site/site.xml
++++ b/hadoop-project/src/site/site.xml
+@@ -140,6 +140,10 @@
+       <item name="Configuration" href="hadoop-auth/Configuration.html"/>
+       <item name="Building" href="hadoop-auth/BuildingIt.html"/>
+     </menu>
++
++    <menu name="Tools" inherit="top">
++      <item name="Hadoop Archive Logs" href="hadoop-archive-logs/HadoopArchiveLogs.html"/>
++    </menu>
+     
+     <menu name="Reference" inherit="top">
+       <item name="Release Notes" href="hadoop-project-dist/hadoop-common/releasenotes.html"/>
+diff --git a/hadoop-tools/hadoop-archive-logs/src/main/java/org/apache/hadoop/tools/HadoopArchiveLogs.java b/hadoop-tools/hadoop-archive-logs/src/main/java/org/apache/hadoop/tools/HadoopArchiveLogs.java
+index b633521..363e287 100644
+--- a/hadoop-tools/hadoop-archive-logs/src/main/java/org/apache/hadoop/tools/HadoopArchiveLogs.java
++++ b/hadoop-tools/hadoop-archive-logs/src/main/java/org/apache/hadoop/tools/HadoopArchiveLogs.java
+@@ -221,7 +221,7 @@ private void handleOpts(String[] args) throws ParseException {
+       CommandLine commandLine = parser.parse(opts, args);
+       if (commandLine.hasOption(HELP_OPTION)) {
+         HelpFormatter formatter = new HelpFormatter();
+-        formatter.printHelp("yarn archive-logs", opts);
++        formatter.printHelp("mapred archive-logs", opts);
+         System.exit(0);
+       }
+       if (commandLine.hasOption(MAX_ELIGIBLE_APPS_OPTION)) {
+@@ -254,7 +254,7 @@ private void handleOpts(String[] args) throws ParseException {
+       }
+     } catch (ParseException pe) {
+       HelpFormatter formatter = new HelpFormatter();
+-      formatter.printHelp("yarn archive-logs", opts);
++      formatter.printHelp("mapred archive-logs", opts);
+       throw pe;
+     }
+   }
+diff --git a/hadoop-tools/hadoop-archive-logs/src/site/markdown/HadoopArchiveLogs.md b/hadoop-tools/hadoop-archive-logs/src/site/markdown/HadoopArchiveLogs.md
+new file mode 100644
+index 0000000..92c27aa
+--- /dev/null
++++ b/hadoop-tools/hadoop-archive-logs/src/site/markdown/HadoopArchiveLogs.md
+@@ -0,0 +1,85 @@
++<!---
++  Licensed under the Apache License, Version 2.0 (the "License");
++  you may not use this file except in compliance with the License.
++  You may obtain a copy of the License at
++
++    http://www.apache.org/licenses/LICENSE-2.0
++
++  Unless required by applicable law or agreed to in writing, software
++  distributed under the License is distributed on an "AS IS" BASIS,
++  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++  See the License for the specific language governing permissions and
++  limitations under the License. See accompanying LICENSE file.
++-->
++
++Hadoop Archive Logs Guide
++=========================
++
++ - [Overview](#Overview)
++ - [How to Archive Logs](#How_to_Archive_Logs)
++
++Overview
++--------
++
++For clusters with a lot of Yarn aggregated logs, it can be helpful to combine
++them into hadoop archives in order to reduce the number of small files, and
++hence the stress on the NameNode.  This tool provides an easy way to do this.
++Aggregated logs in hadoop archives can still be read by the Job History Server
++and by the `yarn logs` command.
++
++For more on hadoop archives, see
++[Hadoop Archives Guide](../hadoop-mapreduce-client/hadoop-mapreduce-client-core/HadoopArchives.html).
++
++How to Archive Logs
++-------------------
++
++    usage: mapred archive-logs
++    -force                         Force recreating the working directory if
++                                   an existing one is found. This should
++                                   only be used if you know that another
++                                   instance is not currently running
++    -help                          Prints this message
++    -maxEligibleApps <n>           The maximum number of eligible apps to
++                                   process (default: -1 (all))
++    -maxTotalLogsSize <megabytes>  The maximum total logs size (in
++                                   megabytes) required to be eligible
++                                   (default: 1024)
++    -memory <megabytes>            The amount of memory (in megabytes) for
++                                   each container (default: 1024)
++    -minNumberLogFiles <n>         The minimum number of log files required
++                                   to be eligible (default: 20)
++    -verbose                       Print more details.
++
++The tool only supports running one instance on a cluster at a time in order
++to prevent conflicts. It does this by checking for the existance of a
++directory named ``archive-logs-work`` under
++``yarn.nodemanager.remote-app-log-dir`` in HDFS
++(default: ``/tmp/logs/archive-logs-work``). If for some reason that
++directory was not cleaned up properly, and the tool refuses to run, you can
++force it with the ``-force`` option.
++
++The ``-help`` option prints out the usage information.
++
++The tool works by performing the following procedure:
++
++ 1. Determine the list of eligible applications, based on the following
++    criteria:
++    - is not already archived
++    - its aggregation status has successfully completed
++    - has at least ``-minNumberLogFiles`` log files
++    - the sum of its log files size is less than ``-maxTotalLogsSize`` megabytes
++ 2. If there are are more than ``-maxEligibleApps`` applications found, the
++    newest applications are dropped. They can be processed next time.
++ 3. A shell script is generated based on the eligible applications
++ 4. The Distributed Shell program is run with the aformentioned script. It
++    will run with ``-maxEligibleApps`` containers, one to process each
++    application, and with ``-memory`` megabytes of memory. Each container runs
++    the ``hadoop archives`` command for a single application and replaces
++    its aggregated log files with the resulting archive.
++
++The ``-verbose`` option makes the tool print more details about what it's
++doing.
++
++The end result of running the tool is that the original aggregated log files for
++a processed application will be replaced by a hadoop archive containing all of
++those logs.
+diff --git a/hadoop-tools/hadoop-archive-logs/src/site/resources/css/site.css b/hadoop-tools/hadoop-archive-logs/src/site/resources/css/site.css
+new file mode 100644
+index 0000000..f830baa
+--- /dev/null
++++ b/hadoop-tools/hadoop-archive-logs/src/site/resources/css/site.css
+@@ -0,0 +1,30 @@
++/*
++* Licensed to the Apache Software Foundation (ASF) under one or more
++* contributor license agreements.  See the NOTICE file distributed with
++* this work for additional information regarding copyright ownership.
++* The ASF licenses this file to You under the Apache License, Version 2.0
++* (the "License"); you may not use this file except in compliance with
++* the License.  You may obtain a copy of the License at
++*
++*     http://www.apache.org/licenses/LICENSE-2.0
++*
++* Unless required by applicable law or agreed to in writing, software
++* distributed under the License is distributed on an "AS IS" BASIS,
++* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++* See the License for the specific language governing permissions and
++* limitations under the License.
++*/
++#banner {
++  height: 93px;
++  background: none;
++}
++
++#bannerLeft img {
++  margin-left: 30px;
++  margin-top: 10px;
++}
++
++#bannerRight img {
++  margin: 17px;
++}
++
+-- 
+1.7.9.5
+

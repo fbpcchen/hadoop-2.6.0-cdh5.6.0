@@ -1,0 +1,74 @@
+From 2e9fd23a682591b889b89e9cd80e0bcb69a44489 Mon Sep 17 00:00:00 2001
+From: Haohui Mai <wheat9@apache.org>
+Date: Tue, 17 Feb 2015 13:04:38 -0800
+Subject: [PATCH 0751/1023] HDFS-6662. WebHDFS cannot open a file if its path
+ contains "%". Contributed by Gerson Carlos.
+
+(cherry picked from commit 043e44bc36fc7f7c59406d3722b0a93607b6fa49)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt
+
+Change-Id: Ie5bcf3433504c55d42cdcfe50cca7b4f95d47ae4
+---
+ .../datanode/web/webhdfs/ParameterParser.java      |    2 +-
+ .../hadoop-hdfs/src/main/webapps/hdfs/explorer.js  |    7 +++++++
+ .../datanode/web/webhdfs/TestParameterParser.java  |   13 +++++++++++++
+ 3 files changed, 21 insertions(+), 1 deletion(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/web/webhdfs/ParameterParser.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/web/webhdfs/ParameterParser.java
+index e1930b0..5749504 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/web/webhdfs/ParameterParser.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/web/webhdfs/ParameterParser.java
+@@ -50,7 +50,7 @@
+   private final Map<String, List<String>> params;
+ 
+   ParameterParser(QueryStringDecoder decoder, Configuration conf) {
+-    this.path = decoder.path().substring(WEBHDFS_PREFIX_LENGTH);
++    this.path = QueryStringDecoder.decodeComponent(decoder.path().substring(WEBHDFS_PREFIX_LENGTH));
+     this.params = decoder.parameters();
+     this.conf = conf;
+   }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/webapps/hdfs/explorer.js b/hadoop-hdfs-project/hadoop-hdfs/src/main/webapps/hdfs/explorer.js
+index ca73506..87d47fa 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/webapps/hdfs/explorer.js
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/webapps/hdfs/explorer.js
+@@ -102,6 +102,13 @@
+       menus.change();
+     }
+ 
++    function encode_path(abs_path) {
++      abs_path = encodeURIComponent(abs_path);
++      var re = /%2F/g;
++      return abs_path.replace(re, '/');
++    }
++
++    abs_path = encode_path(abs_path);
+     var url = '/webhdfs/v1' + abs_path + '?op=GET_BLOCK_LOCATIONS';
+     $.get(url).done(function(data) {
+       var d = get_response(data, "LocatedBlocks");
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/web/webhdfs/TestParameterParser.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/web/webhdfs/TestParameterParser.java
+index 8b4235b..6a6c5d0 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/web/webhdfs/TestParameterParser.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/web/webhdfs/TestParameterParser.java
+@@ -52,4 +52,17 @@ public void testDeserializeHAToken() throws IOException {
+     final Token<DelegationTokenIdentifier> tok2 = testParser.delegationToken();
+     Assert.assertTrue(HAUtil.isTokenForLogicalUri(tok2));
+   }
++
++  @Test
++  public void testDecodePath() {
++    final String SCAPED_PATH = "hdfs-6662/test%25251%26%3Dtest?op=OPEN";
++    final String EXPECTED_PATH = "/hdfs-6662/test%251&=test";
++
++    Configuration conf = DFSTestUtil.newHAConfiguration(LOGICAL_NAME);
++    QueryStringDecoder decoder = new QueryStringDecoder(
++      WebHdfsHandler.WEBHDFS_PREFIX + "/"
++      + SCAPED_PATH);
++    ParameterParser testParser = new ParameterParser(decoder, conf);
++    Assert.assertEquals(EXPECTED_PATH, testParser.path());
++  }
+ }
+-- 
+1.7.9.5
+

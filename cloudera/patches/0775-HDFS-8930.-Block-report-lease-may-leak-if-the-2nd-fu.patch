@@ -1,0 +1,29 @@
+From 1d35c0c2d9a96b510367bc0315c362b4861d5c5b Mon Sep 17 00:00:00 2001
+From: Colin Patrick Mccabe <cmccabe@cloudera.com>
+Date: Mon, 24 Aug 2015 11:31:56 -0700
+Subject: [PATCH 0775/1023] HDFS-8930. Block report lease may leak if the 2nd
+ full block report comes when NN is still in
+ safemode (Colin P. McCabe via Jing Zhao)
+
+(cherry picked from commit b5ce87f84d9de0a5347ab38c0567a5a70d1fbfd7)
+(cherry picked from commit 87d0133703ccfaa68dddbc78f026276c6cb389c8)
+(cherry picked from commit 0634691806e9b402e7bcdfd0a616200b3384bef4)
+---
+ .../hdfs/server/blockmanagement/BlockManager.java  |    1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlockManager.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlockManager.java
+index 4ca1279..4f5281a 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlockManager.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlockManager.java
+@@ -1818,6 +1818,7 @@ public boolean processReport(final DatanodeID nodeID,
+         blockLog.info("BLOCK* processReport: "
+             + "discarded non-initial block report from {}"
+             + " because namenode still in startup phase", nodeID);
++        blockReportLeaseManager.removeLease(node);
+         return !node.hasStaleStorages();
+       }
+       if (context != null) {
+-- 
+1.7.9.5
+

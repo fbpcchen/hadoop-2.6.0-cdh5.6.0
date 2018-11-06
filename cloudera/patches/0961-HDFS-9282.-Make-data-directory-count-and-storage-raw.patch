@@ -1,0 +1,212 @@
+From d86a36a748cda4cc67cfc3d909f6fe51268ff846 Mon Sep 17 00:00:00 2001
+From: Lei Xu <lei@apache.org>
+Date: Thu, 5 Nov 2015 10:45:46 -0800
+Subject: [PATCH 0961/1023] HDFS-9282. Make data directory count and storage
+ raw capacity related tests FsDataset-agnostic.
+ (Tony Wu via lei)
+
+(cherry picked from commit 5a1a54c9f5d9a8f7585000fe33ef106e62dbb43a)
+(cherry picked from commit 489c920c9a2d2cb78c6d56b55a737c366e4bb0ce)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestNamenodeCapacityReport.java
+
+Change-Id: I65df82bb1656cbbb90f2bbefef85387755e53704
+---
+ .../org/apache/hadoop/hdfs/MiniDFSCluster.java     |    2 ++
+ .../datanode/FsDatasetImplTestUtilsFactory.java    |    5 +++++
+ .../hdfs/server/datanode/FsDatasetTestUtils.java   |   19 ++++++++++++++++++
+ .../TestDataNodeMultipleRegistrations.java         |    8 ++++++--
+ .../fsdataset/impl/FsDatasetImplTestUtils.java     |   21 ++++++++++++++++++++
+ .../namenode/TestNamenodeCapacityReport.java       |   14 ++++++-------
+ 6 files changed, 59 insertions(+), 10 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/MiniDFSCluster.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/MiniDFSCluster.java
+index 531bffe..5b67922 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/MiniDFSCluster.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/MiniDFSCluster.java
+@@ -184,6 +184,8 @@ public int getStoragesPerDatanode() {
+     
+     public Builder(Configuration conf) {
+       this.conf = conf;
++      this.storagesPerDatanode =
++          FsDatasetTestUtils.Factory.getFactory(conf).getDefaultNumOfDataDirs();
+     }
+     
+     /**
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/FsDatasetImplTestUtilsFactory.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/FsDatasetImplTestUtilsFactory.java
+index f283f5a..b113b34 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/FsDatasetImplTestUtilsFactory.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/FsDatasetImplTestUtilsFactory.java
+@@ -29,4 +29,9 @@
+   public FsDatasetTestUtils newInstance(DataNode datanode) {
+     return new FsDatasetImplTestUtils(datanode);
+   }
++
++  @Override
++  public int getDefaultNumOfDataDirs() {
++    return FsDatasetImplTestUtils.DEFAULT_NUM_OF_DATA_DIRS;
++  }
+ }
+\ No newline at end of file
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/FsDatasetTestUtils.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/FsDatasetTestUtils.java
+index 02af467..51cb2bf 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/FsDatasetTestUtils.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/FsDatasetTestUtils.java
+@@ -67,6 +67,14 @@
+     public boolean isSimulated() {
+       return false;
+     }
++
++    /**
++     * Get the default number of data directories for underlying storage per
++     * DataNode.
++     *
++     * @return The default number of data dirs per DataNode.
++     */
++    abstract public int getDefaultNumOfDataDirs();
+   }
+ 
+   /**
+@@ -213,4 +221,15 @@ Replica createReplicaUnderRecovery(ExtendedBlock block, long recoveryId)
+    * @return Replica for the block.
+    */
+   Replica fetchReplica(ExtendedBlock block);
++
++  /**
++   * @return The default value of number of data dirs per DataNode in
++   * MiniDFSCluster.
++   */
++  int getDefaultNumOfDataDirs();
++
++  /**
++   * Obtain the raw capacity of underlying storage per DataNode.
++   */
++  long getRawCapacity() throws IOException;
+ }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestDataNodeMultipleRegistrations.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestDataNodeMultipleRegistrations.java
+index 6888134..b4b2276 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestDataNodeMultipleRegistrations.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestDataNodeMultipleRegistrations.java
+@@ -97,7 +97,9 @@ public void test2NNRegistration() throws IOException {
+         LOG.info("vol " + i++ + ") " + e.getKey() + ": " + e.getValue());
+       }
+       // number of volumes should be 2 - [data1, data2]
+-      assertEquals("number of volumes is wrong", 2, volInfos.size());
++      assertEquals("number of volumes is wrong",
++          cluster.getFsDatasetTestUtils(0).getDefaultNumOfDataDirs(),
++          volInfos.size());
+ 
+       for (BPOfferService bpos : dn.getAllBpOs()) {
+         LOG.info("BP: " + bpos);
+@@ -164,7 +166,9 @@ public void testFedSingleNN() throws IOException {
+         LOG.info("vol " + i++ + ") " + e.getKey() + ": " + e.getValue());
+       }
+       // number of volumes should be 2 - [data1, data2]
+-      assertEquals("number of volumes is wrong", 2, volInfos.size());
++      assertEquals("number of volumes is wrong",
++          cluster.getFsDatasetTestUtils(0).getDefaultNumOfDataDirs(),
++          volInfos.size());
+ 
+       for (BPOfferService bpos : dn.getAllBpOs()) {
+         LOG.info("reg: bpid=" + "; name=" + bpos.bpRegistration + "; sid="
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetImplTestUtils.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetImplTestUtils.java
+index 1ce6b11..0a32102 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetImplTestUtils.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetImplTestUtils.java
+@@ -24,6 +24,7 @@
+ import org.apache.commons.logging.LogFactory;
+ import org.apache.hadoop.classification.InterfaceAudience;
+ import org.apache.hadoop.classification.InterfaceStability;
++import org.apache.hadoop.fs.DF;
+ import org.apache.hadoop.hdfs.protocol.Block;
+ import org.apache.hadoop.hdfs.protocol.ExtendedBlock;
+ import org.apache.hadoop.hdfs.server.datanode.DataNode;
+@@ -58,6 +59,11 @@
+   private final FsDatasetImpl dataset;
+ 
+   /**
++   * By default we assume 2 data directories (volumes) per DataNode.
++   */
++  public static final int DEFAULT_NUM_OF_DATA_DIRS = 2;
++
++  /**
+    * A reference to the replica that is used to corrupt block / meta later.
+    */
+   private static class FsDatasetImplMaterializedReplica
+@@ -322,4 +328,19 @@ public void injectCorruptReplica(ExtendedBlock block) throws IOException {
+   public Replica fetchReplica(ExtendedBlock block) {
+     return dataset.fetchReplicaInfo(block.getBlockPoolId(), block.getBlockId());
+   }
++
++  @Override
++  public int getDefaultNumOfDataDirs() {
++    return this.DEFAULT_NUM_OF_DATA_DIRS;
++  }
++
++  @Override
++  public long getRawCapacity() throws IOException {
++    try (FsVolumeReferences volRefs = dataset.getFsVolumeReferences()) {
++      Preconditions.checkState(volRefs.size() != 0);
++      DF df = new DF(new File(volRefs.get(0).getBasePath()),
++          dataset.datanode.getConf());
++      return df.getCapacity();
++    }
++  }
+ }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestNamenodeCapacityReport.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestNamenodeCapacityReport.java
+index 15cad04..2d29e5e 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestNamenodeCapacityReport.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestNamenodeCapacityReport.java
+@@ -21,7 +21,6 @@
+ import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_CLIENT_BLOCK_WRITE_LOCATEFOLLOWINGBLOCK_RETRIES_KEY;
+ import static org.junit.Assert.*;
+ 
+-import java.io.File;
+ import java.io.IOException;
+ import java.util.ArrayList;
+ import java.util.List;
+@@ -29,7 +28,6 @@
+ import org.apache.commons.logging.Log;
+ import org.apache.commons.logging.LogFactory;
+ import org.apache.hadoop.conf.Configuration;
+-import org.apache.hadoop.fs.DF;
+ import org.apache.hadoop.fs.FSDataOutputStream;
+ import org.apache.hadoop.fs.FileSystem;
+ import org.apache.hadoop.fs.Path;
+@@ -45,6 +43,7 @@
+ import org.apache.hadoop.hdfs.server.blockmanagement.DatanodeManager;
+ import org.apache.hadoop.hdfs.server.datanode.DataNode;
+ import org.apache.hadoop.hdfs.server.datanode.DataNodeTestUtils;
++import org.apache.hadoop.hdfs.server.datanode.FsDatasetTestUtils;
+ import org.junit.Test;
+ 
+ 
+@@ -109,9 +108,7 @@ public void testVolumeSize() throws Exception {
+         assertTrue(percentBpUsed == DFSUtil.getPercentUsed(bpUsed,
+             configCapacity));
+       }   
+-      
+-      DF df = new DF(new File(cluster.getDataDirectory()), conf);
+-     
++
+       //
+       // Currently two data directories are created by the data node
+       // in the MiniDFSCluster. This results in each data directory having
+@@ -122,9 +119,10 @@ public void testVolumeSize() throws Exception {
+       // So multiply the disk capacity and reserved space by two 
+       // for accommodating it
+       //
+-      int numOfDataDirs = 2;
+-      
+-      long diskCapacity = numOfDataDirs * df.getCapacity();
++      final FsDatasetTestUtils utils = cluster.getFsDatasetTestUtils(0);
++      int numOfDataDirs = utils.getDefaultNumOfDataDirs();
++
++      long diskCapacity = numOfDataDirs * utils.getRawCapacity();
+       reserved *= numOfDataDirs;
+       
+       configCapacity = namesystem.getCapacityTotal();
+-- 
+1.7.9.5
+

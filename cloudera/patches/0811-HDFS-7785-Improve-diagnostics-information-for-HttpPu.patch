@@ -1,0 +1,31 @@
+From 61cb97b9d1c481d93561dc26162d157073f65635 Mon Sep 17 00:00:00 2001
+From: Xiao Chen <xiao@cloudera.com>
+Date: Mon, 21 Sep 2015 14:37:37 -0700
+Subject: [PATCH 0811/1023] HDFS-7785 Improve diagnostics information for
+ HttpPutFailedException
+
+(cherry picked from commit 2d671e5b3d865e7e3b423650636c60778567ff97)
+
+Change-Id: I71e7d257556a2b5b46e403561c635450d7cf50b6
+---
+ .../hdfs/server/namenode/TransferFsImage.java      |    4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/TransferFsImage.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/TransferFsImage.java
+index 160371a..d7d4a68 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/TransferFsImage.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/TransferFsImage.java
+@@ -291,7 +291,9 @@ private static void uploadImage(URL url, Configuration conf,
+ 
+       int responseCode = connection.getResponseCode();
+       if (responseCode != HttpURLConnection.HTTP_OK) {
+-        throw new HttpPutFailedException(connection.getResponseMessage(),
++        throw new HttpPutFailedException(String.format(
++            "Image uploading failed, status: %d, url: %s, message: %s",
++            responseCode, urlWithParams, connection.getResponseMessage()),
+             responseCode);
+       }
+     } catch (AuthenticationException e) {
+-- 
+1.7.9.5
+

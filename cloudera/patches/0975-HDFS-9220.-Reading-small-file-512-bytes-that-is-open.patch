@@ -1,0 +1,95 @@
+From 04a4a506b615646f4061fb143b32c03d40cc7fb9 Mon Sep 17 00:00:00 2001
+From: Kihwal Lee <kihwal@apache.org>
+Date: Thu, 15 Oct 2015 11:24:14 -0500
+Subject: [PATCH 0975/1023] HDFS-9220. Reading small file (< 512 bytes) that
+ is open for append fails due to incorrect
+ checksum. Contributed by Jing Zhao.
+
+(cherry picked from commit c7c36cbd6218f46c33d7fb2f60cd52cb29e6d720)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt
+	hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestFileAppend2.java
+
+Change-Id: I6c612a58d43ba52ad8795868792804ad9940ce43
+(cherry picked from commit 26313f6ae24301bf066e2c6477a8b0d52fcd1f7a)
+(cherry picked from commit 7f688117c91d4b4397ab7ae21a822e3732073bd7)
+---
+ .../hadoop/hdfs/server/datanode/BlockReceiver.java |    5 ++-
+ .../org/apache/hadoop/hdfs/TestFileAppend2.java    |   37 ++++++++++++++++++++
+ 2 files changed, 39 insertions(+), 3 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BlockReceiver.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BlockReceiver.java
+index 9b6d718..7ca6c11 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BlockReceiver.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BlockReceiver.java
+@@ -709,11 +709,10 @@ private int receivePacket() throws IOException {
+             final int offset = checksumBuf.arrayOffset() +
+                 checksumBuf.position() + skip;
+             final int end = offset + checksumLen - skip;
+-            // If offset > end, there is no more checksum to write.
++            // If offset >= end, there is no more checksum to write.
+             // I.e. a partial chunk checksum rewrite happened and there is no
+             // more to write after that.
+-            if (offset > end) {
+-              assert crcBytes != null;
++            if (offset >= end && doCrcRecalc) {
+               lastCrc = crcBytes;
+             } else {
+               final int remainingBytes = checksumLen - skip;
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestFileAppend2.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestFileAppend2.java
+index 6c942b5..556cfb4 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestFileAppend2.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestFileAppend2.java
+@@ -27,6 +27,7 @@
+ 
+ import org.apache.commons.logging.impl.Log4JLogger;
+ import org.apache.hadoop.conf.Configuration;
++import org.apache.hadoop.fs.FSDataInputStream;
+ import org.apache.hadoop.fs.FSDataOutputStream;
+ import org.apache.hadoop.fs.FileSystem;
+ import org.apache.hadoop.fs.Path;
+@@ -384,4 +385,40 @@ public void testComplexAppend() throws IOException {
+     //
+     assertTrue("testComplexAppend Worker encountered exceptions.", globalStatus);
+   }
++
++  /**
++   * Make sure when the block length after appending is less than 512 bytes, the
++   * checksum re-calculation and overwrite are performed correctly.
++   */
++  @Test
++  public void testAppendLessThanChecksumChunk() throws Exception {
++    final byte[] buf = new byte[1024];
++    final MiniDFSCluster cluster = new MiniDFSCluster
++        .Builder(new HdfsConfiguration()).numDataNodes(1).build();
++    cluster.waitActive();
++
++    try (DistributedFileSystem fs = cluster.getFileSystem()) {
++      final int len1 = 200;
++      final int len2 = 300;
++      final Path p = new Path("/foo");
++
++      FSDataOutputStream out = fs.create(p);
++      out.write(buf, 0, len1);
++      out.close();
++
++      out = fs.append(p);
++      out.write(buf, 0, len2);
++      // flush but leave open
++      out.hflush();
++
++      // read data to verify the replica's content and checksum are correct
++      FSDataInputStream in = fs.open(p);
++      final int length = in.read(0, buf, 0, len1 + len2);
++      assertTrue(length > 0);
++      in.close();
++      out.close();
++    } finally {
++      cluster.shutdown();
++    }
++  }
+ }
+-- 
+1.7.9.5
+

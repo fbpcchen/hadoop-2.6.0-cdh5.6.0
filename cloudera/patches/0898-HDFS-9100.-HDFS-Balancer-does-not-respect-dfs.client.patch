@@ -1,0 +1,58 @@
+From b18288e497f7d8348fb9aaef87380b0d9aeff377 Mon Sep 17 00:00:00 2001
+From: Yongjun Zhang <yzhang@cloudera.com>
+Date: Fri, 2 Oct 2015 11:56:55 -0700
+Subject: [PATCH 0898/1023] HDFS-9100. HDFS Balancer does not respect
+ dfs.client.use.datanode.hostname. Contributed by
+ Casey Brotherton.
+
+(cherry picked from commit 1037ee580f87e6bf13155834c36f26794381678b)
+(cherry picked from commit 7964b13405f6c5e7f680b9ec6d40be90b9019fcf)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt
+	hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/balancer/Dispatcher.java
+
+Change-Id: I1cb50e525abe8c2ecef51be4820411ab68f49320
+(cherry picked from commit 1ebaa42b48943694cad476cc862cfe95a7defab4)
+---
+ .../hadoop/hdfs/server/balancer/Dispatcher.java    |   10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/balancer/Dispatcher.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/balancer/Dispatcher.java
+index 25e170e..ffdb9e1 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/balancer/Dispatcher.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/balancer/Dispatcher.java
+@@ -120,6 +120,8 @@
+   /** The maximum number of concurrent blocks moves at a datanode */
+   private final int maxConcurrentMovesPerNode;
+ 
++  private final boolean connectToDnViaHostname;
++
+   private static class GlobalBlockMap {
+     private final Map<Block, DBlock> map = new HashMap<Block, DBlock>();
+ 
+@@ -294,8 +296,9 @@ private void dispatch() {
+       DataInputStream in = null;
+       try {
+         sock.connect(
+-            NetUtils.createSocketAddr(target.getDatanodeInfo().getXferAddr()),
+-            HdfsServerConstants.READ_TIMEOUT);
++            NetUtils.createSocketAddr(target.getDatanodeInfo().
++                getXferAddr(Dispatcher.this.connectToDnViaHostname)),
++                HdfsServerConstants.READ_TIMEOUT);
+ 
+         sock.setKeepAlive(true);
+ 
+@@ -807,6 +810,9 @@ public Dispatcher(NameNodeConnector nnc, Set<String> includedNodes,
+     this.saslClient = new SaslDataTransferClient(conf,
+         DataTransferSaslUtil.getSaslPropertiesResolver(conf),
+         TrustedChannelResolver.getInstance(conf), nnc.fallbackToSimpleAuth);
++    this.connectToDnViaHostname = conf.getBoolean(
++        DFSConfigKeys.DFS_CLIENT_USE_DN_HOSTNAME,
++        DFSConfigKeys.DFS_CLIENT_USE_DN_HOSTNAME_DEFAULT);
+   }
+ 
+   public DistributedFileSystem getDistributedFileSystem() {
+-- 
+1.7.9.5
+

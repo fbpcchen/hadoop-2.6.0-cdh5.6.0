@@ -1,0 +1,61 @@
+From c633a7525a0a3e6ea3b43913598e0606532e1f48 Mon Sep 17 00:00:00 2001
+From: Kihwal Lee <kihwal@apache.org>
+Date: Mon, 19 Oct 2015 10:52:29 -0500
+Subject: [PATCH 0930/1023] HADOOP-12464. Interrupted client may try to
+ fail-over and retry. Contributed by Kihwal Lee.
+
+(cherry picked from commit 6144e0137bb51bd04b46ea5ce42c59c2d4f7657d)
+
+Change-Id: I9387dab9a29b42ca11c46e5900c82c70188b7a7c
+---
+ .../hadoop/io/retry/RetryInvocationHandler.java    |    4 ++++
+ .../main/java/org/apache/hadoop/ipc/Client.java    |   10 ++--------
+ 2 files changed, 6 insertions(+), 8 deletions(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/io/retry/RetryInvocationHandler.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/io/retry/RetryInvocationHandler.java
+index c31d28e..5d94c3b 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/io/retry/RetryInvocationHandler.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/io/retry/RetryInvocationHandler.java
+@@ -105,6 +105,10 @@ public Object invoke(Object proxy, Method method, Object[] args)
+         hasMadeASuccessfulCall = true;
+         return ret;
+       } catch (Exception ex) {
++        if (Thread.currentThread().isInterrupted()) {
++          // If interrupted, do not retry.
++          throw ex;
++        }
+         boolean isIdempotentOrAtMostOnce = proxyProvider.getInterface()
+             .getMethod(method.getName(), method.getParameterTypes())
+             .isAnnotationPresent(Idempotent.class);
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/Client.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/Client.java
+index 6c1765a..472bbf0 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/Client.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/Client.java
+@@ -1451,22 +1451,16 @@ public Writable call(RPC.RpcKind rpcKind, Writable rpcRequest,
+       throw new IOException(e);
+     }
+ 
+-    boolean interrupted = false;
+     synchronized (call) {
+       while (!call.done) {
+         try {
+           call.wait();                           // wait for the result
+         } catch (InterruptedException ie) {
+-          // save the fact that we were interrupted
+-          interrupted = true;
++          Thread.currentThread().interrupt();
++          throw new InterruptedIOException("Call interrupted");
+         }
+       }
+ 
+-      if (interrupted) {
+-        // set the interrupt flag now that we are done waiting
+-        Thread.currentThread().interrupt();
+-      }
+-
+       if (call.error != null) {
+         if (call.error instanceof RemoteException) {
+           call.error.fillInStackTrace();
+-- 
+1.7.9.5
+

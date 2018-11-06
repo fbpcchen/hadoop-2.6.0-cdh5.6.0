@@ -1,0 +1,63 @@
+From c10e8062b2abe970708127579cf1dc83069cc4e5 Mon Sep 17 00:00:00 2001
+From: Lei Xu <lei@cloudera.com>
+Date: Sat, 29 Aug 2015 09:57:27 -0700
+Subject: [PATCH 0735/1023] HADOOP-12346. Increase some default timeouts /
+ retries for S3a connector. (Sean Mackrory via Lei
+ (Eddy) Xu)
+
+Conflicts:
+	hadoop-tools/hadoop-aws/src/site/markdown/tools/hadoop-aws/index.md
+
+Change-Id: Ic6934c5cc8f535289fd31e6c53d2b3c945f3e6bd
+---
+ .../src/main/resources/core-default.xml            |    4 ++--
+ .../java/org/apache/hadoop/fs/s3a/Constants.java   |    4 ++--
+ 2 files changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/resources/core-default.xml b/hadoop-common-project/hadoop-common/src/main/resources/core-default.xml
+index 26e08da..f28e7fe 100644
+--- a/hadoop-common-project/hadoop-common/src/main/resources/core-default.xml
++++ b/hadoop-common-project/hadoop-common/src/main/resources/core-default.xml
+@@ -745,7 +745,7 @@ for ldap providers in the same way as above does.
+ 
+ <property>
+   <name>fs.s3a.attempts.maximum</name>
+-  <value>10</value>
++  <value>20</value>
+   <description>How many times we should retry commands on transient errors.</description>
+ </property>
+ 
+@@ -757,7 +757,7 @@ for ldap providers in the same way as above does.
+ 
+ <property>
+   <name>fs.s3a.connection.timeout</name>
+-  <value>50000</value>
++  <value>200000</value>
+   <description>Socket connection timeout in milliseconds.</description>
+ </property>
+ 
+diff --git a/hadoop-tools/hadoop-aws/src/main/java/org/apache/hadoop/fs/s3a/Constants.java b/hadoop-tools/hadoop-aws/src/main/java/org/apache/hadoop/fs/s3a/Constants.java
+index bbf3c1d..f9617f5 100644
+--- a/hadoop-tools/hadoop-aws/src/main/java/org/apache/hadoop/fs/s3a/Constants.java
++++ b/hadoop-tools/hadoop-aws/src/main/java/org/apache/hadoop/fs/s3a/Constants.java
+@@ -35,7 +35,7 @@
+   
+   // number of times we should retry errors
+   public static final String MAX_ERROR_RETRIES = "fs.s3a.attempts.maximum";
+-  public static final int DEFAULT_MAX_ERROR_RETRIES = 10;
++  public static final int DEFAULT_MAX_ERROR_RETRIES = 20;
+ 
+   // seconds until we give up trying to establish a connection to s3
+   public static final String ESTABLISH_TIMEOUT = "fs.s3a.connection.establish.timeout";
+@@ -43,7 +43,7 @@
+   
+   // seconds until we give up on a connection to s3
+   public static final String SOCKET_TIMEOUT = "fs.s3a.connection.timeout";
+-  public static final int DEFAULT_SOCKET_TIMEOUT = 50000;
++  public static final int DEFAULT_SOCKET_TIMEOUT = 200000;
+ 
+   // number of records to get while paging through a directory listing
+   public static final String MAX_PAGING_KEYS = "fs.s3a.paging.maximum";
+-- 
+1.7.9.5
+

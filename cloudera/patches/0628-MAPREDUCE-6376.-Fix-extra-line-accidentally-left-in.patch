@@ -1,0 +1,26 @@
+From 7ca34afe7120e6c712d37b6c15d4fcc49852edf0 Mon Sep 17 00:00:00 2001
+From: Ray Chiang <rchiang@cloudera.com>
+Date: Wed, 8 Jul 2015 21:31:46 -0700
+Subject: [PATCH 0628/1023] MAPREDUCE-6376.  Fix extra line accidentally left
+ in.
+
+---
+ .../src/main/resources/mapred-default.xml          |    2 --
+ 1 file changed, 2 deletions(-)
+
+diff --git a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/resources/mapred-default.xml b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/resources/mapred-default.xml
+index 37d284c..c3aecbf 100644
+--- a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/resources/mapred-default.xml
++++ b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/resources/mapred-default.xml
+@@ -2014,8 +2014,6 @@
+ </property>
+ 
+ <property>
+-
+-<property>
+   <description>
+   File format the AM will use when generating the .jhist file.  Valid
+   values are "json" for text output and "binary" for faster parsing.
+-- 
+1.7.9.5
+

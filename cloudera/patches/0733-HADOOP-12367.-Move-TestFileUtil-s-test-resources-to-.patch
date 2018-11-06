@@ -1,0 +1,265 @@
+From 500b7321c2deaa92bd9daca44f8b02322a8d850d Mon Sep 17 00:00:00 2001
+From: yliu <yliu@apache.org>
+Date: Tue, 1 Sep 2015 16:25:11 +0800
+Subject: [PATCH 0733/1023] HADOOP-12367. Move TestFileUtil's test resources
+ to resources folder. (wang via yliu)
+
+(cherry picked from commit 2345627ad3f81c5854cc6021ea102d1f62633515)
+
+Change-Id: Ic9fa6528b80cedb8ab78722c7d0a0332a95f7186
+---
+ hadoop-common-project/hadoop-common/pom.xml        |   19 +------------------
+ .../test/java/org/apache/hadoop/fs/test-untar.tar  |  Bin 20480 -> 0 bytes
+ .../test/java/org/apache/hadoop/fs/test-untar.tgz  |  Bin 2024 -> 0 bytes
+ .../src/test/resources/test-untar.tar              |  Bin 0 -> 20480 bytes
+ .../src/test/resources/test-untar.tgz              |  Bin 0 -> 2024 bytes
+ 5 files changed, 1 insertion(+), 18 deletions(-)
+ delete mode 100644 hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/test-untar.tar
+ delete mode 100644 hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/test-untar.tgz
+ create mode 100644 hadoop-common-project/hadoop-common/src/test/resources/test-untar.tar
+ create mode 100644 hadoop-common-project/hadoop-common/src/test/resources/test-untar.tgz
+
+diff --git a/hadoop-common-project/hadoop-common/pom.xml b/hadoop-common-project/hadoop-common/pom.xml
+index bd63980..2da8b14 100644
+--- a/hadoop-common-project/hadoop-common/pom.xml
++++ b/hadoop-common-project/hadoop-common/pom.xml
+@@ -470,23 +470,6 @@
+             </configuration>
+           </execution>
+           <execution>
+-            <id>copy-test-tarballs</id>
+-            <phase>process-test-resources</phase>
+-            <goals>
+-              <goal>run</goal>
+-            </goals>
+-            <configuration>
+-              <target>
+-                <copy toDir="${test.cache.data}">
+-                  <fileset dir="${basedir}/src/test/java/org/apache/hadoop/fs">
+-                    <include name="test-untar.tar"/>
+-                    <include name="test-untar.tgz"/>
+-                  </fileset>
+-                </copy>
+-              </target>
+-            </configuration>
+-          </execution>
+-          <execution>
+             <phase>pre-site</phase>
+             <goals>
+               <goal>run</goal>
+@@ -521,7 +504,7 @@
+             <exclude>src/main/native/src/org/apache/hadoop/io/compress/lz4/lz4hc.h</exclude>
+             <exclude>src/main/native/src/org/apache/hadoop/io/compress/lz4/lz4hc.c</exclude>
+             <exclude>src/main/native/src/org/apache/hadoop/io/compress/lz4/lz4hc_encoder.h</exclude>
+-            <exclude>src/test/java/org/apache/hadoop/fs/test-untar.tgz</exclude>
++            <exclude>src/test/resources/test-untar.tgz</exclude>
+             <exclude>src/test/resources/test.har/_SUCCESS</exclude>
+             <exclude>src/test/resources/test.har/_index</exclude>
+             <exclude>src/test/resources/test.har/_masterindex</exclude>
+diff --git a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/test-untar.tar b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/test-untar.tar
+deleted file mode 100644
+index 949e985c731aa2e4da7d1871fd1e7c114d656021..0000000000000000000000000000000000000000
+GIT binary patch
+literal 0
+HcmV?d00001
+
+literal 20480
+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
+
+diff --git a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/test-untar.tgz b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/test-untar.tgz
+deleted file mode 100644
+index 9e9ef40f6fdb238ee359b59dcab89ea437969b30..0000000000000000000000000000000000000000
+GIT binary patch
+literal 0
+HcmV?d00001
+
+literal 2024
+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
+GPyhg8PZ7ib
+
+diff --git a/hadoop-common-project/hadoop-common/src/test/resources/test-untar.tar b/hadoop-common-project/hadoop-common/src/test/resources/test-untar.tar
+new file mode 100644
+index 0000000000000000000000000000000000000000..949e985c731aa2e4da7d1871fd1e7c114d656021
+GIT binary patch
+literal 20480
+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
+
+literal 0
+HcmV?d00001
+
+diff --git a/hadoop-common-project/hadoop-common/src/test/resources/test-untar.tgz b/hadoop-common-project/hadoop-common/src/test/resources/test-untar.tgz
+new file mode 100644
+index 0000000000000000000000000000000000000000..9e9ef40f6fdb238ee359b59dcab89ea437969b30
+GIT binary patch
+literal 2024
+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
+GPyhg8PZ7ib
+
+literal 0
+HcmV?d00001
+
+-- 
+1.7.9.5
+

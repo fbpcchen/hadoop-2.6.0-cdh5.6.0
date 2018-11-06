@@ -1,0 +1,29 @@
+From 768b9b9e8c81cdcc3c5c2ca6571bbcfc6804a6dd Mon Sep 17 00:00:00 2001
+From: Robert Kanter <rkanter@apache.org>
+Date: Mon, 22 Jun 2015 18:02:27 -0700
+Subject: [PATCH 0609/1023] YARN-3835. hadoop-yarn-server-resourcemanager test
+ package bundles core-site.xml, yarn-site.xml
+ (vamsee via rkanter)
+
+---
+ .../hadoop-yarn-server-resourcemanager/pom.xml     |    4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/pom.xml b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/pom.xml
+index ac28b6a..a1ae3e9 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/pom.xml
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/pom.xml
+@@ -265,6 +265,10 @@
+                   <mainClass>org.apache.hadoop.test.YarnTestDriver</mainClass>
+                 </manifest>
+               </archive>
++              <excludes>
++                <exclude>**/core-site.xml</exclude>
++                <exclude>**/yarn-site.xml</exclude>
++              </excludes>
+             </configuration>
+           </execution>
+         </executions>
+-- 
+1.7.9.5
+

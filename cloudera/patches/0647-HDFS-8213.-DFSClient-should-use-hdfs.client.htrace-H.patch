@@ -1,0 +1,371 @@
+From 89173b1ef2255781d3ffb492ed8fb95bfc306897 Mon Sep 17 00:00:00 2001
+From: Colin Patrick Mccabe <cmccabe@cloudera.com>
+Date: Fri, 1 May 2015 11:19:40 -0700
+Subject: [PATCH 0647/1023] HDFS-8213. DFSClient should use hdfs.client.htrace
+ HTrace configuration prefix rather than
+ hadoop.htrace (cmccabe)
+
+(cherry picked from commit b82567d45507c50d2f28eff4bbdf3b1a69d4bf1b)
+(cherry picked from commit 9edea9507db2566cf465a77953320b1349859486)
+---
+ .../apache/hadoop/tracing/SpanReceiverHost.java    |   61 ++++++++++----------
+ .../java/org/apache/hadoop/tracing/TraceUtils.java |   14 ++---
+ .../org/apache/hadoop/tracing/TestTraceUtils.java  |   10 ++--
+ .../java/org/apache/hadoop/hdfs/DFSClient.java     |    5 +-
+ .../java/org/apache/hadoop/hdfs/DFSConfigKeys.java |    7 +++
+ .../hadoop/hdfs/server/datanode/DataNode.java      |    3 +-
+ .../hadoop/hdfs/server/namenode/NameNode.java      |    3 +-
+ .../org/apache/hadoop/tracing/TestTraceAdmin.java  |    4 +-
+ .../org/apache/hadoop/tracing/TestTracing.java     |   10 +---
+ .../tracing/TestTracingShortCircuitLocalRead.java  |    4 +-
+ 10 files changed, 66 insertions(+), 55 deletions(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/tracing/SpanReceiverHost.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/tracing/SpanReceiverHost.java
+index 5d8436d..2f9dfb9 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/tracing/SpanReceiverHost.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/tracing/SpanReceiverHost.java
+@@ -25,6 +25,7 @@
+ import java.io.IOException;
+ import java.io.InputStreamReader;
+ import java.util.Collections;
++import java.util.HashMap;
+ import java.util.List;
+ import java.util.Map;
+ import java.util.TreeMap;
+@@ -51,41 +52,36 @@
+  */
+ @InterfaceAudience.Private
+ public class SpanReceiverHost implements TraceAdminProtocol {
+-  public static final String SPAN_RECEIVERS_CONF_KEY =
+-    "hadoop.htrace.spanreceiver.classes";
++  public static final String SPAN_RECEIVERS_CONF_SUFFIX =
++    "spanreceiver.classes";
+   private static final Log LOG = LogFactory.getLog(SpanReceiverHost.class);
++  private static final HashMap<String, SpanReceiverHost> hosts =
++      new HashMap<String, SpanReceiverHost>(1);
+   private final TreeMap<Long, SpanReceiver> receivers =
+       new TreeMap<Long, SpanReceiver>();
++  private final String confPrefix;
+   private Configuration config;
+   private boolean closed = false;
+   private long highestId = 1;
+ 
+-  private final static String LOCAL_FILE_SPAN_RECEIVER_PATH =
+-      "hadoop.htrace.local-file-span-receiver.path";
++  private final static String LOCAL_FILE_SPAN_RECEIVER_PATH_SUFFIX =
++      "local-file-span-receiver.path";
+ 
+-  private static enum SingletonHolder {
+-    INSTANCE;
+-    Object lock = new Object();
+-    SpanReceiverHost host = null;
+-  }
+-
+-  public static SpanReceiverHost getInstance(Configuration conf) {
+-    if (SingletonHolder.INSTANCE.host != null) {
+-      return SingletonHolder.INSTANCE.host;
+-    }
+-    synchronized (SingletonHolder.INSTANCE.lock) {
+-      if (SingletonHolder.INSTANCE.host != null) {
+-        return SingletonHolder.INSTANCE.host;
++  public static SpanReceiverHost get(Configuration conf, String confPrefix) {
++    synchronized (SpanReceiverHost.class) {
++      SpanReceiverHost host = hosts.get(confPrefix);
++      if (host != null) {
++        return host;
+       }
+-      SpanReceiverHost host = new SpanReceiverHost();
+-      host.loadSpanReceivers(conf);
+-      SingletonHolder.INSTANCE.host = host;
++      final SpanReceiverHost newHost = new SpanReceiverHost(confPrefix);
++      newHost.loadSpanReceivers(conf);
+       ShutdownHookManager.get().addShutdownHook(new Runnable() {
+           public void run() {
+-            SingletonHolder.INSTANCE.host.closeReceivers();
++            newHost.closeReceivers();
+           }
+         }, 0);
+-      return SingletonHolder.INSTANCE.host;
++      hosts.put(confPrefix, newHost);
++      return newHost;
+     }
+   }
+ 
+@@ -117,6 +113,10 @@ private static String getUniqueLocalTraceFileName() {
+     return new File(tmp, nonce).getAbsolutePath();
+   }
+ 
++  private SpanReceiverHost(String confPrefix) {
++    this.confPrefix = confPrefix;
++  }
++
+   /**
+    * Reads the names of classes specified in the
+    * "hadoop.htrace.spanreceiver.classes" property and instantiates and registers
+@@ -129,22 +129,22 @@ private static String getUniqueLocalTraceFileName() {
+    */
+   public synchronized void loadSpanReceivers(Configuration conf) {
+     config = new Configuration(conf);
+-    String[] receiverNames =
+-        config.getTrimmedStrings(SPAN_RECEIVERS_CONF_KEY);
++    String receiverKey = confPrefix + SPAN_RECEIVERS_CONF_SUFFIX;
++    String[] receiverNames = config.getTrimmedStrings(receiverKey);
+     if (receiverNames == null || receiverNames.length == 0) {
+       if (LOG.isTraceEnabled()) {
+-        LOG.trace("No span receiver names found in " +
+-                  SPAN_RECEIVERS_CONF_KEY + ".");
++        LOG.trace("No span receiver names found in " + receiverKey + ".");
+       }
+       return;
+     }
+     // It's convenient to have each daemon log to a random trace file when
+     // testing.
+-    if (config.get(LOCAL_FILE_SPAN_RECEIVER_PATH) == null) {
++    String pathKey = confPrefix + LOCAL_FILE_SPAN_RECEIVER_PATH_SUFFIX;
++    if (config.get(pathKey) == null) {
+       String uniqueFile = getUniqueLocalTraceFileName();
+-      config.set(LOCAL_FILE_SPAN_RECEIVER_PATH, uniqueFile);
++      config.set(pathKey, uniqueFile);
+       if (LOG.isTraceEnabled()) {
+-        LOG.trace("Set " + LOCAL_FILE_SPAN_RECEIVER_PATH + " to " +  uniqueFile);
++        LOG.trace("Set " + pathKey + " to " + uniqueFile);
+       }
+     }
+     for (String className : receiverNames) {
+@@ -162,7 +162,8 @@ public synchronized void loadSpanReceivers(Configuration conf) {
+   private synchronized SpanReceiver loadInstance(String className,
+       List<ConfigurationPair> extraConfig) throws IOException {
+     SpanReceiverBuilder builder =
+-        new SpanReceiverBuilder(TraceUtils.wrapHadoopConf(config, extraConfig));
++        new SpanReceiverBuilder(TraceUtils.
++            wrapHadoopConf(confPrefix, config, extraConfig));
+     SpanReceiver rcvr = builder.spanReceiverClass(className.trim()).build();
+     if (rcvr == null) {
+       throw new IOException("Failed to load SpanReceiver " + className);
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/tracing/TraceUtils.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/tracing/TraceUtils.java
+index 11797e6..fa52ac6 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/tracing/TraceUtils.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/tracing/TraceUtils.java
+@@ -31,15 +31,15 @@
+  */
+ @InterfaceAudience.Private
+ public class TraceUtils {
+-  public static final String HTRACE_CONF_PREFIX = "hadoop.htrace.";
+   private static List<ConfigurationPair> EMPTY = Collections.emptyList();
+ 
+-  public static HTraceConfiguration wrapHadoopConf(final Configuration conf) {
+-    return wrapHadoopConf(conf, EMPTY);
++  public static HTraceConfiguration wrapHadoopConf(final String prefix,
++        final Configuration conf) {
++    return wrapHadoopConf(prefix, conf, EMPTY);
+   }
+ 
+-  public static HTraceConfiguration wrapHadoopConf(final Configuration conf,
+-          List<ConfigurationPair> extraConfig) {
++  public static HTraceConfiguration wrapHadoopConf(final String prefix,
++        final Configuration conf, List<ConfigurationPair> extraConfig) {
+     final HashMap<String, String> extraMap = new HashMap<String, String>();
+     for (ConfigurationPair pair : extraConfig) {
+       extraMap.put(pair.getKey(), pair.getValue());
+@@ -50,7 +50,7 @@ public String get(String key) {
+         if (extraMap.containsKey(key)) {
+           return extraMap.get(key);
+         }
+-        return conf.get(HTRACE_CONF_PREFIX + key, "");
++        return conf.get(prefix + key, "");
+       }
+ 
+       @Override
+@@ -58,7 +58,7 @@ public String get(String key, String defaultValue) {
+         if (extraMap.containsKey(key)) {
+           return extraMap.get(key);
+         }
+-        return conf.get(HTRACE_CONF_PREFIX + key, defaultValue);
++        return conf.get(prefix + key, defaultValue);
+       }
+     };
+   }
+diff --git a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/tracing/TestTraceUtils.java b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/tracing/TestTraceUtils.java
+index 9ef3483..80d64b1 100644
+--- a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/tracing/TestTraceUtils.java
++++ b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/tracing/TestTraceUtils.java
+@@ -25,13 +25,15 @@
+ import org.junit.Test;
+ 
+ public class TestTraceUtils {
++  private static String TEST_PREFIX = "test.prefix.htrace.";
++
+   @Test
+   public void testWrappedHadoopConf() {
+     String key = "sampler";
+     String value = "ProbabilitySampler";
+     Configuration conf = new Configuration();
+-    conf.set(TraceUtils.HTRACE_CONF_PREFIX + key, value);
+-    HTraceConfiguration wrapped = TraceUtils.wrapHadoopConf(conf);
++    conf.set(TEST_PREFIX + key, value);
++    HTraceConfiguration wrapped = TraceUtils.wrapHadoopConf(TEST_PREFIX, conf);
+     assertEquals(value, wrapped.get(key));
+   }
+ 
+@@ -41,11 +43,11 @@ public void testExtraConfig() {
+     String oldValue = "old value";
+     String newValue = "new value";
+     Configuration conf = new Configuration();
+-    conf.set(TraceUtils.HTRACE_CONF_PREFIX + key, oldValue);
++    conf.set(TEST_PREFIX + key, oldValue);
+     LinkedList<ConfigurationPair> extraConfig =
+         new LinkedList<ConfigurationPair>();
+     extraConfig.add(new ConfigurationPair(key, newValue));
+-    HTraceConfiguration wrapped = TraceUtils.wrapHadoopConf(conf, extraConfig);
++    HTraceConfiguration wrapped = TraceUtils.wrapHadoopConf(TEST_PREFIX, conf, extraConfig);
+     assertEquals(newValue, wrapped.get(key));
+   }
+ }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSClient.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSClient.java
+index 3e1e626..c8f6cc2 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSClient.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSClient.java
+@@ -630,8 +630,9 @@ public DFSClient(URI nameNodeUri, Configuration conf,
+   public DFSClient(URI nameNodeUri, ClientProtocol rpcNamenode,
+       Configuration conf, FileSystem.Statistics stats)
+     throws IOException {
+-    SpanReceiverHost.getInstance(conf);
+-    traceSampler = new SamplerBuilder(TraceUtils.wrapHadoopConf(conf)).build();
++    SpanReceiverHost.get(conf, DFSConfigKeys.DFS_CLIENT_HTRACE_PREFIX);
++    traceSampler = new SamplerBuilder(TraceUtils.
++        wrapHadoopConf(DFSConfigKeys.DFS_CLIENT_HTRACE_PREFIX, conf)).build();
+     // Copy only the required DFSClient configuration
+     this.dfsClientConf = new Conf(conf);
+     if (this.dfsClientConf.useLegacyBlockReaderLocal) {
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSConfigKeys.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSConfigKeys.java
+index 15f9572..7ab27dd 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSConfigKeys.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSConfigKeys.java
+@@ -101,6 +101,13 @@
+   public static final String DFS_WEBHDFS_ACL_PERMISSION_PATTERN_DEFAULT =
+       "^(default:)?(user|group|mask|other):[[A-Za-z_][A-Za-z0-9._-]]*:([rwx-]{3})?(,(default:)?(user|group|mask|other):[[A-Za-z_][A-Za-z0-9._-]]*:([rwx-]{3})?)*$";
+ 
++  // HDFS HTrace configuration is controlled by dfs.htrace.spanreceiver.classes,
++  // etc.
++  public static final String  DFS_SERVER_HTRACE_PREFIX = "dfs.htrace.";
++
++  // HDFS client HTrace configuration.
++  public static final String  DFS_CLIENT_HTRACE_PREFIX = "dfs.client.htrace.";
++
+   // HA related configuration
+   public static final String  DFS_CLIENT_FAILOVER_PROXY_PROVIDER_KEY_PREFIX = "dfs.client.failover.proxy.provider";
+   public static final String  DFS_CLIENT_FAILOVER_MAX_ATTEMPTS_KEY = "dfs.client.failover.max.attempts";
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java
+index e3da013..7551674 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java
+@@ -1131,7 +1131,8 @@ void startDataNode(Configuration conf,
+     this.dnConf = new DNConf(conf);
+     checkSecureConfig(dnConf, conf, resources);
+ 
+-    this.spanReceiverHost = SpanReceiverHost.getInstance(conf);
++    this.spanReceiverHost =
++      SpanReceiverHost.get(conf, DFSConfigKeys.DFS_SERVER_HTRACE_PREFIX);
+ 
+     if (dnConf.maxLockedMemory > 0) {
+       if (!NativeIO.POSIX.getCacheManipulator().verifyCanMlock()) {
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNode.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNode.java
+index 5a05eaf..e463eea 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNode.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNode.java
+@@ -638,7 +638,8 @@ protected void initialize(Configuration conf) throws IOException {
+       startHttpServer(conf);
+     }
+ 
+-    this.spanReceiverHost = SpanReceiverHost.getInstance(conf);
++    this.spanReceiverHost =
++      SpanReceiverHost.get(conf, DFSConfigKeys.DFS_SERVER_HTRACE_PREFIX);
+ 
+     loadNamesystem(conf);
+ 
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTraceAdmin.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTraceAdmin.java
+index 3b0dd70..22a4c24 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTraceAdmin.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTraceAdmin.java
+@@ -18,6 +18,7 @@
+ package org.apache.hadoop.tracing;
+ 
+ import org.apache.hadoop.conf.Configuration;
++import org.apache.hadoop.hdfs.DFSConfigKeys;
+ import org.apache.hadoop.hdfs.MiniDFSCluster;
+ import org.apache.hadoop.net.unix.TemporarySocketDirectory;
+ import org.junit.Assert;
+@@ -57,7 +58,8 @@ private String getHostPortForNN(MiniDFSCluster cluster) {
+   public void testCreateAndDestroySpanReceiver() throws Exception {
+     Configuration conf = new Configuration();
+     conf = new Configuration();
+-    conf.set(SpanReceiverHost.SPAN_RECEIVERS_CONF_KEY, "");
++    conf.set(DFSConfigKeys.DFS_SERVER_HTRACE_PREFIX  +
++        SpanReceiverHost.SPAN_RECEIVERS_CONF_SUFFIX, "");
+     MiniDFSCluster cluster =
+         new MiniDFSCluster.Builder(conf).numDataNodes(3).build();
+     cluster.waitActive();
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracing.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracing.java
+index 267f9c2..7fb8ac5 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracing.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracing.java
+@@ -22,6 +22,7 @@
+ import org.apache.hadoop.fs.FSDataInputStream;
+ import org.apache.hadoop.fs.FSDataOutputStream;
+ import org.apache.hadoop.fs.Path;
++import org.apache.hadoop.hdfs.DFSConfigKeys;
+ import org.apache.hadoop.hdfs.DistributedFileSystem;
+ import org.apache.hadoop.hdfs.MiniDFSCluster;
+ import org.apache.hadoop.test.GenericTestUtils;
+@@ -53,14 +54,9 @@
+   private static Configuration conf;
+   private static MiniDFSCluster cluster;
+   private static DistributedFileSystem dfs;
+-  private static SpanReceiverHost spanReceiverHost;
+ 
+   @Test
+   public void testTracing() throws Exception {
+-    // getting instance already loaded.
+-    Assert.assertEquals(spanReceiverHost,
+-        SpanReceiverHost.getInstance(new Configuration()));
+-
+     // write and read without tracing started
+     String fileName = "testTracingDisabled.dat";
+     writeTestFile(fileName);
+@@ -203,9 +199,9 @@ private void readTestFile(String testFileName) throws Exception {
+   public static void setup() throws IOException {
+     conf = new Configuration();
+     conf.setLong("dfs.blocksize", 100 * 1024);
+-    conf.set(SpanReceiverHost.SPAN_RECEIVERS_CONF_KEY,
++    conf.set(DFSConfigKeys.DFS_CLIENT_HTRACE_PREFIX +
++        SpanReceiverHost.SPAN_RECEIVERS_CONF_SUFFIX,
+         SetSpanReceiver.class.getName());
+-    spanReceiverHost = SpanReceiverHost.getInstance(conf);
+   }
+ 
+   @Before
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracingShortCircuitLocalRead.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracingShortCircuitLocalRead.java
+index 2981558..0714679 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracingShortCircuitLocalRead.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracingShortCircuitLocalRead.java
+@@ -64,7 +64,8 @@ public static void shutdown() throws IOException {
+   public void testShortCircuitTraceHooks() throws IOException {
+     assumeTrue(NativeCodeLoader.isNativeCodeLoaded() && !Path.WINDOWS);
+     conf = new Configuration();
+-    conf.set(SpanReceiverHost.SPAN_RECEIVERS_CONF_KEY,
++    conf.set(DFSConfigKeys.DFS_CLIENT_HTRACE_PREFIX +
++        SpanReceiverHost.SPAN_RECEIVERS_CONF_SUFFIX,
+         TestTracing.SetSpanReceiver.class.getName());
+     conf.setLong("dfs.blocksize", 100 * 1024);
+     conf.setBoolean(DFSConfigKeys.DFS_CLIENT_READ_SHORTCIRCUIT_KEY, true);
+@@ -78,7 +79,6 @@ public void testShortCircuitTraceHooks() throws IOException {
+     dfs = cluster.getFileSystem();
+ 
+     try {
+-      spanReceiverHost = SpanReceiverHost.getInstance(conf);
+       DFSTestUtil.createFile(dfs, TEST_PATH, TEST_LENGTH, (short)1, 5678L);
+ 
+       TraceScope ts = Trace.startSpan("testShortCircuitTraceHooks", Sampler.ALWAYS);
+-- 
+1.7.9.5
+

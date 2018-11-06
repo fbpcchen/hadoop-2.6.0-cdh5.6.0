@@ -1,0 +1,125 @@
+From c9f1cca78bea5bc567d6f7c5a00c631ae0d39dc7 Mon Sep 17 00:00:00 2001
+From: Arpit Agarwal <arp@apache.org>
+Date: Sun, 28 Jun 2015 14:51:17 -0700
+Subject: [PATCH 0616/1023] HDFS-8681. BlockScanner is incorrectly disabled by
+ default. (Contributed by Arpit Agarwal)
+
+(cherry picked from commit 0fd47fa8099d4c2efad19a253eabe3bbd2cb78de)
+---
+ .../java/org/apache/hadoop/hdfs/DFSConfigKeys.java |    2 +-
+ .../hadoop/hdfs/server/datanode/BlockScanner.java  |   36 ++++++++++++++++----
+ .../src/main/resources/hdfs-default.xml            |    9 +++--
+ .../datanode/fsdataset/impl/TestFsDatasetImpl.java |    1 +
+ 4 files changed, 38 insertions(+), 10 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSConfigKeys.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSConfigKeys.java
+index 5aefe19..15f9572 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSConfigKeys.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSConfigKeys.java
+@@ -445,7 +445,7 @@
+   public static final String  DFS_DATANODE_MAX_RECEIVER_THREADS_KEY = "dfs.datanode.max.transfer.threads";
+   public static final int     DFS_DATANODE_MAX_RECEIVER_THREADS_DEFAULT = 4096;
+   public static final String  DFS_DATANODE_SCAN_PERIOD_HOURS_KEY = "dfs.datanode.scan.period.hours";
+-  public static final int     DFS_DATANODE_SCAN_PERIOD_HOURS_DEFAULT = 0;
++  public static final int     DFS_DATANODE_SCAN_PERIOD_HOURS_DEFAULT = 21 * 24;  // 3 weeks.
+   public static final String  DFS_BLOCK_SCANNER_VOLUME_BYTES_PER_SECOND = "dfs.block.scanner.volume.bytes.per.second";
+   public static final long    DFS_BLOCK_SCANNER_VOLUME_BYTES_PER_SECOND_DEFAULT = 1048576L;
+   public static final String  DFS_DATANODE_TRANSFERTO_ALLOWED_KEY = "dfs.datanode.transferTo.allowed";
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BlockScanner.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BlockScanner.java
+index b0248c5..9c4dd10 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BlockScanner.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BlockScanner.java
+@@ -115,6 +115,34 @@ private static long getUnitTestLong(Configuration conf, String key,
+       }
+     }
+ 
++    /**
++     * Determine the configured block scanner interval.
++     *
++     * For compatibility with prior releases of HDFS, if the
++     * configured value is zero then the scan period is
++     * set to 3 weeks.
++     *
++     * If the configured value is less than zero then the scanner
++     * is disabled.
++     *
++     * @param conf Configuration object.
++     * @return block scan period in milliseconds.
++     */
++    private static long getConfiguredScanPeriodMs(Configuration conf) {
++      long tempScanPeriodMs = getUnitTestLong(
++          conf, INTERNAL_DFS_DATANODE_SCAN_PERIOD_MS,
++              TimeUnit.MILLISECONDS.convert(conf.getLong(
++                  DFS_DATANODE_SCAN_PERIOD_HOURS_KEY,
++                  DFS_DATANODE_SCAN_PERIOD_HOURS_DEFAULT), TimeUnit.HOURS));
++
++      if (tempScanPeriodMs == 0) {
++        tempScanPeriodMs = TimeUnit.MILLISECONDS.convert(
++            DFS_DATANODE_SCAN_PERIOD_HOURS_DEFAULT, TimeUnit.HOURS);
++      }
++
++      return tempScanPeriodMs;
++    }
++
+     @SuppressWarnings("unchecked")
+     Conf(Configuration conf) {
+       this.targetBytesPerSec = Math.max(0L, conf.getLong(
+@@ -123,11 +151,7 @@ private static long getUnitTestLong(Configuration conf, String key,
+       this.maxStalenessMs = Math.max(0L, getUnitTestLong(conf,
+           INTERNAL_DFS_BLOCK_SCANNER_MAX_STALENESS_MS,
+           INTERNAL_DFS_BLOCK_SCANNER_MAX_STALENESS_MS_DEFAULT));
+-      this.scanPeriodMs = Math.max(0L,
+-          getUnitTestLong(conf, INTERNAL_DFS_DATANODE_SCAN_PERIOD_MS,
+-              TimeUnit.MILLISECONDS.convert(conf.getLong(
+-                  DFS_DATANODE_SCAN_PERIOD_HOURS_KEY,
+-                  DFS_DATANODE_SCAN_PERIOD_HOURS_DEFAULT), TimeUnit.HOURS)));
++      this.scanPeriodMs = getConfiguredScanPeriodMs(conf);
+       this.cursorSaveMs = Math.max(0L, getUnitTestLong(conf,
+           INTERNAL_DFS_BLOCK_SCANNER_CURSOR_SAVE_INTERVAL_MS,
+           INTERNAL_DFS_BLOCK_SCANNER_CURSOR_SAVE_INTERVAL_MS_DEFAULT));
+@@ -159,7 +183,7 @@ public BlockScanner(DataNode datanode, Configuration conf) {
+    * no threads will start.
+    */
+   public boolean isEnabled() {
+-    return (conf.scanPeriodMs) > 0 && (conf.targetBytesPerSec > 0);
++    return (conf.scanPeriodMs > 0) && (conf.targetBytesPerSec > 0);
+   }
+ 
+  /**
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/resources/hdfs-default.xml b/hadoop-hdfs-project/hadoop-hdfs/src/main/resources/hdfs-default.xml
+index 18d3a9a..149395e 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/resources/hdfs-default.xml
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/resources/hdfs-default.xml
+@@ -987,11 +987,14 @@
+ 
+ <property>
+   <name>dfs.datanode.scan.period.hours</name>
+-  <value>0</value>
++  <value>504</value>
+   <description>
+-        If this is 0 or negative, the DataNode's block scanner will be
+-        disabled.  If this is positive, the DataNode will not scan any
++        If this is positive, the DataNode will not scan any
+         individual block more than once in the specified scan period.
++        If this is negative, the block scanner is disabled.
++        If this is set to zero, then the default value of 504 hours
++        or 3 weeks is used. Prior versions of HDFS incorrectly documented
++        that setting this key to zero will disable the block scanner.
+   </description>
+ </property>
+ 
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/TestFsDatasetImpl.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/TestFsDatasetImpl.java
+index fd5036a..76c41ea 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/TestFsDatasetImpl.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/TestFsDatasetImpl.java
+@@ -249,6 +249,7 @@ public void testRemoveNewlyAddedVolume() throws IOException {
+   public void testChangeVolumeWithRunningCheckDirs() throws IOException {
+     RoundRobinVolumeChoosingPolicy<FsVolumeImpl> blockChooser =
+         new RoundRobinVolumeChoosingPolicy<>();
++    conf.setLong(DFSConfigKeys.DFS_DATANODE_SCAN_PERIOD_HOURS_KEY, -1);
+     final BlockScanner blockScanner = new BlockScanner(datanode, conf);
+     final FsVolumeList volumeList = new FsVolumeList(
+         Collections.<VolumeFailureInfo>emptyList(), blockScanner, blockChooser);
+-- 
+1.7.9.5
+

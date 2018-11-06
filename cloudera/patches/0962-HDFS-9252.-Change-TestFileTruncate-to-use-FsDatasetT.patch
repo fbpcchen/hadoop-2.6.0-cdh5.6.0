@@ -1,0 +1,116 @@
+From 4d174b6c174a30198fe93e92437710c1fa75c885 Mon Sep 17 00:00:00 2001
+From: Colin Patrick Mccabe <cmccabe@cloudera.com>
+Date: Tue, 17 Nov 2015 10:48:15 -0800
+Subject: [PATCH 0962/1023] HDFS-9252. Change TestFileTruncate to use
+ FsDatasetTestUtils to get block file size and
+ genstamp. (Lei (Eddy) Xu via cmccabe)
+
+(cherry picked from commit dfbde3fc511495ac998f07d674a87355de75fc04)
+(cherry picked from commit 0f9f9ba3cbb5d3b467cff23bf9680848c63cc0f8)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestFileTruncate.java
+
+Change-Id: Ie77a9cf1fe0f80359255ae21d7982957f6e5a83b
+---
+ .../datanode/fsdataset/impl/FsDatasetUtil.java     |    5 +++--
+ .../hdfs/server/datanode/FsDatasetTestUtils.java   |   10 +++++++++
+ .../fsdataset/impl/FsDatasetImplTestUtils.java     |   22 +++++++++++++++++++-
+ 3 files changed, 34 insertions(+), 3 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetUtil.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetUtil.java
+index adefbdb..f129719 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetUtil.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetUtil.java
+@@ -75,14 +75,15 @@ public boolean accept(File dir, String name) {
+    * Find the meta-file for the specified block file
+    * and then return the generation stamp from the name of the meta-file.
+    */
+-  static long getGenerationStampFromFile(File[] listdir, File blockFile) {
++  static long getGenerationStampFromFile(File[] listdir, File blockFile)
++      throws IOException {
+     String blockName = blockFile.getName();
+     for (int j = 0; j < listdir.length; j++) {
+       String path = listdir[j].getName();
+       if (!path.startsWith(blockName)) {
+         continue;
+       }
+-      if (blockFile == listdir[j]) {
++      if (blockFile.getCanonicalPath().equals(listdir[j].getCanonicalPath())) {
+         continue;
+       }
+       return Block.getGenerationStamp(listdir[j].getName());
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/FsDatasetTestUtils.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/FsDatasetTestUtils.java
+index 51cb2bf..07fb7ce 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/FsDatasetTestUtils.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/FsDatasetTestUtils.java
+@@ -232,4 +232,14 @@ Replica createReplicaUnderRecovery(ExtendedBlock block, long recoveryId)
+    * Obtain the raw capacity of underlying storage per DataNode.
+    */
+   long getRawCapacity() throws IOException;
++
++  /**
++   * Get the persistently stored length of the block.
++   */
++  long getStoredDataLength(ExtendedBlock block) throws IOException;
++
++  /**
++   * Get the persistently stored generation stamp.
++   */
++  long getStoredGenerationStamp(ExtendedBlock block) throws IOException;
+ }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetImplTestUtils.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetImplTestUtils.java
+index 0a32102..8fce163 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetImplTestUtils.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetImplTestUtils.java
+@@ -26,6 +26,7 @@
+ import org.apache.hadoop.classification.InterfaceStability;
+ import org.apache.hadoop.fs.DF;
+ import org.apache.hadoop.hdfs.protocol.Block;
++import org.apache.hadoop.fs.FileUtil;
+ import org.apache.hadoop.hdfs.protocol.ExtendedBlock;
+ import org.apache.hadoop.hdfs.server.datanode.DataNode;
+ import org.apache.hadoop.hdfs.server.datanode.FinalizedReplica;
+@@ -175,6 +176,10 @@ public FsDatasetImplTestUtils(DataNode datanode) {
+     dataset = (FsDatasetImpl) datanode.getFSDataset();
+   }
+ 
++  private File getBlockFile(ExtendedBlock eb) throws IOException {
++    return dataset.getBlockFile(eb.getBlockPoolId(), eb.getBlockId());
++  }
++
+   /**
+    * Return a materialized replica from the FsDatasetImpl.
+    */
+@@ -235,7 +240,6 @@ public Replica createReplicaInPipeline(
+     return rip;
+   }
+ 
+-
+   @Override
+   public Replica createRBW(ExtendedBlock eb) throws IOException {
+     try (FsVolumeReferences volumes = dataset.getFsVolumeReferences()) {
+@@ -343,4 +347,20 @@ public long getRawCapacity() throws IOException {
+       return df.getCapacity();
+     }
+   }
++
++  @Override
++  public long getStoredDataLength(ExtendedBlock block) throws IOException {
++    File f = getBlockFile(block);
++    try (RandomAccessFile raf = new RandomAccessFile(f, "r")) {
++      return raf.length();
++    }
++  }
++
++  @Override
++  public long getStoredGenerationStamp(ExtendedBlock block) throws IOException {
++    File f = getBlockFile(block);
++    File dir = f.getParentFile();
++    File[] files = FileUtil.listFiles(dir);
++    return FsDatasetUtil.getGenerationStampFromFile(files, f);
++  }
+ }
+-- 
+1.7.9.5
+

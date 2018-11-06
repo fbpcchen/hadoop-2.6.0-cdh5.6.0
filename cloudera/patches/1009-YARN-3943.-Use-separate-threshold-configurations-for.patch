@@ -1,0 +1,412 @@
+From d42941e363271f55f48944fbec580d0cba8f3b48 Mon Sep 17 00:00:00 2001
+From: Jason Lowe <jlowe@apache.org>
+Date: Thu, 8 Oct 2015 22:25:34 +0000
+Subject: [PATCH 1009/1023] YARN-3943. Use separate threshold configurations
+ for disk-full detection and disk-not-full
+ detection. Contributed by Zhihai Xu
+
+(cherry picked from commit 8d226225d030253152494bda32708377ad0f7af7)
+
+Conflicts:
+	hadoop-yarn-project/CHANGES.txt
+	hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/LocalDirsHandlerService.java
+	hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/test/java/org/apache/hadoop/yarn/server/nodemanager/TestDirectoryCollection.java
+
+Change-Id: I54b96214d6adb10bdb7d149d3a6994927d84ebc5
+(cherry picked from commit c72d5fc7fd8e3f4bb8eb3959b8db7790998646ae)
+(cherry picked from commit 78dbef5dea77c1f0c7f4e816ca2c5d327944bc12)
+(cherry picked from commit f6f2d276c01cd8762419417e27c2875f826fb1ea)
+---
+ .../apache/hadoop/yarn/conf/YarnConfiguration.java |   12 ++++
+ .../src/main/resources/yarn-default.xml            |   11 ++++
+ .../server/nodemanager/DirectoryCollection.java    |   68 +++++++++++++-------
+ .../nodemanager/LocalDirsHandlerService.java       |   30 +++++++--
+ .../nodemanager/TestDirectoryCollection.java       |   68 ++++++++++++++------
+ 5 files changed, 139 insertions(+), 50 deletions(-)
+
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-api/src/main/java/org/apache/hadoop/yarn/conf/YarnConfiguration.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-api/src/main/java/org/apache/hadoop/yarn/conf/YarnConfiguration.java
+index 6e87247..15be4eb 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-api/src/main/java/org/apache/hadoop/yarn/conf/YarnConfiguration.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-api/src/main/java/org/apache/hadoop/yarn/conf/YarnConfiguration.java
+@@ -965,6 +965,18 @@ private static void addDeprecatedKeys() {
+       90.0F;
+ 
+   /**
++   * The low threshold percentage of disk space used when an offline disk is
++   * marked as online. Values can range from 0.0 to 100.0. The value shouldn't
++   * be more than NM_MAX_PER_DISK_UTILIZATION_PERCENTAGE. If its value is
++   * more than NM_MAX_PER_DISK_UTILIZATION_PERCENTAGE or not set, it will be
++   * set to the same value as NM_MAX_PER_DISK_UTILIZATION_PERCENTAGE.
++   * This applies to nm-local-dirs and nm-log-dirs.
++   */
++  public static final String NM_WM_LOW_PER_DISK_UTILIZATION_PERCENTAGE =
++      NM_DISK_HEALTH_CHECK_PREFIX +
++      "disk-utilization-watermark-low-per-disk-percentage";
++
++  /**
+    * The minimum space that must be available on a local dir for it to be used.
+    * This applies to nm-local-dirs and nm-log-dirs.
+    */
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/main/resources/yarn-default.xml b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/main/resources/yarn-default.xml
+index 41d0bde..524f94f 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/main/resources/yarn-default.xml
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/main/resources/yarn-default.xml
+@@ -975,6 +975,17 @@
+   </property>
+ 
+   <property>
++    <description>The low threshold percentage of disk space used when a bad disk is
++    marked as good. Values can range from 0.0 to 100.0. This applies to
++    yarn-nodemanager.local-dirs and yarn.nodemanager.log-dirs.
++    Note that if its value is more than yarn.nodemanager.disk-health-checker.
++    max-disk-utilization-per-disk-percentage or not set, it will be set to the same value as
++    yarn.nodemanager.disk-health-checker.max-disk-utilization-per-disk-percentage.</description>
++    <name>yarn.nodemanager.disk-health-checker.disk-utilization-watermark-low-per-disk-percentage</name>
++    <value></value>
++  </property>
++
++  <property>
+     <description>The minimum space that must be available on a disk for
+     it to be used. This applies to yarn-nodemanager.local-dirs and 
+     yarn.nodemanager.log-dirs.</description>
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/DirectoryCollection.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/DirectoryCollection.java
+index b4dd064..28492bc 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/DirectoryCollection.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/DirectoryCollection.java
+@@ -39,6 +39,8 @@
+ import org.apache.hadoop.fs.permission.FsPermission;
+ import org.apache.hadoop.util.DiskChecker;
+ 
++import com.google.common.annotations.VisibleForTesting;
++
+ /**
+  * Manages a list of local storage directories.
+  */
+@@ -88,8 +90,9 @@
+   private List<String> fullDirs;
+ 
+   private int numFailures;
+-  
+-  private float diskUtilizationPercentageCutoff;
++
++  private float diskUtilizationPercentageCutoffHigh;
++  private float diskUtilizationPercentageCutoffLow;
+   private long diskUtilizationSpaceCutoff;
+ 
+   private Set<DirsChangeListener> dirsChangeListeners;
+@@ -101,7 +104,7 @@
+    *          directories to be monitored
+    */
+   public DirectoryCollection(String[] dirs) {
+-    this(dirs, 100.0F, 0);
++    this(dirs, 100.0F, 100.0F, 0);
+   }
+ 
+   /**
+@@ -117,7 +120,7 @@ public DirectoryCollection(String[] dirs) {
+    * 
+    */
+   public DirectoryCollection(String[] dirs, float utilizationPercentageCutOff) {
+-    this(dirs, utilizationPercentageCutOff, 0);
++    this(dirs, utilizationPercentageCutOff, utilizationPercentageCutOff, 0);
+   }
+ 
+   /**
+@@ -132,7 +135,7 @@ public DirectoryCollection(String[] dirs, float utilizationPercentageCutOff) {
+    * 
+    */
+   public DirectoryCollection(String[] dirs, long utilizationSpaceCutOff) {
+-    this(dirs, 100.0F, utilizationSpaceCutOff);
++    this(dirs, 100.0F, 100.0F, utilizationSpaceCutOff);
+   }
+ 
+   /**
+@@ -143,25 +146,29 @@ public DirectoryCollection(String[] dirs, long utilizationSpaceCutOff) {
+    * 
+    * @param dirs
+    *          directories to be monitored
+-   * @param utilizationPercentageCutOff
++   * @param utilizationPercentageCutOffHigh
+    *          percentage of disk that can be used before the dir is taken out of
+    *          the good dirs list
++   * @param utilizationPercentageCutOffLow
++   *          percentage of disk that can be used when the dir is moved from
++   *          the bad dirs list to the good dirs list
+    * @param utilizationSpaceCutOff
+    *          minimum space, in MB, that must be available on the disk for the
+    *          dir to be marked as good
+    * 
+    */
+-  public DirectoryCollection(String[] dirs, 
+-      float utilizationPercentageCutOff,
++  public DirectoryCollection(String[] dirs,
++      float utilizationPercentageCutOffHigh,
++      float utilizationPercentageCutOffLow,
+       long utilizationSpaceCutOff) {
+     localDirs = new CopyOnWriteArrayList<String>(dirs);
+     errorDirs = new CopyOnWriteArrayList<String>();
+     fullDirs = new CopyOnWriteArrayList<String>();
+ 
+-    diskUtilizationPercentageCutoff =
+-        utilizationPercentageCutOff < 0.0F ? 0.0F
+-            : (utilizationPercentageCutOff > 100.0F ? 100.0F
+-                : utilizationPercentageCutOff);
++    diskUtilizationPercentageCutoffHigh = Math.max(0.0F, Math.min(100.0F,
++        utilizationPercentageCutOffHigh));
++    diskUtilizationPercentageCutoffLow = Math.max(0.0F, Math.min(
++        diskUtilizationPercentageCutoffHigh, utilizationPercentageCutOffLow));
+     diskUtilizationSpaceCutoff =
+         utilizationSpaceCutOff < 0 ? 0 : utilizationSpaceCutOff;
+ 
+@@ -252,7 +259,8 @@ synchronized boolean checkDirs() {
+     List<String> allLocalDirs =
+         DirectoryCollection.concat(localDirs, failedDirs);
+ 
+-    Map<String, DiskErrorInformation> dirsFailedCheck = testDirs(allLocalDirs);
++    Map<String, DiskErrorInformation> dirsFailedCheck = testDirs(allLocalDirs,
++        preCheckGoodDirs);
+ 
+     localDirs.clear();
+     errorDirs.clear();
+@@ -311,7 +319,8 @@ synchronized boolean checkDirs() {
+     return setChanged;
+   }
+ 
+-  Map<String, DiskErrorInformation> testDirs(List<String> dirs) {
++  Map<String, DiskErrorInformation> testDirs(List<String> dirs,
++      Set<String> goodDirs) {
+     HashMap<String, DiskErrorInformation> ret =
+         new HashMap<String, DiskErrorInformation>();
+     for (final String dir : dirs) {
+@@ -319,7 +328,10 @@ synchronized boolean checkDirs() {
+       try {
+         File testDir = new File(dir);
+         DiskChecker.checkDir(testDir);
+-        if (isDiskUsageOverPercentageLimit(testDir)) {
++        float diskUtilizationPercentageCutoff = goodDirs.contains(dir) ?
++            diskUtilizationPercentageCutoffHigh : diskUtilizationPercentageCutoffLow;
++        if (isDiskUsageOverPercentageLimit(testDir,
++            diskUtilizationPercentageCutoff)) {
+           msg =
+               "used space above threshold of "
+                   + diskUtilizationPercentageCutoff
+@@ -371,7 +383,8 @@ private void verifyDirUsingMkdir(File dir) throws IOException {
+     }
+   }
+ 
+-  private boolean isDiskUsageOverPercentageLimit(File dir) {
++  private boolean isDiskUsageOverPercentageLimit(File dir,
++      float diskUtilizationPercentageCutoff) {
+     float freePercentage =
+         100 * (dir.getUsableSpace() / (float) dir.getTotalSpace());
+     float usedPercentage = 100.0F - freePercentage;
+@@ -399,17 +412,24 @@ private void createDir(FileContext localFs, Path dir, FsPermission perm)
+       }
+     }
+   }
+-  
+-  public float getDiskUtilizationPercentageCutoff() {
+-    return diskUtilizationPercentageCutoff;
++
++  @VisibleForTesting
++  float getDiskUtilizationPercentageCutoffHigh() {
++    return diskUtilizationPercentageCutoffHigh;
++  }
++
++  @VisibleForTesting
++  float getDiskUtilizationPercentageCutoffLow() {
++    return diskUtilizationPercentageCutoffLow;
+   }
+ 
+   public void setDiskUtilizationPercentageCutoff(
+-      float diskUtilizationPercentageCutoff) {
+-    this.diskUtilizationPercentageCutoff =
+-        diskUtilizationPercentageCutoff < 0.0F ? 0.0F
+-            : (diskUtilizationPercentageCutoff > 100.0F ? 100.0F
+-                : diskUtilizationPercentageCutoff);
++      float utilizationPercentageCutOffHigh,
++      float utilizationPercentageCutOffLow) {
++    diskUtilizationPercentageCutoffHigh = Math.max(0.0F, Math.min(100.0F,
++        utilizationPercentageCutOffHigh));
++    diskUtilizationPercentageCutoffLow = Math.max(0.0F, Math.min(
++        diskUtilizationPercentageCutoffHigh, utilizationPercentageCutOffLow));
+   }
+ 
+   public long getDiskUtilizationSpaceCutoff() {
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/LocalDirsHandlerService.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/LocalDirsHandlerService.java
+index 9e68495..16b1518 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/LocalDirsHandlerService.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/LocalDirsHandlerService.java
+@@ -92,22 +92,40 @@
+   private final class MonitoringTimerTask extends TimerTask {
+ 
+     public MonitoringTimerTask(Configuration conf) throws YarnRuntimeException {
+-      float maxUsableSpacePercentagePerDisk =
++      float highUsableSpacePercentagePerDisk =
+           conf.getFloat(
+             YarnConfiguration.NM_MAX_PER_DISK_UTILIZATION_PERCENTAGE,
+             YarnConfiguration.DEFAULT_NM_MAX_PER_DISK_UTILIZATION_PERCENTAGE);
++      float lowUsableSpacePercentagePerDisk =
++          conf.getFloat(
++              YarnConfiguration.NM_WM_LOW_PER_DISK_UTILIZATION_PERCENTAGE,
++              highUsableSpacePercentagePerDisk);
++      if (lowUsableSpacePercentagePerDisk > highUsableSpacePercentagePerDisk) {
++        LOG.warn("Using " + YarnConfiguration.
++            NM_MAX_PER_DISK_UTILIZATION_PERCENTAGE + " as " +
++            YarnConfiguration.NM_WM_LOW_PER_DISK_UTILIZATION_PERCENTAGE +
++            ", because " + YarnConfiguration.
++            NM_WM_LOW_PER_DISK_UTILIZATION_PERCENTAGE +
++            " is not configured properly.");
++        lowUsableSpacePercentagePerDisk = highUsableSpacePercentagePerDisk;
++      }
+       long minFreeSpacePerDiskMB =
+           conf.getLong(YarnConfiguration.NM_MIN_PER_DISK_FREE_SPACE_MB,
+             YarnConfiguration.DEFAULT_NM_MIN_PER_DISK_FREE_SPACE_MB);
+       localDirs =
+           new DirectoryCollection(
+-            validatePaths(conf
+-              .getTrimmedStrings(YarnConfiguration.NM_LOCAL_DIRS)),
+-            maxUsableSpacePercentagePerDisk, minFreeSpacePerDiskMB);
++              validatePaths(conf
++                  .getTrimmedStrings(YarnConfiguration.NM_LOCAL_DIRS)),
++              highUsableSpacePercentagePerDisk,
++              lowUsableSpacePercentagePerDisk,
++              minFreeSpacePerDiskMB);
+       logDirs =
+           new DirectoryCollection(
+-            validatePaths(conf.getTrimmedStrings(YarnConfiguration.NM_LOG_DIRS)),
+-            maxUsableSpacePercentagePerDisk, minFreeSpacePerDiskMB);
++              validatePaths(conf
++                  .getTrimmedStrings(YarnConfiguration.NM_LOG_DIRS)),
++              highUsableSpacePercentagePerDisk,
++              lowUsableSpacePercentagePerDisk,
++              minFreeSpacePerDiskMB);
+       localDirsAllocator = new LocalDirAllocator(
+           YarnConfiguration.NM_LOCAL_DIRS);
+       logDirsAllocator = new LocalDirAllocator(YarnConfiguration.NM_LOG_DIRS);
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/test/java/org/apache/hadoop/yarn/server/nodemanager/TestDirectoryCollection.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/test/java/org/apache/hadoop/yarn/server/nodemanager/TestDirectoryCollection.java
+index c833f31..047ff86 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/test/java/org/apache/hadoop/yarn/server/nodemanager/TestDirectoryCollection.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/test/java/org/apache/hadoop/yarn/server/nodemanager/TestDirectoryCollection.java
+@@ -142,7 +142,7 @@ public void testDiskSpaceUtilizationLimit() throws IOException {
+     Assert.assertEquals(1, dc.getFailedDirs().size());
+     Assert.assertEquals(1, dc.getFullDirs().size());
+ 
+-    dc = new DirectoryCollection(dirs, 100.0F, 0);
++    dc = new DirectoryCollection(dirs, 100.0F, 100.0F, 0);
+     dc.checkDirs();
+     Assert.assertEquals(1, dc.getGoodDirs().size());
+     Assert.assertEquals(0, dc.getFailedDirs().size());
+@@ -153,18 +153,28 @@ public void testDiskSpaceUtilizationLimit() throws IOException {
+   public void testDiskLimitsCutoffSetters() throws IOException {
+ 
+     String[] dirs = { "dir" };
+-    DirectoryCollection dc = new DirectoryCollection(dirs, 0.0F, 100);
++    DirectoryCollection dc = new DirectoryCollection(dirs, 0.0F, 0.0F, 100);
+     float testValue = 57.5F;
+     float delta = 0.1F;
+-    dc.setDiskUtilizationPercentageCutoff(testValue);
+-    Assert.assertEquals(testValue, dc.getDiskUtilizationPercentageCutoff(),
+-      delta);
++    dc.setDiskUtilizationPercentageCutoff(testValue, 50.0F);
++    Assert.assertEquals(testValue, dc.getDiskUtilizationPercentageCutoffHigh(),
++        delta);
++    Assert.assertEquals(50.0F, dc.getDiskUtilizationPercentageCutoffLow(),
++        delta);
++
+     testValue = -57.5F;
+-    dc.setDiskUtilizationPercentageCutoff(testValue);
+-    Assert.assertEquals(0.0F, dc.getDiskUtilizationPercentageCutoff(), delta);
++    dc.setDiskUtilizationPercentageCutoff(testValue, testValue);
++    Assert.assertEquals(0.0F, dc.getDiskUtilizationPercentageCutoffHigh(),
++        delta);
++    Assert.assertEquals(0.0F, dc.getDiskUtilizationPercentageCutoffLow(),
++        delta);
++
+     testValue = 157.5F;
+-    dc.setDiskUtilizationPercentageCutoff(testValue);
+-    Assert.assertEquals(100.0F, dc.getDiskUtilizationPercentageCutoff(), delta);
++    dc.setDiskUtilizationPercentageCutoff(testValue, testValue);
++    Assert.assertEquals(100.0F, dc.getDiskUtilizationPercentageCutoffHigh(),
++        delta);
++    Assert.assertEquals(100.0F, dc.getDiskUtilizationPercentageCutoffLow(),
++        delta);
+ 
+     long spaceValue = 57;
+     dc.setDiskUtilizationSpaceCutoff(spaceValue);
+@@ -185,7 +195,7 @@ public void testFailedDisksBecomingGoodAgain() throws Exception {
+     Assert.assertEquals(1, dc.getFailedDirs().size());
+     Assert.assertEquals(1, dc.getFullDirs().size());
+ 
+-    dc.setDiskUtilizationPercentageCutoff(100.0F);
++    dc.setDiskUtilizationPercentageCutoff(100.0F, 100.0F);
+     dc.checkDirs();
+     Assert.assertEquals(1, dc.getGoodDirs().size());
+     Assert.assertEquals(0, dc.getFailedDirs().size());
+@@ -221,27 +231,45 @@ public void testConstructors() {
+     String[] dirs = { "dir" };
+     float delta = 0.1F;
+     DirectoryCollection dc = new DirectoryCollection(dirs);
+-    Assert.assertEquals(100.0F, dc.getDiskUtilizationPercentageCutoff(), delta);
++    Assert.assertEquals(100.0F, dc.getDiskUtilizationPercentageCutoffHigh(),
++        delta);
++    Assert.assertEquals(100.0F, dc.getDiskUtilizationPercentageCutoffLow(),
++        delta);
+     Assert.assertEquals(0, dc.getDiskUtilizationSpaceCutoff());
+ 
+     dc = new DirectoryCollection(dirs, 57.5F);
+-    Assert.assertEquals(57.5F, dc.getDiskUtilizationPercentageCutoff(), delta);
++    Assert.assertEquals(57.5F, dc.getDiskUtilizationPercentageCutoffHigh(),
++        delta);
++    Assert.assertEquals(57.5F, dc.getDiskUtilizationPercentageCutoffLow(),
++        delta);
+     Assert.assertEquals(0, dc.getDiskUtilizationSpaceCutoff());
+ 
+     dc = new DirectoryCollection(dirs, 57);
+-    Assert.assertEquals(100.0F, dc.getDiskUtilizationPercentageCutoff(), delta);
++    Assert.assertEquals(100.0F, dc.getDiskUtilizationPercentageCutoffHigh(),
++        delta);
++    Assert.assertEquals(100.0F, dc.getDiskUtilizationPercentageCutoffLow(),
++        delta);
+     Assert.assertEquals(57, dc.getDiskUtilizationSpaceCutoff());
+ 
+-    dc = new DirectoryCollection(dirs, 57.5F, 67);
+-    Assert.assertEquals(57.5F, dc.getDiskUtilizationPercentageCutoff(), delta);
++    dc = new DirectoryCollection(dirs, 57.5F, 50.5F, 67);
++    Assert.assertEquals(57.5F, dc.getDiskUtilizationPercentageCutoffHigh(),
++        delta);
++    Assert.assertEquals(50.5F, dc.getDiskUtilizationPercentageCutoffLow(),
++        delta);
+     Assert.assertEquals(67, dc.getDiskUtilizationSpaceCutoff());
+ 
+-    dc = new DirectoryCollection(dirs, -57.5F, -67);
+-    Assert.assertEquals(0.0F, dc.getDiskUtilizationPercentageCutoff(), delta);
++    dc = new DirectoryCollection(dirs, -57.5F, -57.5F, -67);
++    Assert.assertEquals(0.0F, dc.getDiskUtilizationPercentageCutoffHigh(),
++        delta);
++    Assert.assertEquals(0.0F, dc.getDiskUtilizationPercentageCutoffLow(),
++        delta);
+     Assert.assertEquals(0, dc.getDiskUtilizationSpaceCutoff());
+ 
+-    dc = new DirectoryCollection(dirs, 157.5F, -67);
+-    Assert.assertEquals(100.0F, dc.getDiskUtilizationPercentageCutoff(), delta);
++    dc = new DirectoryCollection(dirs, 157.5F, 157.5F, -67);
++    Assert.assertEquals(100.0F, dc.getDiskUtilizationPercentageCutoffHigh(),
++        delta);
++    Assert.assertEquals(100.0F, dc.getDiskUtilizationPercentageCutoffLow(),
++        delta);
+     Assert.assertEquals(0, dc.getDiskUtilizationSpaceCutoff());
+   }
+ 
+@@ -273,7 +301,7 @@ public void testDirsChangeListener() {
+     Assert.assertEquals(listener3.num, 1);
+ 
+     dc.deregisterDirsChangeListener(listener2);
+-    dc.setDiskUtilizationPercentageCutoff(100.0F);
++    dc.setDiskUtilizationPercentageCutoff(100.0F, 100.0F);
+     dc.checkDirs();
+     Assert.assertEquals(1, dc.getGoodDirs().size());
+     Assert.assertEquals(listener1.num, 3);
+-- 
+1.7.9.5
+

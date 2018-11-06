@@ -1,0 +1,33 @@
+From bac094e27f9457cb2b7dca4cc47ad8b8e3205e44 Mon Sep 17 00:00:00 2001
+From: Xiaoyu Yao <xyao@apache.org>
+Date: Mon, 28 Dec 2015 10:41:26 -0800
+Subject: [PATCH 1021/1023] HADOOP-12559. KMS connection failures should
+ trigger TGT renewal. Contributed by Zhe Zhang.
+
+(cherry picked from commit 993311e547e6dd7757025d5ffc285019bd4fc1f6)
+
+Conflicts:
+	hadoop-common-project/hadoop-common/CHANGES.txt
+
+Change-Id: I4392564059d158845397d6119b0154a63c8aa4f3
+(cherry picked from commit c1b76c3e31aab5ef113979775a0ff83b00ba8914)
+---
+ .../hadoop/crypto/key/kms/KMSClientProvider.java   |    2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/crypto/key/kms/KMSClientProvider.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/crypto/key/kms/KMSClientProvider.java
+index 744c32f..bdea60f 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/crypto/key/kms/KMSClientProvider.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/crypto/key/kms/KMSClientProvider.java
+@@ -473,6 +473,8 @@ private HttpURLConnection createConnection(final URL url, String method)
+           UserGroupInformation.AuthenticationMethod.PROXY)
+                               ? currentUgi.getShortUserName() : null;
+ 
++      // check and renew TGT to handle potential expiration
++      actualUgi.checkTGTAndReloginFromKeytab();
+       // creating the HTTP connection using the current UGI at constructor time
+       conn = actualUgi.doAs(new PrivilegedExceptionAction<HttpURLConnection>() {
+         @Override
+-- 
+1.7.9.5
+

@@ -1,0 +1,95 @@
+From cf44eaa83877f9043c9f46798fde1e3f30658ebd Mon Sep 17 00:00:00 2001
+From: Jing Zhao <jing9@apache.org>
+Date: Wed, 15 Apr 2015 12:37:20 -0700
+Subject: [PATCH 0683/1023] HDFS-8151. Always use snapshot path as source when
+ invalid snapshot names are used for diff based
+ distcp. Contributed by Jing Zhao.
+
+(cherry picked from commit 4c097e473bb1f18d1510deb61bae2bcb8c156f18)
+---
+ .../java/org/apache/hadoop/tools/DistCpSync.java   |   12 +++++++-----
+ .../org/apache/hadoop/tools/TestDistCpSync.java    |   15 ++++++++++++++-
+ 2 files changed, 21 insertions(+), 6 deletions(-)
+
+diff --git a/hadoop-tools/hadoop-distcp/src/main/java/org/apache/hadoop/tools/DistCpSync.java b/hadoop-tools/hadoop-distcp/src/main/java/org/apache/hadoop/tools/DistCpSync.java
+index 8e71b6f..5bf638d 100644
+--- a/hadoop-tools/hadoop-distcp/src/main/java/org/apache/hadoop/tools/DistCpSync.java
++++ b/hadoop-tools/hadoop-distcp/src/main/java/org/apache/hadoop/tools/DistCpSync.java
+@@ -47,8 +47,8 @@ static boolean sync(DistCpOptions inputOptions, Configuration conf)
+     List<Path> sourcePaths = inputOptions.getSourcePaths();
+     if (sourcePaths.size() != 1) {
+       // we only support one source dir which must be a snapshottable directory
+-      DistCp.LOG.warn(sourcePaths.size() + " source paths are provided");
+-      return false;
++      throw new IllegalArgumentException(sourcePaths.size()
++          + " source paths are provided");
+     }
+     final Path sourceDir = sourcePaths.get(0);
+     final Path targetDir = inputOptions.getTargetPath();
+@@ -59,15 +59,17 @@ static boolean sync(DistCpOptions inputOptions, Configuration conf)
+     // DistributedFileSystem.
+     if (!(sfs instanceof DistributedFileSystem) ||
+         !(tfs instanceof DistributedFileSystem)) {
+-      DistCp.LOG.warn("To use diff-based distcp, the FileSystems needs to" +
+-          " be DistributedFileSystem");
+-      return false;
++      throw new IllegalArgumentException("The FileSystems needs to" +
++          " be DistributedFileSystem for using snapshot-diff-based distcp");
+     }
+     final DistributedFileSystem sourceFs = (DistributedFileSystem) sfs;
+     final DistributedFileSystem targetFs= (DistributedFileSystem) tfs;
+ 
+     // make sure targetFS has no change between from and the current states
+     if (!checkNoChange(inputOptions, targetFs, targetDir)) {
++      // set the source path using the snapshot path
++      inputOptions.setSourcePaths(Arrays.asList(getSourceSnapshotPath(sourceDir,
++          inputOptions.getToSnapshot())));
+       return false;
+     }
+ 
+diff --git a/hadoop-tools/hadoop-distcp/src/test/java/org/apache/hadoop/tools/TestDistCpSync.java b/hadoop-tools/hadoop-distcp/src/test/java/org/apache/hadoop/tools/TestDistCpSync.java
+index 75d1de5..0a9a11f 100644
+--- a/hadoop-tools/hadoop-distcp/src/test/java/org/apache/hadoop/tools/TestDistCpSync.java
++++ b/hadoop-tools/hadoop-distcp/src/test/java/org/apache/hadoop/tools/TestDistCpSync.java
+@@ -88,24 +88,37 @@ public void tearDown() throws Exception {
+   public void testFallback() throws Exception {
+     // the source/target dir are not snapshottable dir
+     Assert.assertFalse(DistCpSync.sync(options, conf));
++    // make sure the source path has been updated to the snapshot path
++    final Path spath = new Path(source,
++        HdfsConstants.DOT_SNAPSHOT_DIR + Path.SEPARATOR + "s2");
++    Assert.assertEquals(spath, options.getSourcePaths().get(0));
+ 
++    // reset source path in options
++    options.setSourcePaths(Arrays.asList(source));
+     // the source/target does not have the given snapshots
+     dfs.allowSnapshot(source);
+     dfs.allowSnapshot(target);
+     Assert.assertFalse(DistCpSync.sync(options, conf));
++    Assert.assertEquals(spath, options.getSourcePaths().get(0));
+ 
++    // reset source path in options
++    options.setSourcePaths(Arrays.asList(source));
+     dfs.createSnapshot(source, "s1");
+     dfs.createSnapshot(source, "s2");
+     dfs.createSnapshot(target, "s1");
+     Assert.assertTrue(DistCpSync.sync(options, conf));
++
+     // reset source paths in options
+     options.setSourcePaths(Arrays.asList(source));
+-
+     // changes have been made in target
+     final Path subTarget = new Path(target, "sub");
+     dfs.mkdirs(subTarget);
+     Assert.assertFalse(DistCpSync.sync(options, conf));
++    // make sure the source path has been updated to the snapshot path
++    Assert.assertEquals(spath, options.getSourcePaths().get(0));
+ 
++    // reset source paths in options
++    options.setSourcePaths(Arrays.asList(source));
+     dfs.delete(subTarget, true);
+     Assert.assertTrue(DistCpSync.sync(options, conf));
+   }
+-- 
+1.7.9.5
+

@@ -1,0 +1,94 @@
+From 6208e02ec07412dd1a166bbf3322174f9a73c8f5 Mon Sep 17 00:00:00 2001
+From: Vinayakumar B <vinayakumarb@apache.org>
+Date: Wed, 3 Jun 2015 12:11:46 +0530
+Subject: [PATCH 0887/1023] HDFS-8270. create() always retried with hardcoded
+ timeout when file already exists with open lease
+ (Contributed by J.Andreina)
+
+(cherry picked from commit 54f83d9bd917e8641e902c5f0695e65ded472f9a)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSConfigKeys.java
+	hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/NameNodeProxies.java
+	hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestFileCreation.java
+
+(cherry picked from commit 8090a6ee63c414ac5b76c21df1f6b5a188e873d6)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt
+
+(cherry picked from commit 04a7000c8d955a134d86967f4b4622ea920e1ea7)
+(cherry picked from commit a2434dcf2a4a6e436d7472ce9d7ee4830808ed2d)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt
+
+Change-Id: I901d261715592934f63dbe60359d0dc801f91d27
+(cherry picked from commit a94e417436c9a95781b105844a32d25500337b30)
+(cherry picked from commit 1a69b827ccadd7caadaeca20f2e5d119fb7bad46)
+---
+ .../org/apache/hadoop/hdfs/NameNodeProxies.java    |   15 ---------------
+ .../org/apache/hadoop/hdfs/TestFileCreation.java   |    3 +--
+ 2 files changed, 1 insertion(+), 17 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/NameNodeProxies.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/NameNodeProxies.java
+index b261220..c7e2cf2 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/NameNodeProxies.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/NameNodeProxies.java
+@@ -42,7 +42,6 @@
+ import org.apache.commons.logging.LogFactory;
+ import org.apache.hadoop.conf.Configuration;
+ import org.apache.hadoop.hdfs.DFSClient.Conf;
+-import org.apache.hadoop.hdfs.protocol.AlreadyBeingCreatedException;
+ import org.apache.hadoop.hdfs.protocol.ClientProtocol;
+ import org.apache.hadoop.hdfs.protocol.HdfsConstants;
+ import org.apache.hadoop.hdfs.protocolPB.ClientNamenodeProtocolPB;
+@@ -68,7 +67,6 @@
+ import org.apache.hadoop.io.retry.RetryUtils;
+ import org.apache.hadoop.ipc.ProtobufRpcEngine;
+ import org.apache.hadoop.ipc.RPC;
+-import org.apache.hadoop.ipc.RemoteException;
+ import org.apache.hadoop.net.NetUtils;
+ import org.apache.hadoop.security.RefreshUserMappingsProtocol;
+ import org.apache.hadoop.security.SecurityUtil;
+@@ -425,22 +423,9 @@ private static ClientProtocol createNNProxyWithClientProtocol(
+ 
+     if (withRetries) { // create the proxy with retries
+ 
+-      RetryPolicy createPolicy = RetryPolicies
+-          .retryUpToMaximumCountWithFixedSleep(5,
+-              HdfsConstants.LEASE_SOFTLIMIT_PERIOD, TimeUnit.MILLISECONDS);
+-    
+-      Map<Class<? extends Exception>, RetryPolicy> remoteExceptionToPolicyMap 
+-                 = new HashMap<Class<? extends Exception>, RetryPolicy>();
+-      remoteExceptionToPolicyMap.put(AlreadyBeingCreatedException.class,
+-          createPolicy);
+-
+-      RetryPolicy methodPolicy = RetryPolicies.retryByRemoteException(
+-          defaultPolicy, remoteExceptionToPolicyMap);
+       Map<String, RetryPolicy> methodNameToPolicyMap 
+                  = new HashMap<String, RetryPolicy>();
+     
+-      methodNameToPolicyMap.put("create", methodPolicy);
+-
+       ClientProtocol translatorProxy =
+         new ClientNamenodeProtocolTranslatorPB(proxy);
+       return (ClientProtocol) RetryProxy.create(
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestFileCreation.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestFileCreation.java
+index 3a399f3..8e88b62 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestFileCreation.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestFileCreation.java
+@@ -408,9 +408,8 @@ public FileSystem run() throws Exception {
+         GenericTestUtils.assertExceptionContains("already being created by",
+             abce);
+       }
+-      // NameNodeProxies' createNNProxyWithClientProtocol has 5 retries.
+       assertCounter("AlreadyBeingCreatedExceptionNumOps",
+-          6L, getMetrics(metricsName));
++          1L, getMetrics(metricsName));
+       FSDataOutputStream stm2 = fs2.create(p, true);
+       stm2.write(2);
+       stm2.close();
+-- 
+1.7.9.5
+

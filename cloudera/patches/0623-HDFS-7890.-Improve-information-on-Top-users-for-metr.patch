@@ -1,0 +1,29 @@
+From 8fc8d8f80a0ae8e9943b83e7df3e22518ef252e5 Mon Sep 17 00:00:00 2001
+From: Vinayakumar B <vinayakumarb@apache.org>
+Date: Mon, 30 Mar 2015 10:02:48 +0530
+Subject: [PATCH 0623/1023] HDFS-7890. Improve information on Top users for
+ metrics in RollingWindowsManager and lower log
+ level (Contributed by J.Andreina)
+
+(cherry picked from commit 1ed9fb76645ecd195afe0067497dca10a3fb997d)
+(cherry picked from commit 9f49b3e93d2d50c474a66a5dc8d6bcba1804ed1a)
+---
+ .../namenode/top/window/RollingWindowManager.java  |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/top/window/RollingWindowManager.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/top/window/RollingWindowManager.java
+index 00e7087..4759cc8 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/top/window/RollingWindowManager.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/top/window/RollingWindowManager.java
+@@ -245,7 +245,7 @@ private TopN getTopUsersForMetric(long time, String metricName,
+           metricName, userName, windowSum);
+       topN.offer(new NameValuePair(userName, windowSum));
+     }
+-    LOG.info("topN size for command {} is: {}", metricName, topN.size());
++    LOG.debug("topN users size for command {} is: {}", metricName, topN.size());
+     return topN;
+   }
+ 
+-- 
+1.7.9.5
+

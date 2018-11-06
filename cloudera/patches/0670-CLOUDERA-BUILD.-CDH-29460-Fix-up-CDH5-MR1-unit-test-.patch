@@ -1,0 +1,68 @@
+From 1b7632d47da1c2a4f5601c0a911344c63e957ff5 Mon Sep 17 00:00:00 2001
+From: Zhihai Xu <zxu@cloudera.com>
+Date: Tue, 21 Jul 2015 14:47:05 -0700
+Subject: [PATCH 0670/1023] CLOUDERA-BUILD. CDH-29460 Fix up CDH5 MR1 unit
+ test jobs:TestWebUIAuthorization,
+ TestMapredSystemDir and TestFileInputFormat
+
+(cherry picked from commit 10b85c06d697be56adc31cbdc0a2bac59eebfc31)
+---
+ hadoop-mapreduce1-project/ivy.xml                  |    4 ++++
+ .../apache/hadoop/mapred/TestMapredSystemDir.java  |    5 +++--
+ .../hadoop/mapred/TestWebUIAuthorization.java      |    5 +++--
+ 3 files changed, 10 insertions(+), 4 deletions(-)
+
+diff --git a/hadoop-mapreduce1-project/ivy.xml b/hadoop-mapreduce1-project/ivy.xml
+index d5119ab..24ddd0d 100644
+--- a/hadoop-mapreduce1-project/ivy.xml
++++ b/hadoop-mapreduce1-project/ivy.xml
+@@ -76,6 +76,10 @@
+      <exclude org="commons-daemon" module="commons-daemon"/><!--bad POM-->
+      <exclude org="org.apache.commons" module="commons-daemon"/><!--bad POM-->
+    </dependency>
++   <dependency org="org.apache.hadoop" name="hadoop-aws" 
++               rev="${hadoop-common.version}" conf="compile->default">
++     <artifact name="hadoop-aws" ext="jar" />
++   </dependency>
+    
+    <dependency org="commons-logging" name="commons-logging" 
+                rev="${commons-logging.version}" conf="compile->master"/>
+diff --git a/hadoop-mapreduce1-project/src/test/org/apache/hadoop/mapred/TestMapredSystemDir.java b/hadoop-mapreduce1-project/src/test/org/apache/hadoop/mapred/TestMapredSystemDir.java
+index acff4c6..4cfbf96 100644
+--- a/hadoop-mapreduce1-project/src/test/org/apache/hadoop/mapred/TestMapredSystemDir.java
++++ b/hadoop-mapreduce1-project/src/test/org/apache/hadoop/mapred/TestMapredSystemDir.java
+@@ -84,12 +84,13 @@ public MiniMRCluster run() throws Exception {
+           JobTracker jobtracker = mr2.getJobTrackerRunner().getJobTracker();
+           // add garbage to mapred.system.dir
+           Path garbage = new Path(jobtracker.getSystemDir(), "garbage");
+-          fs.mkdirs(garbage);
++          Path test = new Path(garbage, "test");
++          fs.mkdirs(test);
+           fs.setPermission(garbage, new FsPermission(SYSTEM_DIR_PERMISSION));
+           return mr2;
+         }
+       });
+-      
++
+       // Drop back to regular user (superuser) to change owner of garbage dir
+       final Path garbage = new Path(
+           mr.getJobTrackerRunner().getJobTracker().getSystemDir(), "garbage");
+diff --git a/hadoop-mapreduce1-project/src/test/org/apache/hadoop/mapred/TestWebUIAuthorization.java b/hadoop-mapreduce1-project/src/test/org/apache/hadoop/mapred/TestWebUIAuthorization.java
+index f56e582..5ef1b52 100644
+--- a/hadoop-mapreduce1-project/src/test/org/apache/hadoop/mapred/TestWebUIAuthorization.java
++++ b/hadoop-mapreduce1-project/src/test/org/apache/hadoop/mapred/TestWebUIAuthorization.java
+@@ -790,8 +790,9 @@ private void checkAccessToCommonServlet(String url) throws IOException {
+     assertEquals(HttpURLConnection.HTTP_OK, getHttpStatusCode(url,
+         mrOwner, "GET"));
+     // no access for any other user
+-    assertEquals(HttpURLConnection.HTTP_UNAUTHORIZED, getHttpStatusCode(url,
+-        jobSubmitter, "GET"));
++    int result = getHttpStatusCode(url, jobSubmitter, "GET");
++    assertTrue(result == HttpURLConnection.HTTP_FORBIDDEN ||
++        result == HttpURLConnection.HTTP_UNAUTHORIZED);
+   }
+ 
+   // validate killJob of jobtracker.jsp
+-- 
+1.7.9.5
+

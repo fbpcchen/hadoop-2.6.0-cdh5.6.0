@@ -1,0 +1,41 @@
+From 34b8d69931aeb12ab81d85033fd64d52875f3334 Mon Sep 17 00:00:00 2001
+From: Jason Lowe <jlowe@apache.org>
+Date: Thu, 25 Jun 2015 19:50:07 +0000
+Subject: [PATCH 0740/1023] MAPREDUCE-6413. TestLocalJobSubmission is failing
+ with unknown host. Contributed by zhihai xu
+
+(cherry picked from commit aa5b15b03be61ebb76a226e0de485d5228c8e3d0)
+
+Conflicts:
+	hadoop-mapreduce-project/CHANGES.txt
+
+Change-Id: I38ea7ff18945c74e3c77b6487b0050606420accf
+---
+ .../hadoop/mapred/TestLocalJobSubmission.java      |    4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-jobclient/src/test/java/org/apache/hadoop/mapred/TestLocalJobSubmission.java b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-jobclient/src/test/java/org/apache/hadoop/mapred/TestLocalJobSubmission.java
+index e06551a..d73ee4b 100644
+--- a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-jobclient/src/test/java/org/apache/hadoop/mapred/TestLocalJobSubmission.java
++++ b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-jobclient/src/test/java/org/apache/hadoop/mapred/TestLocalJobSubmission.java
+@@ -29,6 +29,7 @@
+ import org.apache.hadoop.fs.FileSystem;
+ import org.apache.hadoop.fs.Path;
+ 
++import org.apache.hadoop.mapreduce.MRConfig;
+ import org.apache.hadoop.mapreduce.SleepJob;
+ import org.apache.hadoop.util.ToolRunner;
+ import org.junit.After;
+@@ -63,7 +64,8 @@ public void testLocalJobLibjarsOption() throws IOException {
+     Path jarPath = makeJar(new Path(TEST_ROOT_DIR, "test.jar"));
+ 
+     Configuration conf = new Configuration();
+-    conf.set(FileSystem.FS_DEFAULT_NAME_KEY, "hdfs://testcluster");
++    conf.set(FileSystem.FS_DEFAULT_NAME_KEY, "hdfs://localhost:9000");
++    conf.set(MRConfig.FRAMEWORK_NAME, "local");
+     final String[] args = {
+         "-jt" , "local", "-libjars", jarPath.toString(),
+         "-m", "1", "-r", "1", "-mt", "1", "-rt", "1"
+-- 
+1.7.9.5
+

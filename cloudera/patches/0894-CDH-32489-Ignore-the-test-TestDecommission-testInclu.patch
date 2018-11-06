@@ -1,0 +1,37 @@
+From ac6e9ad3df2b8d772828c5802f6fdd07e576197f Mon Sep 17 00:00:00 2001
+From: Wei-Chiu Chuang <weichiu@cloudera.com>
+Date: Mon, 5 Oct 2015 11:37:05 -0700
+Subject: [PATCH 0894/1023] CDH-32489: Ignore the test
+ TestDecommission#testIncludeByRegistrationName
+ Ignore the test case, as the registration name
+ feature is broken.
+
+Change-Id: I1fc254d5cd84ae07a0bcc0e9d18459c16702dff8
+(cherry picked from commit 07dcfbd9fef4d9ba011b23aaa8a3bbfc4657c225)
+---
+ .../org/apache/hadoop/hdfs/TestDecommission.java   |    2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDecommission.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDecommission.java
+index c2bc932..d8f4733 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDecommission.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDecommission.java
+@@ -53,6 +53,7 @@
+ import org.junit.Assert;
+ import org.junit.Before;
+ import org.junit.Test;
++import org.junit.Ignore;
+ 
+ /**
+  * This class tests the decommissioning of nodes.
+@@ -898,6 +899,7 @@ public void testDecommissionWithNamenodeRestart()throws IOException, Interrupted
+    * It is not recommended to use a registration name which is not also a
+    * valid DNS hostname for the DataNode.  See HDFS-5237 for background.
+    */
++  @Ignore
+   @Test(timeout=360000)
+   public void testIncludeByRegistrationName() throws IOException,
+       InterruptedException {
+-- 
+1.7.9.5
+

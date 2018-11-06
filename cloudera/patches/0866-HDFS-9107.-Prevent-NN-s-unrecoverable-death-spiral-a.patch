@@ -1,0 +1,165 @@
+From 8a9025b7d1adb6855be881d3c4759b150cdb5a71 Mon Sep 17 00:00:00 2001
+From: Colin Patrick Mccabe <cmccabe@cloudera.com>
+Date: Fri, 25 Sep 2015 15:25:42 -0700
+Subject: [PATCH 0866/1023] HDFS-9107. Prevent NN's unrecoverable death spiral
+ after full GC (Daryn Sharp via Colin P. McCabe)
+
+(cherry-picked from 4e7c6a653f108d44589f84d78a03d92ee0e8a3c3)
+(cherry picked from commit a6166aa5523916f002b70ec9c731fcfe3389228f)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/HeartbeatManager.java
+
+Change-Id: Ice42c7d9ef9fab84fe997fc09be62a720900598c
+(cherry picked from commit a1bd74c559b729a9df875b1fa70da26f90a8b422)
+---
+ .../server/blockmanagement/HeartbeatManager.java   |   30 ++++++++++++++++++--
+ .../blockmanagement/TestHeartbeatHandling.java     |   27 ++++++++++++++++++
+ 2 files changed, 55 insertions(+), 2 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/HeartbeatManager.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/HeartbeatManager.java
+index d60a39b..bfc7b53 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/HeartbeatManager.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/HeartbeatManager.java
+@@ -19,6 +19,7 @@
+ 
+ import java.util.ArrayList;
+ import java.util.List;
++import java.util.concurrent.TimeUnit;
+ 
+ import org.apache.commons.logging.Log;
+ import org.apache.commons.logging.LogFactory;
+@@ -30,8 +31,11 @@
+ import org.apache.hadoop.hdfs.server.protocol.StorageReport;
+ import org.apache.hadoop.hdfs.server.protocol.VolumeFailureSummary;
+ import org.apache.hadoop.util.Daemon;
++import org.apache.hadoop.util.StopWatch;
+ import org.apache.hadoop.util.Time;
+ 
++import com.google.common.annotations.VisibleForTesting;
++
+ /**
+  * Manage the heartbeats received from datanodes.
+  * The datanode list and statistics are synchronized
+@@ -56,8 +60,8 @@
+   private final long heartbeatRecheckInterval;
+   /** Heartbeat monitor thread */
+   private final Daemon heartbeatThread = new Daemon(new Monitor());
++  private final StopWatch heartbeatStopWatch = new StopWatch();
+ 
+-    
+   final Namesystem namesystem;
+   final BlockManager blockManager;
+ 
+@@ -237,7 +241,18 @@ synchronized void stopDecommission(final DatanodeDescriptor node) {
+     node.stopDecommission();
+     stats.add(node);
+   }
+-  
++
++  @VisibleForTesting
++  void restartHeartbeatStopWatch() {
++    heartbeatStopWatch.reset().start();
++  }
++
++  @VisibleForTesting
++  boolean shouldAbortHeartbeatCheck(long offset) {
++    long elapsed = heartbeatStopWatch.now(TimeUnit.MILLISECONDS);
++    return elapsed + offset > heartbeatRecheckInterval;
++  }
++
+   /**
+    * Check if there are any expired heartbeats, and if so,
+    * whether any blocks have to be re-replicated.
+@@ -284,6 +299,10 @@ void heartbeatCheck() {
+       int numOfStaleStorages = 0;
+       synchronized(this) {
+         for (DatanodeDescriptor d : datanodes) {
++          // check if an excessive GC pause has occurred
++          if (shouldAbortHeartbeatCheck(0)) {
++            return;
++          }
+           if (dead == null && dm.isDatanodeDead(d)) {
+             stats.incrExpiredHeartbeats();
+             dead = d;
+@@ -352,6 +371,7 @@ void heartbeatCheck() {
+     @Override
+     public void run() {
+       while(namesystem.isRunning()) {
++        restartHeartbeatStopWatch();
+         try {
+           final long now = Time.now();
+           if (lastHeartbeatCheck + heartbeatRecheckInterval < now) {
+@@ -373,6 +393,12 @@ public void run() {
+           Thread.sleep(5000);  // 5 seconds
+         } catch (InterruptedException ie) {
+         }
++        // avoid declaring nodes dead for another cycle if a GC pause lasts
++        // longer than the node recheck interval
++        if (shouldAbortHeartbeatCheck(-5000)) {
++          LOG.warn("Skipping next heartbeat scan due to excessive pause");
++          lastHeartbeatCheck = Time.monotonicNow();
++        }
+       }
+     }
+   }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/blockmanagement/TestHeartbeatHandling.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/blockmanagement/TestHeartbeatHandling.java
+index 988a0ed..283384f 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/blockmanagement/TestHeartbeatHandling.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/blockmanagement/TestHeartbeatHandling.java
+@@ -18,6 +18,8 @@
+ package org.apache.hadoop.hdfs.server.blockmanagement;
+ 
+ import static org.junit.Assert.assertEquals;
++import static org.junit.Assert.assertFalse;
++import static org.junit.Assert.assertTrue;
+ 
+ import java.util.ArrayList;
+ 
+@@ -32,6 +34,7 @@
+ import org.apache.hadoop.hdfs.server.datanode.DataNodeTestUtils;
+ import org.apache.hadoop.hdfs.server.namenode.FSNamesystem;
+ import org.apache.hadoop.hdfs.server.namenode.NameNodeAdapter;
++import org.apache.hadoop.hdfs.server.namenode.Namesystem;
+ import org.apache.hadoop.hdfs.server.protocol.BlockCommand;
+ import org.apache.hadoop.hdfs.server.protocol.BlockRecoveryCommand;
+ import org.apache.hadoop.hdfs.server.protocol.DatanodeCommand;
+@@ -39,6 +42,7 @@
+ import org.apache.hadoop.hdfs.server.protocol.DatanodeRegistration;
+ import org.apache.hadoop.hdfs.server.protocol.DatanodeStorage;
+ import org.junit.Test;
++import org.mockito.Mockito;
+ 
+ /**
+  * Test if FSNamesystem handles heartbeat right
+@@ -239,4 +243,27 @@ public void testHeartbeatBlockRecovery() throws Exception {
+       cluster.shutdown();
+     }
+   }
++
++  @Test
++  public void testHeartbeatStopWatch() throws Exception {
++   Namesystem ns = Mockito.mock(Namesystem.class);
++   BlockManager bm = Mockito.mock(BlockManager.class);
++   Configuration conf = new Configuration();
++   long recheck = 2000;
++   conf.setLong(
++       DFSConfigKeys.DFS_NAMENODE_HEARTBEAT_RECHECK_INTERVAL_KEY, recheck);
++   HeartbeatManager monitor = new HeartbeatManager(ns, bm, conf);
++   monitor.restartHeartbeatStopWatch();
++   assertFalse(monitor.shouldAbortHeartbeatCheck(0));
++   // sleep shorter than recheck and verify shouldn't abort
++   Thread.sleep(100);
++   assertFalse(monitor.shouldAbortHeartbeatCheck(0));
++   // sleep longer than recheck and verify should abort unless ignore delay
++   Thread.sleep(recheck);
++   assertTrue(monitor.shouldAbortHeartbeatCheck(0));
++   assertFalse(monitor.shouldAbortHeartbeatCheck(-recheck*3));
++   // ensure it resets properly
++   monitor.restartHeartbeatStopWatch();
++   assertFalse(monitor.shouldAbortHeartbeatCheck(0));
++  }
+ }
+-- 
+1.7.9.5
+

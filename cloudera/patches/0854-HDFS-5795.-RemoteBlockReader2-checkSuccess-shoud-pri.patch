@@ -1,0 +1,34 @@
+From 259cb795cc9343c9c65892eecdc42a80e4e85547 Mon Sep 17 00:00:00 2001
+From: Yongjun Zhang <yzhang@cloudera.com>
+Date: Thu, 24 Sep 2015 22:13:14 -0700
+Subject: [PATCH 0854/1023] HDFS-5795. RemoteBlockReader2#checkSuccess() shoud
+ print error status. (Xiao Chen via Yongjun Zhang)
+
+(cherry picked from commit 83e65c5fe84819b6c6da015b269fb4e46a88d105)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs-client/src/main/java/org/apache/hadoop/hdfs/protocol/datatransfer/DataTransferProtoUtil.java
+
+Change-Id: I3bd84795c88a6bb790b31cec25cdb6bf9d452e87
+(cherry picked from commit 1e97b461c2cd8c5711258f2b70e4de84e26cc8b9)
+---
+ .../org/apache/hadoop/hdfs/RemoteBlockReader2.java |    3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/RemoteBlockReader2.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/RemoteBlockReader2.java
+index 3f133b6..d7159eb 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/RemoteBlockReader2.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/RemoteBlockReader2.java
+@@ -457,7 +457,8 @@ static void checkSuccess(
+                 + ", for pool " + block.getBlockPoolId() + " block " 
+                 + block.getBlockId() + "_" + block.getGenerationStamp());
+       } else {
+-        throw new IOException("Got error for OP_READ_BLOCK, self="
++        throw new IOException("Got error for OP_READ_BLOCK, status="
++            + status.getStatus().name() + ", self="
+             + peer.getLocalAddressString() + ", remote="
+             + peer.getRemoteAddressString() + ", for file " + file
+             + ", for pool " + block.getBlockPoolId() + " block " 
+-- 
+1.7.9.5
+

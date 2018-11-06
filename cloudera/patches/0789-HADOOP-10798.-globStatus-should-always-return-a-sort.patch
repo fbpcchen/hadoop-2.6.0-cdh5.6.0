@@ -1,0 +1,95 @@
+From b98207cabbbbe0685d870939f300bd854533db05 Mon Sep 17 00:00:00 2001
+From: Colin Patrick Mccabe <cmccabe@cloudera.com>
+Date: Tue, 30 Jun 2015 16:40:21 -0700
+Subject: [PATCH 0789/1023] HADOOP-10798. globStatus() should always return a
+ sorted list of files (cmccabe)
+
+(cherry picked from commit 68e588cbee660d55dba518892d064bee3795a002)
+(cherry picked from commit 7c698bc3508977c90fb9fcc7deff511be08bac2b)
+
+Conflicts:
+	hadoop-common-project/hadoop-common/CHANGES.txt
+
+Change-Id: I79e94c8a03aca69174c3fca33d735684105dd4ec
+(cherry picked from commit 7cd1b7ead84ac0fe6943d16e9c6f1f51325abf7c)
+(cherry picked from commit 1ec0e250276e8404dde1dc50663aaacfb3f0dc70)
+---
+ .../main/java/org/apache/hadoop/fs/Globber.java    |   11 ++++++++-
+ .../java/org/apache/hadoop/fs/TestGlobPaths.java   |   25 ++++++++++++++++++++
+ 2 files changed, 35 insertions(+), 1 deletion(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/Globber.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/Globber.java
+index 098218e..48639b4 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/Globber.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/Globber.java
+@@ -20,6 +20,7 @@
+ import java.io.FileNotFoundException;
+ import java.io.IOException;
+ import java.util.ArrayList;
++import java.util.Arrays;
+ import java.util.List;
+ 
+ import org.apache.commons.logging.LogFactory;
+@@ -302,6 +303,14 @@ private String authorityFromPath(Path path) throws IOException {
+         (flattenedPatterns.size() <= 1)) {
+       return null;
+     }
+-    return results.toArray(new FileStatus[0]);
++    /*
++     * In general, the results list will already be sorted, since listStatus
++     * returns results in sorted order for many Hadoop filesystems.  However,
++     * not all Hadoop filesystems have this property.  So we sort here in order
++     * to get consistent results.  See HADOOP-10798 for details.
++     */
++    FileStatus ret[] = results.toArray(new FileStatus[0]);
++    Arrays.sort(ret);
++    return ret;
+   }
+ }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/fs/TestGlobPaths.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/fs/TestGlobPaths.java
+index 727f726..8ee6cd7 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/fs/TestGlobPaths.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/fs/TestGlobPaths.java
+@@ -21,9 +21,11 @@
+ 
+ import java.io.IOException;
+ import java.security.PrivilegedExceptionAction;
++import java.util.ArrayList;
+ import java.util.UUID;
+ import java.util.regex.Pattern;
+ 
++import com.google.common.collect.Ordering;
+ import org.apache.commons.lang.StringUtils;
+ import org.apache.hadoop.conf.Configuration;
+ import org.apache.hadoop.fs.permission.FsPermission;
+@@ -1284,4 +1286,27 @@ public void testNonTerminalGlobsOnFS() throws Exception {
+   public void testNonTerminalGlobsOnFC() throws Exception {
+     testOnFileContext(new TestNonTerminalGlobs(true));
+   }
++
++  @Test
++  public void testLocalFilesystem() throws Exception {
++    Configuration conf = new Configuration();
++    FileSystem fs = FileSystem.getLocal(conf);
++    String localTmp = System.getProperty("java.io.tmpdir");
++    Path base = new Path(new Path(localTmp), UUID.randomUUID().toString());
++    Assert.assertTrue(fs.mkdirs(base));
++    Assert.assertTrue(fs.mkdirs(new Path(base, "e")));
++    Assert.assertTrue(fs.mkdirs(new Path(base, "c")));
++    Assert.assertTrue(fs.mkdirs(new Path(base, "a")));
++    Assert.assertTrue(fs.mkdirs(new Path(base, "d")));
++    Assert.assertTrue(fs.mkdirs(new Path(base, "b")));
++    fs.deleteOnExit(base);
++    FileStatus[] status = fs.globStatus(new Path(base, "*"));
++    ArrayList list = new ArrayList();
++    for (FileStatus f: status) {
++        list.add(f.getPath().toString());
++    }
++    boolean sorted = Ordering.natural().isOrdered(list);
++    Assert.assertTrue(sorted);
++  }
+ }
++
+-- 
+1.7.9.5
+

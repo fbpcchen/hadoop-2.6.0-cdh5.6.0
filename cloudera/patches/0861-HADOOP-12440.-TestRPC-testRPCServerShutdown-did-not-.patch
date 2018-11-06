@@ -1,0 +1,32 @@
+From a7d89be3b07188c4a98a32fef532bdb21a200515 Mon Sep 17 00:00:00 2001
+From: Ming Ma <mingma@apache.org>
+Date: Mon, 28 Sep 2015 18:12:51 -0700
+Subject: [PATCH 0861/1023] HADOOP-12440. TestRPC#testRPCServerShutdown did
+ not produce the desired thread states before
+ shutting down. (Xiao Chen via mingma)
+
+(cherry picked from commit 5c3b663bf95551d1cf36a2a39849e0676893fa1d)
+
+Change-Id: I321fdfd1df1a80094bfa2ec0d66f3a97608ebe64
+---
+ .../test/java/org/apache/hadoop/ipc/TestRPC.java   |    4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/ipc/TestRPC.java b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/ipc/TestRPC.java
+index 6b2d22d..b64a943 100644
+--- a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/ipc/TestRPC.java
++++ b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/ipc/TestRPC.java
+@@ -1050,8 +1050,8 @@ public Void call() throws IOException, InterruptedException {
+             }));
+       }
+       while (server.getCallQueueLen() != 1
+-          && countThreads(CallQueueManager.class.getName()) != 1
+-          && countThreads(TestProtocol.class.getName()) != 1) {
++          || countThreads(CallQueueManager.class.getName()) != 1
++          || countThreads(TestImpl.class.getName()) != 1) {
+         Thread.sleep(100);
+       }
+     } finally {
+-- 
+1.7.9.5
+

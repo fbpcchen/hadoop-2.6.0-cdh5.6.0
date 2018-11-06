@@ -1,0 +1,48 @@
+From 1de769934f6cbe75c1f36282b120af732e2e2564 Mon Sep 17 00:00:00 2001
+From: Anubhav Dhoot <adhoot@cloudera.com>
+Date: Mon, 10 Aug 2015 10:54:42 -0700
+Subject: [PATCH 0709/1023] CLOUDERA-BUILD CDH-30230 Disable unit tests
+ related to revert of YARN-2581
+
+---
+ .../TestContainerManagerRecovery.java              |    2 ++
+ .../capacity/TestContainerAllocation.java          |    3 ++-
+ 2 files changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/test/java/org/apache/hadoop/yarn/server/nodemanager/containermanager/TestContainerManagerRecovery.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/test/java/org/apache/hadoop/yarn/server/nodemanager/containermanager/TestContainerManagerRecovery.java
+index a73d583..d811848 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/test/java/org/apache/hadoop/yarn/server/nodemanager/containermanager/TestContainerManagerRecovery.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/test/java/org/apache/hadoop/yarn/server/nodemanager/containermanager/TestContainerManagerRecovery.java
+@@ -163,6 +163,7 @@ public void testApplicationRecovery() throws Exception {
+     app = context.getApplications().get(appId);
+     assertNotNull(app);
+ 
++    /* Disabled Due to CDH-30230
+     // check whether LogAggregationContext is recovered correctly
+     LogAggregationContext recovered =
+         ((ApplicationImpl) app).getLogAggregationContext();
+@@ -171,6 +172,7 @@ public void testApplicationRecovery() throws Exception {
+       recovered.getIncludePattern());
+     assertEquals(logAggregationContext.getExcludePattern(),
+       recovered.getExcludePattern());
++    */
+ 
+     waitForAppState(app, ApplicationState.INITING);
+     assertTrue(context.getApplicationACLsManager().checkAccess(
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/capacity/TestContainerAllocation.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/capacity/TestContainerAllocation.java
+index 05aec34..829aa93 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/capacity/TestContainerAllocation.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/capacity/TestContainerAllocation.java
+@@ -215,7 +215,8 @@ public void testNormalContainerAllocationWhenDNSUnavailable() throws Exception{
+ 
+   // This is to test whether LogAggregationContext is passed into
+   // container tokens correctly
+-  @Test
++  // Disabled due to CDH-30230
++  // @Test
+   public void testLogAggregationContextPassedIntoContainerToken()
+       throws Exception {
+     MockRM rm1 = new MockRM(conf);
+-- 
+1.7.9.5
+

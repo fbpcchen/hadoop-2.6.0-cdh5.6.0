@@ -1,0 +1,288 @@
+From eedbf836357c4e10467f0494d062c9c8ed8af70f Mon Sep 17 00:00:00 2001
+From: Colin Patrick Mccabe <cmccabe@cloudera.com>
+Date: Fri, 28 Aug 2015 14:13:23 -0700
+Subject: [PATCH 0844/1023] HDFS-8950. NameNode refresh doesn't remove
+ DataNodes that are no longer in the allowed list
+ (Daniel Templeton)
+
+(cherry picked from commit b94b56806d3d6e04984e229b479f7ac15b62bbfa)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt
+	hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/blockmanagement/TestDatanodeManager.java
+
+Change-Id: I38c0437d2a8e45c7feccc61b97fdc2d4cbb21ce7
+(cherry picked from commit 214329041202f4bb40fa117b61fcb7ecb16fecb9)
+---
+ .../server/blockmanagement/DatanodeManager.java    |    9 +-
+ .../server/blockmanagement/HostFileManager.java    |   19 ++++
+ .../org/apache/hadoop/hdfs/TestDecommission.java   |   15 ++-
+ .../blockmanagement/TestDatanodeManager.java       |  103 +++++++++++++++++++-
+ .../blockmanagement/TestHostFileManager.java       |    7 +-
+ 5 files changed, 136 insertions(+), 17 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/DatanodeManager.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/DatanodeManager.java
+index 881489b..01daa16 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/DatanodeManager.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/DatanodeManager.java
+@@ -1323,11 +1323,14 @@ private DatanodeID parseDNFromHostsEntry(String hostLine) {
+       for (DatanodeDescriptor dn : datanodeMap.values()) {
+         final boolean isDead = isDatanodeDead(dn);
+         final boolean isDecommissioning = dn.isDecommissionInProgress();
+-        if ((listLiveNodes && !isDead) ||
++
++        if (((listLiveNodes && !isDead) ||
+             (listDeadNodes && isDead) ||
+-            (listDecommissioningNodes && isDecommissioning)) {
+-            nodes.add(dn);
++            (listDecommissioningNodes && isDecommissioning)) &&
++            hostFileManager.isIncluded(dn)) {
++          nodes.add(dn);
+         }
++
+         foundNodes.add(HostFileManager.resolvedAddressFromDatanodeID(dn));
+       }
+     }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/HostFileManager.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/HostFileManager.java
+index 0b8d6c5..e05ef9a 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/HostFileManager.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/HostFileManager.java
+@@ -126,9 +126,28 @@ synchronized boolean hasIncludes() {
+     return !includes.isEmpty();
+   }
+ 
++  /**
++   * Read the includes and excludes lists from the named files.  Any previous
++   * includes and excludes lists are discarded.
++   * @param includeFile the path to the new includes list
++   * @param excludeFile the path to the new excludes list
++   * @throws IOException thrown if there is a problem reading one of the files
++   */
+   void refresh(String includeFile, String excludeFile) throws IOException {
+     HostSet newIncludes = readFile("included", includeFile);
+     HostSet newExcludes = readFile("excluded", excludeFile);
++
++    refresh(newIncludes, newExcludes);
++  }
++
++  /**
++   * Set the includes and excludes lists by the new HostSet instances. The
++   * old instances are discarded.
++   * @param newIncludes the new includes list
++   * @param newExcludes the new excludes list
++   */
++  @VisibleForTesting
++  void refresh(HostSet newIncludes, HostSet newExcludes) {
+     synchronized (this) {
+       includes = newIncludes;
+       excludes = newExcludes;
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDecommission.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDecommission.java
+index 0940590..c2bc932 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDecommission.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDecommission.java
+@@ -765,16 +765,13 @@ public void testHostsFile(int numNameNodes) throws IOException,
+       }
+       assertEquals("Number of live nodes should be 0", 0, info.length);
+       
+-      // Test that non-live and bogus hostnames are considered "dead".
+-      // The dead report should have an entry for (1) the DN  that is
+-      // now considered dead because it is no longer allowed to connect
+-      // and (2) the bogus entry in the hosts file (these entries are
+-      // always added last)
++      // Test that bogus hostnames are considered "dead".
++      // The dead report should have an entry for the bogus entry in the hosts
++      // file.  The original datanode is excluded from the report because it
++      // is no longer in the included list.
+       info = client.datanodeReport(DatanodeReportType.DEAD);
+-      assertEquals("There should be 2 dead nodes", 2, info.length);
+-      DatanodeID id = cluster.getDataNodes().get(0).getDatanodeId();
+-      assertEquals(id.getHostName(), info[0].getHostName());
+-      assertEquals(bogusIp, info[1].getHostName());
++      assertEquals("There should be 1 dead node", 1, info.length);
++      assertEquals(bogusIp, info[0].getHostName());
+     }
+   }
+   
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/blockmanagement/TestDatanodeManager.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/blockmanagement/TestDatanodeManager.java
+index 161065b..4259495 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/blockmanagement/TestDatanodeManager.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/blockmanagement/TestDatanodeManager.java
+@@ -19,11 +19,13 @@
+ package org.apache.hadoop.hdfs.server.blockmanagement;
+ 
+ import java.io.IOException;
++import java.net.InetSocketAddress;
+ import java.net.URISyntaxException;
+ import java.net.URL;
+ import java.nio.file.Path;
+ import java.nio.file.Paths;
+ import java.util.ArrayList;
++import java.util.Collections;
+ import java.util.HashMap;
+ import java.util.Iterator;
+ import java.util.List;
+@@ -38,17 +40,23 @@
+ import org.apache.hadoop.fs.FileUtil;
+ import org.apache.hadoop.hdfs.DFSConfigKeys;
+ import org.apache.hadoop.hdfs.StorageType;
++import org.apache.hadoop.hdfs.protocol.DatanodeID;
+ import org.apache.hadoop.hdfs.protocol.DatanodeInfo;
+ import org.apache.hadoop.hdfs.protocol.ExtendedBlock;
+ import org.apache.hadoop.hdfs.protocol.LocatedBlock;
+ import org.apache.hadoop.hdfs.server.namenode.FSNamesystem;
+ import org.apache.hadoop.hdfs.protocol.DatanodeInfoWithStorage;
++import org.apache.hadoop.hdfs.protocol.HdfsConstants;
++import org.apache.hadoop.hdfs.security.token.block.ExportedBlockKeys;
++import org.apache.hadoop.hdfs.server.common.HdfsServerConstants;
++import org.apache.hadoop.hdfs.server.common.StorageInfo;
+ import org.apache.hadoop.hdfs.server.protocol.DatanodeRegistration;
+ import org.apache.hadoop.net.DNSToSwitchMapping;
+ import org.apache.hadoop.util.Shell;
+ import org.junit.Assert;
+ import org.junit.Test;
+ import org.mockito.Mockito;
++import org.mockito.internal.util.reflection.Whitebox;
+ import static org.hamcrest.core.Is.is;
+ import static org.junit.Assert.*;
+ 
+@@ -69,6 +77,15 @@ private static DatanodeManager mockDatanodeManager(
+   }
+ 
+   /**
++   * Create an InetSocketAddress for a host:port string
++   * @param host a host identifier in host:port format
++   * @return a corresponding InetSocketAddress object
++   */
++  private static InetSocketAddress entry(String host) {
++    return HostFileManager.parseEntry("dummy", "dummy", host);
++  }
++
++  /**
+    * This test sends a random sequence of node registrations and node removals
+    * to the DatanodeManager (of nodes with different IDs and versions), and
+    * checks that the DatanodeManager keeps a correct count of different software
+@@ -352,5 +369,89 @@ public void HelperFunction(String scriptFileName)
+     assertThat(sortedLocs[sortedLocs.length - 2].getAdminState(),
+       is(DatanodeInfo.AdminStates.DECOMMISSIONED));
+   }
+-}
+ 
++  /**
++   * Test whether removing a host from the includes list without adding it to
++   * the excludes list will exclude it from data node reports.
++   */
++  @Test
++  public void testRemoveIncludedNode() throws IOException {
++    FSNamesystem fsn = Mockito.mock(FSNamesystem.class);
++
++    // Set the write lock so that the DatanodeManager can start
++    Mockito.when(fsn.hasWriteLock()).thenReturn(true);
++
++    DatanodeManager dm = mockDatanodeManager(fsn, new Configuration());
++    HostFileManager hm = new HostFileManager();
++    HostFileManager.HostSet noNodes = new HostFileManager.HostSet();
++    HostFileManager.HostSet oneNode = new HostFileManager.HostSet();
++    HostFileManager.HostSet twoNodes = new HostFileManager.HostSet();
++    DatanodeRegistration dr1 = new DatanodeRegistration(
++      new DatanodeID("127.0.0.1", "127.0.0.1", "someStorageID-123",
++          12345, 12345, 12345, 12345),
++      new StorageInfo(HdfsServerConstants.NodeType.DATA_NODE),
++      new ExportedBlockKeys(), "test");
++    DatanodeRegistration dr2 = new DatanodeRegistration(
++      new DatanodeID("127.0.0.1", "127.0.0.1", "someStorageID-234",
++          23456, 23456, 23456, 23456),
++      new StorageInfo(HdfsServerConstants.NodeType.DATA_NODE),
++      new ExportedBlockKeys(), "test");
++
++    twoNodes.add(entry("127.0.0.1:12345"));
++    twoNodes.add(entry("127.0.0.1:23456"));
++    oneNode.add(entry("127.0.0.1:23456"));
++
++    hm.refresh(twoNodes, noNodes);
++    Whitebox.setInternalState(dm, "hostFileManager", hm);
++
++    // Register two data nodes to simulate them coming up.
++    // We need to add two nodes, because if we have only one node, removing it
++    // will cause the includes list to be empty, which means all hosts will be
++    // allowed.
++    dm.registerDatanode(dr1);
++    dm.registerDatanode(dr2);
++
++    // Make sure that both nodes are reported
++    List<DatanodeDescriptor> both =
++        dm.getDatanodeListForReport(HdfsConstants.DatanodeReportType.ALL);
++
++    // Sort the list so that we know which one is which
++    Collections.sort(both);
++
++    Assert.assertEquals("Incorrect number of hosts reported",
++        2, both.size());
++    Assert.assertEquals("Unexpected host or host in unexpected position",
++        "127.0.0.1:12345", both.get(0).getInfoAddr());
++    Assert.assertEquals("Unexpected host or host in unexpected position",
++        "127.0.0.1:23456", both.get(1).getInfoAddr());
++
++    // Remove one node from includes, but do not add it to excludes.
++    hm.refresh(oneNode, noNodes);
++
++    // Make sure that only one node is still reported
++    List<DatanodeDescriptor> onlyOne =
++        dm.getDatanodeListForReport(HdfsConstants.DatanodeReportType.ALL);
++
++    Assert.assertEquals("Incorrect number of hosts reported",
++        1, onlyOne.size());
++    Assert.assertEquals("Unexpected host reported",
++        "127.0.0.1:23456", onlyOne.get(0).getInfoAddr());
++
++    // Remove all nodes from includes
++    hm.refresh(noNodes, noNodes);
++
++    // Check that both nodes are reported again
++    List<DatanodeDescriptor> bothAgain =
++        dm.getDatanodeListForReport(HdfsConstants.DatanodeReportType.ALL);
++
++    // Sort the list so that we know which one is which
++    Collections.sort(bothAgain);
++
++    Assert.assertEquals("Incorrect number of hosts reported",
++        2, bothAgain.size());
++    Assert.assertEquals("Unexpected host or host in unexpected position",
++        "127.0.0.1:12345", bothAgain.get(0).getInfoAddr());
++    Assert.assertEquals("Unexpected host or host in unexpected position",
++        "127.0.0.1:23456", bothAgain.get(1).getInfoAddr());
++  }
++}
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/blockmanagement/TestHostFileManager.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/blockmanagement/TestHostFileManager.java
+index 5435572..3f63851 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/blockmanagement/TestHostFileManager.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/blockmanagement/TestHostFileManager.java
+@@ -103,23 +103,22 @@ public void testIncludeExcludeLists() throws IOException {
+     BlockManager bm = mock(BlockManager.class);
+     FSNamesystem fsn = mock(FSNamesystem.class);
+     Configuration conf = new Configuration();
+-    HostFileManager hm = mock(HostFileManager.class);
++    HostFileManager hm = new HostFileManager();
+     HostFileManager.HostSet includedNodes = new HostFileManager.HostSet();
+     HostFileManager.HostSet excludedNodes = new HostFileManager.HostSet();
+ 
+     includedNodes.add(entry("127.0.0.1:12345"));
+     includedNodes.add(entry("localhost:12345"));
+     includedNodes.add(entry("127.0.0.1:12345"));
+-
+     includedNodes.add(entry("127.0.0.2"));
++
+     excludedNodes.add(entry("127.0.0.1:12346"));
+     excludedNodes.add(entry("127.0.30.1:12346"));
+ 
+     Assert.assertEquals(2, includedNodes.size());
+     Assert.assertEquals(2, excludedNodes.size());
+ 
+-    doReturn(includedNodes).when(hm).getIncludes();
+-    doReturn(excludedNodes).when(hm).getExcludes();
++    hm.refresh(includedNodes, excludedNodes);
+ 
+     DatanodeManager dm = new DatanodeManager(bm, fsn, conf);
+     Whitebox.setInternalState(dm, "hostFileManager", hm);
+-- 
+1.7.9.5
+

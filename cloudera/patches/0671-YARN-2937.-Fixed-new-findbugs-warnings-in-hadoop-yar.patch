@@ -1,0 +1,400 @@
+From c5be7e7282be3ff9540ca670669bd7e866b36c53 Mon Sep 17 00:00:00 2001
+From: Zhijie Shen <zjshen@apache.org>
+Date: Tue, 23 Dec 2014 20:32:36 -0800
+Subject: [PATCH 0671/1023] YARN-2937. Fixed new findbugs warnings in
+ hadoop-yarn-nodemanager. Contributed by Varun
+ Saxena. (cherry picked from commit
+ 41a548a916d4248164cb9495320f123ec215d70e)
+
+Conflicts:
+	hadoop-yarn-project/hadoop-yarn/dev-support/findbugs-exclude.xml
+---
+ .../hadoop-yarn/dev-support/findbugs-exclude.xml   |   21 ++++++++++
+ .../yarn/server/nodemanager/ContainerExecutor.java |    2 +-
+ .../nodemanager/DefaultContainerExecutor.java      |   10 ++---
+ .../nodemanager/DockerContainerExecutor.java       |   16 ++++----
+ .../server/nodemanager/LinuxContainerExecutor.java |    3 --
+ .../WindowsSecureContainerExecutor.java            |    5 ++-
+ .../containermanager/container/ContainerImpl.java  |    1 -
+ .../util/CgroupsLCEResourcesHandler.java           |   42 +++++++++++---------
+ .../nodemanager/util/ProcessIdFileReader.java      |   12 +++---
+ .../nodemanager/webapp/ContainerLogsPage.java      |    4 +-
+ 10 files changed, 69 insertions(+), 47 deletions(-)
+
+diff --git a/hadoop-yarn-project/hadoop-yarn/dev-support/findbugs-exclude.xml b/hadoop-yarn-project/hadoop-yarn/dev-support/findbugs-exclude.xml
+index 45d7294..c7be862 100644
+--- a/hadoop-yarn-project/hadoop-yarn/dev-support/findbugs-exclude.xml
++++ b/hadoop-yarn-project/hadoop-yarn/dev-support/findbugs-exclude.xml
+@@ -391,4 +391,25 @@
+     <Bug pattern="UI_INHERITANCE_UNSAFE_GETRESOURCE"/>
+   </Match>
+ 
++  <!-- Ignore the false alarms on DM_DEFAULT_ENCODING (encoding already set) -->
++  <Match>
++    <Class name="org.apache.hadoop.yarn.logaggregation.AggregatedLogFormat$LogReader" />
++    <Bug pattern="DM_DEFAULT_ENCODING" />
++  </Match>
++
++  <!-- Ignore EI_EXPOSE_REP2 in timeline service -->
++  <Match>
++    <Class name="org.apache.hadoop.yarn.server.timeline.util.LeveldbUtils$KeyParser" />
++    <Bug pattern="EI_EXPOSE_REP2" />
++  </Match>
++
++  <!-- Ignore unrelated RV_RETURN_VALUE_IGNORED_BAD_PRACTICE warnings. No need to wait for result from executor service -->
++  <Match>
++    <Class name="org.apache.hadoop.yarn.server.nodemanager.containermanager.launcher.ContainersLauncher" />
++    <Bug pattern="RV_RETURN_VALUE_IGNORED_BAD_PRACTICE" />
++  </Match>
++  <Match>
++    <Class name="org.apache.hadoop.yarn.server.nodemanager.containermanager.localizer.sharedcache.SharedCacheUploadService" />
++    <Bug pattern="RV_RETURN_VALUE_IGNORED_BAD_PRACTICE" />
++  </Match>
+ </FindBugsFilter>
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/ContainerExecutor.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/ContainerExecutor.java
+index 327f882..77193df 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/ContainerExecutor.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/ContainerExecutor.java
+@@ -226,7 +226,7 @@ public void writeLaunchEnv(OutputStream out, Map<String, String> environment, Ma
+ 
+     PrintStream pout = null;
+     try {
+-      pout = new PrintStream(out);
++      pout = new PrintStream(out, false, "UTF-8");
+       sb.write(pout);
+     } finally {
+       if (out != null) {
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/DefaultContainerExecutor.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/DefaultContainerExecutor.java
+index 5bf8cec..1fce727 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/DefaultContainerExecutor.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/DefaultContainerExecutor.java
+@@ -32,12 +32,11 @@
+ import java.util.Arrays;
+ import java.util.EnumSet;
+ import java.util.List;
+-import java.util.Random;
+ import java.util.Map;
+ 
++import org.apache.commons.lang.math.RandomUtils;
+ import org.apache.commons.logging.Log;
+ import org.apache.commons.logging.LogFactory;
+-import org.apache.hadoop.conf.Configuration;
+ import org.apache.hadoop.fs.FileContext;
+ import org.apache.hadoop.fs.Path;
+ import org.apache.hadoop.fs.UnsupportedFileSystemException;
+@@ -292,7 +291,7 @@ public void writeLocalWrapperScript(Path launchDst, Path pidFile) throws IOExcep
+ 
+       try {
+         out = lfs.create(wrapperScriptPath, EnumSet.of(CREATE, OVERWRITE));
+-        pout = new PrintStream(out);
++        pout = new PrintStream(out, false, "UTF-8");
+         writeLocalWrapperScript(launchDst, pidFile, pout);
+       } finally {
+         IOUtils.cleanup(LOG, pout, out);
+@@ -345,7 +344,7 @@ private void writeSessionScript(Path launchDst, Path pidFile)
+       PrintStream pout = null;
+       try {
+         out = lfs.create(sessionScriptPath, EnumSet.of(CREATE, OVERWRITE));
+-        pout = new PrintStream(out);
++        pout = new PrintStream(out, false, "UTF-8");
+         // We need to do a move as writing to a file is not atomic
+         // Process reading a file being written to may get garbled data
+         // hence write pid to tmp file first followed by a mv
+@@ -547,8 +546,7 @@ protected Path getWorkingDir(List<String> localDirs, String user,
+ 
+     // make probability to pick a directory proportional to
+     // the available space on the directory.
+-    Random r = new Random();
+-    long randomPosition = Math.abs(r.nextLong()) % totalAvailable;
++    long randomPosition = RandomUtils.nextLong() % totalAvailable;
+     int dir = 0;
+     // skip zero available space directory,
+     // because totalAvailable is greater than 0 and randomPosition
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/DockerContainerExecutor.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/DockerContainerExecutor.java
+index d8dd890..c854173 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/DockerContainerExecutor.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/DockerContainerExecutor.java
+@@ -22,6 +22,8 @@
+ import com.google.common.base.Joiner;
+ import com.google.common.base.Preconditions;
+ import com.google.common.base.Strings;
++
++import org.apache.commons.lang.math.RandomUtils;
+ import org.apache.commons.logging.Log;
+ import org.apache.commons.logging.LogFactory;
+ import org.apache.hadoop.fs.CommonConfigurationKeys;
+@@ -59,7 +61,6 @@
+ import java.util.Set;
+ import java.util.regex.Pattern;
+ import java.net.InetSocketAddress;
+-
+ import static org.apache.hadoop.fs.CreateFlag.CREATE;
+ import static org.apache.hadoop.fs.CreateFlag.OVERWRITE;
+ 
+@@ -310,9 +311,9 @@ public void writeLaunchEnv(OutputStream out, Map<String, String> environment, Ma
+     PrintStream ps = null;
+     ByteArrayOutputStream baos = new ByteArrayOutputStream();
+     try {
+-      pout = new PrintStream(out);
++      pout = new PrintStream(out, false, "UTF-8");
+       if (LOG.isDebugEnabled()) {
+-        ps = new PrintStream(baos);
++        ps = new PrintStream(baos, false, "UTF-8");
+         sb.write(ps);
+       }
+       sb.write(pout);
+@@ -326,7 +327,7 @@ public void writeLaunchEnv(OutputStream out, Map<String, String> environment, Ma
+       }
+     }
+     if (LOG.isDebugEnabled()) {
+-      LOG.debug("Script: " + baos.toString());
++      LOG.debug("Script: " + baos.toString("UTF-8"));
+     }
+   }
+ 
+@@ -440,7 +441,7 @@ public void writeLocalWrapperScript(Path launchDst, Path pidFile) throws IOExcep
+ 
+       try {
+         out = lfs.create(wrapperScriptPath, EnumSet.of(CREATE, OVERWRITE));
+-        pout = new PrintStream(out);
++        pout = new PrintStream(out, false, "UTF-8");
+         writeLocalWrapperScript(launchDst, pidFile, pout);
+       } finally {
+         IOUtils.cleanup(LOG, pout, out);
+@@ -498,7 +499,7 @@ private void writeSessionScript(Path launchDst, Path pidFile)
+       PrintStream pout = null;
+       try {
+         out = lfs.create(sessionScriptPath, EnumSet.of(CREATE, OVERWRITE));
+-        pout = new PrintStream(out);
++        pout = new PrintStream(out, false, "UTF-8");
+         // We need to do a move as writing to a file is not atomic
+         // Process reading a file being written to may get garbled data
+         // hence write pid to tmp file first followed by a mv
+@@ -736,8 +737,7 @@ protected Path getWorkingDir(List<String> localDirs, String user,
+ 
+     // make probability to pick a directory proportional to
+     // the available space on the directory.
+-    Random r = new Random();
+-    long randomPosition = Math.abs(r.nextLong()) % totalAvailable;
++    long randomPosition = RandomUtils.nextLong() % totalAvailable;
+     int dir = 0;
+     // skip zero available space directory,
+     // because totalAvailable is greater than 0 and randomPosition
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/LinuxContainerExecutor.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/LinuxContainerExecutor.java
+index 8f8a200..59b35ce 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/LinuxContainerExecutor.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/LinuxContainerExecutor.java
+@@ -299,9 +299,6 @@ public int launchContainer(Container container,
+         return ExitCode.TERMINATED.getExitCode();
+       }
+     } catch (ExitCodeException e) {
+-      if (null == shExec) {
+-        return -1;
+-      }
+       int exitCode = shExec.getExitCode();
+       LOG.warn("Exit code from container " + containerId + " is : " + exitCode);
+       // 143 (SIGTERM) and 137 (SIGKILL) exit codes means the container was
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/WindowsSecureContainerExecutor.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/WindowsSecureContainerExecutor.java
+index ec9c65e..1e82f21 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/WindowsSecureContainerExecutor.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/WindowsSecureContainerExecutor.java
+@@ -29,6 +29,7 @@
+ import java.io.PrintStream;
+ import java.net.InetSocketAddress;
+ import java.net.URISyntaxException;
++import java.nio.charset.Charset;
+ import java.util.ArrayList;
+ import java.util.HashMap;
+ import java.util.List;
+@@ -487,7 +488,7 @@ public void run() {
+           try
+           {
+             BufferedReader lines = new BufferedReader(
+-                new InputStreamReader(stream));
++                new InputStreamReader(stream, Charset.forName("UTF-8")));
+             char[] buf = new char[512];
+             int nRead;
+             while ((nRead = lines.read(buf, 0, buf.length)) > 0) {
+@@ -704,7 +705,7 @@ public void startLocalizer(Path nmPrivateContainerTokens,
+        }
+        catch(Throwable e) {
+          LOG.warn(String.format(
+-             "An exception occured during the cleanup of localizer job %s:\n%s", 
++             "An exception occured during the cleanup of localizer job %s:%n%s", 
+              localizerPid, 
+              org.apache.hadoop.util.StringUtils.stringifyException(e)));
+        }
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/containermanager/container/ContainerImpl.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/containermanager/container/ContainerImpl.java
+index c6bf7ab..e75a165 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/containermanager/container/ContainerImpl.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/containermanager/container/ContainerImpl.java
+@@ -37,7 +37,6 @@
+ import org.apache.hadoop.conf.Configuration;
+ import org.apache.hadoop.fs.Path;
+ import org.apache.hadoop.security.Credentials;
+-import org.apache.hadoop.yarn.api.records.ApplicationId;
+ import org.apache.hadoop.yarn.api.records.ContainerExitStatus;
+ import org.apache.hadoop.yarn.api.records.ContainerId;
+ import org.apache.hadoop.yarn.api.records.ContainerLaunchContext;
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/util/CgroupsLCEResourcesHandler.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/util/CgroupsLCEResourcesHandler.java
+index cd1861d..57439ef 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/util/CgroupsLCEResourcesHandler.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/util/CgroupsLCEResourcesHandler.java
+@@ -20,9 +20,13 @@
+ 
+ import java.io.BufferedReader;
+ import java.io.File;
+-import java.io.FileReader;
+-import java.io.FileWriter;
++import java.io.FileInputStream;
++import java.io.FileOutputStream;
+ import java.io.IOException;
++import java.io.InputStreamReader;
++import java.io.OutputStreamWriter;
++import java.io.PrintWriter;
++import java.io.Writer;
+ import java.util.ArrayList;
+ import java.util.Arrays;
+ import java.util.HashMap;
+@@ -38,6 +42,7 @@
+ import org.apache.commons.logging.LogFactory;
+ import org.apache.hadoop.conf.Configuration;
+ import org.apache.hadoop.fs.FileUtil;
++import org.apache.hadoop.io.IOUtils;
+ import org.apache.hadoop.yarn.api.records.ContainerId;
+ import org.apache.hadoop.yarn.api.records.Resource;
+ import org.apache.hadoop.yarn.conf.YarnConfiguration;
+@@ -237,7 +242,6 @@ void createCgroup(String controller, String groupName)
+   @VisibleForTesting
+   void updateCgroup(String controller, String groupName, String param,
+                             String value) throws IOException {
+-    FileWriter f = null;
+     String path = pathForCgroup(controller, groupName);
+     param = controller + "." + param;
+ 
+@@ -245,19 +249,25 @@ void updateCgroup(String controller, String groupName, String param,
+       LOG.debug("updateCgroup: " + path + ": " + param + "=" + value);
+     }
+ 
++    PrintWriter pw = null;
+     try {
+-      f = new FileWriter(path + "/" + param, false);
+-      f.write(value);
++      File file = new File(path + "/" + param);
++      Writer w = new OutputStreamWriter(new FileOutputStream(file), "UTF-8");
++      pw = new PrintWriter(w);
++      pw.write(value);
+     } catch (IOException e) {
+       throw new IOException("Unable to set " + param + "=" + value +
+           " for cgroup at: " + path, e);
+     } finally {
+-      if (f != null) {
+-        try {
+-          f.close();
+-        } catch (IOException e) {
+-          LOG.warn("Unable to close cgroup file: " +
+-              path, e);
++      if (pw != null) {
++        boolean hasError = pw.checkError();
++        pw.close();
++        if(hasError) {
++          throw new IOException("Unable to set " + param + "=" + value +
++                " for cgroup at: " + path);
++        }
++        if(pw.checkError()) {
++          throw new IOException("Error while closing cgroup file " + path);
+         }
+       }
+     }
+@@ -382,7 +392,8 @@ public String getResourcesOption(ContainerId containerId) {
+     BufferedReader in = null;
+ 
+     try {
+-      in = new BufferedReader(new FileReader(new File(getMtabFileName())));
++      FileInputStream fis = new FileInputStream(new File(getMtabFileName()));
++      in = new BufferedReader(new InputStreamReader(fis, "UTF-8"));
+ 
+       for (String str = in.readLine(); str != null;
+           str = in.readLine()) {
+@@ -402,12 +413,7 @@ public String getResourcesOption(ContainerId containerId) {
+     } catch (IOException e) {
+       throw new IOException("Error while reading " + getMtabFileName(), e);
+     } finally {
+-      // Close the streams
+-      try {
+-        in.close();
+-      } catch (IOException e2) {
+-        LOG.warn("Error closing the stream: " + getMtabFileName(), e2);
+-      }
++      IOUtils.cleanup(LOG, in);
+     }
+ 
+     return ret;
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/util/ProcessIdFileReader.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/util/ProcessIdFileReader.java
+index 0c7c250..52fcdec 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/util/ProcessIdFileReader.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/util/ProcessIdFileReader.java
+@@ -19,8 +19,9 @@
+ 
+ import java.io.BufferedReader;
+ import java.io.File;
+-import java.io.FileReader;
++import java.io.FileInputStream;
+ import java.io.IOException;
++import java.io.InputStreamReader;
+ 
+ import org.apache.commons.logging.Log;
+ import org.apache.commons.logging.LogFactory;
+@@ -49,14 +50,14 @@ public static String getProcessId(Path path) throws IOException {
+     
+     LOG.debug("Accessing pid from pid file " + path);
+     String processId = null;
+-    FileReader fileReader = null;
+     BufferedReader bufReader = null;
+ 
+     try {
+       File file = new File(path.toString());
+       if (file.exists()) {
+-        fileReader = new FileReader(file);
+-        bufReader = new BufferedReader(fileReader);
++        FileInputStream fis = new FileInputStream(file);
++        bufReader = new BufferedReader(new InputStreamReader(fis, "UTF-8"));
++
+         while (true) {
+           String line = bufReader.readLine();
+           if (line == null) {
+@@ -91,9 +92,6 @@ public static String getProcessId(Path path) throws IOException {
+         }
+       }
+     } finally {
+-      if (fileReader != null) {
+-        fileReader.close();
+-      }
+       if (bufReader != null) {
+         bufReader.close();
+       }
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/webapp/ContainerLogsPage.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/webapp/ContainerLogsPage.java
+index 7d2948e..48e0c87 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/webapp/ContainerLogsPage.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/webapp/ContainerLogsPage.java
+@@ -28,6 +28,7 @@
+ import java.io.FileInputStream;
+ import java.io.IOException;
+ import java.io.InputStreamReader;
++import java.nio.charset.Charset;
+ import java.util.Arrays;
+ import java.util.Collections;
+ import java.util.List;
+@@ -151,7 +152,8 @@ private void printLogFile(Block html, File logFile) {
+           }
+           
+           IOUtils.skipFully(logByteStream, start);
+-          InputStreamReader reader = new InputStreamReader(logByteStream);
++          InputStreamReader reader =
++              new InputStreamReader(logByteStream, Charset.forName("UTF-8"));
+           int bufferSize = 65536;
+           char[] cbuf = new char[bufferSize];
+ 
+-- 
+1.7.9.5
+

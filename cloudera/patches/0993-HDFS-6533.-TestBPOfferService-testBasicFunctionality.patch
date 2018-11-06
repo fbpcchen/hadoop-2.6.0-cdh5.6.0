@@ -1,0 +1,149 @@
+From c2a4d2a4aa080c586e3a37e1e2a7a8a55dfc73e9 Mon Sep 17 00:00:00 2001
+From: Arpit Agarwal <arp@apache.org>
+Date: Tue, 1 Dec 2015 13:32:32 -0800
+Subject: [PATCH 0993/1023] HDFS-6533.
+ TestBPOfferService#testBasicFunctionalitytest
+ fails intermittently. (Contributed by Wei-Chiu
+ Chuang)
+
+(cherry picked from commit 58f6f54eeac779428ac995d196b60ffb90563f97)
+
+Change-Id: I0def8f9150f11831caaa8fedc964fc8e0f9c0f34
+(cherry picked from commit e1ccf6e78208e3f201ae22cc15d48b47729d1552)
+(cherry picked from commit 045617fc6581e0cf16203765d7eb0717e5d5470e)
+---
+ .../hdfs/server/datanode/BPServiceActor.java       |    4 +++
+ .../hdfs/server/datanode/TestBPOfferService.java   |   32 +++++++++++++++++++-
+ 2 files changed, 35 insertions(+), 1 deletion(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BPServiceActor.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BPServiceActor.java
+index 56bd9e2..4ac39e5 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BPServiceActor.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BPServiceActor.java
+@@ -127,6 +127,10 @@
+     scheduler = new Scheduler(dnConf.heartBeatInterval, dnConf.blockReportInterval);
+   }
+ 
++  public DatanodeRegistration getBpRegistration() {
++    return bpRegistration;
++  }
++
+   boolean isAlive() {
+     if (!shouldServiceRun || !bpThread.isAlive()) {
+       return false;
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestBPOfferService.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestBPOfferService.java
+index f970b3f..bf056f8 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestBPOfferService.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestBPOfferService.java
+@@ -181,7 +181,7 @@ public void testBasicFunctionality() throws Exception {
+     BPOfferService bpos = setupBPOSForNNs(mockNN1, mockNN2);
+     bpos.start();
+     try {
+-      waitForInitialization(bpos);
++      waitForBothActors(bpos);
+       
+       // The DN should have register to both NNs.
+       Mockito.verify(mockNN1).registerDatanode(
+@@ -206,6 +206,7 @@ public void testBasicFunctionality() throws Exception {
+ 
+     } finally {
+       bpos.stop();
++      bpos.join();
+     }
+   }
+ 
+@@ -236,6 +237,7 @@ public void testIgnoreDeletionsFromNonActive() throws Exception {
+ 
+     } finally {
+       bpos.stop();
++      bpos.join();
+     }
+     
+     // Should ignore the delete command from the standby
+@@ -261,6 +263,7 @@ public void testNNsFromDifferentClusters() throws Exception {
+       waitForOneToFail(bpos);
+     } finally {
+       bpos.stop();
++      bpos.join();
+     }
+   }
+   
+@@ -308,6 +311,7 @@ public void testPickActiveNameNode() throws Exception {
+ 
+     } finally {
+       bpos.stop();
++      bpos.join();
+     }
+   }
+ 
+@@ -350,6 +354,7 @@ public Void answer(InvocationOnMock invocation) throws Throwable {
+       waitForBlockReport(mockNN1, mockNN2);
+     } finally {
+       bpos.stop();
++      bpos.join();
+     }
+   }
+ 
+@@ -404,6 +409,27 @@ public Boolean get() {
+       }
+     }, 100, 10000);
+   }
++
++  private void waitForBothActors(final BPOfferService bpos)
++      throws Exception {
++    GenericTestUtils.waitFor(new Supplier<Boolean>() {
++      @Override
++      public Boolean get() {
++        List<BPServiceActor> actors = bpos.getBPServiceActors();
++
++        return bpos.isAlive() && getRegisteredActors(actors) == 2;
++      }
++      private int getRegisteredActors(List<BPServiceActor> actors) {
++        int regActors = 0;
++        for (BPServiceActor actor : actors) {
++          if (actor.getBpRegistration() != null) {
++            regActors++;
++          }
++        }
++        return regActors;
++      }
++    }, 100, 10000);
++  }
+   
+   private void waitForBlockReport(final DatanodeProtocolClientSideTranslatorPB mockNN)
+       throws Exception {
+@@ -541,6 +567,7 @@ public void testReportBadBlockWhenStandbyNNTimesOut() throws Exception {
+           difference < 5000);
+     } finally {
+       bpos.stop();
++      bpos.join();
+     }
+   }
+ 
+@@ -580,6 +607,7 @@ public void testTrySendErrorReportWhenStandbyNNTimesOut() throws Exception {
+           + " processing ", difference < 5000);
+     } finally {
+       bpos.stop();
++      bpos.join();
+     }
+   }
+   /**
+@@ -625,6 +653,7 @@ public Void answer(InvocationOnMock invocation) throws Throwable {
+           + "when errorReport threw IOException", secondCallTime != 0);
+     } finally {
+       bpos.stop();
++      bpos.join();
+     }
+   } 
+ 
+@@ -676,6 +705,7 @@ public void testReportBadBlocksWhenNNThrowsStandbyException()
+           .reportBadBlocks(Mockito.any(LocatedBlock[].class));
+     } finally {
+       bpos.stop();
++      bpos.join();
+     }
+   }
+ }
+-- 
+1.7.9.5
+

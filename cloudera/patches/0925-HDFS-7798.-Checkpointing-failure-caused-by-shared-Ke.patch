@@ -1,0 +1,45 @@
+From 0e81f1683b5dd66780cd1c270e9875987b6ff191 Mon Sep 17 00:00:00 2001
+From: yliu <yliu@apache.org>
+Date: Tue, 17 Feb 2015 07:46:33 +0800
+Subject: [PATCH 0925/1023] HDFS-7798. Checkpointing failure caused by shared
+ KerberosAuthenticator. (Chengbing Liu via yliu)
+
+(cherry picked from commit 500e6a0f46d14a591d0ec082b6d26ee59bdfdf76)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt
+
+Change-Id: I12b1d9cc116f9d25fca163dc0fd18a13159ec62d
+(cherry picked from commit 65350eca259bc13e68e44245c1eabd719e1bbaf3)
+---
+ .../hadoop/hdfs/web/URLConnectionFactory.java      |    7 ++-----
+ 1 file changed, 2 insertions(+), 5 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/web/URLConnectionFactory.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/web/URLConnectionFactory.java
+index 00e9e98..8a743b6 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/web/URLConnectionFactory.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/web/URLConnectionFactory.java
+@@ -49,9 +49,6 @@
+ public class URLConnectionFactory {
+   private static final Log LOG = LogFactory.getLog(URLConnectionFactory.class);
+ 
+-  /** SPNEGO authenticator */
+-  private static final KerberosUgiAuthenticator AUTH = new KerberosUgiAuthenticator();
+-
+   /**
+    * Timeout for socket connects and reads
+    */
+@@ -161,8 +158,8 @@ public URLConnection openConnection(URL url, boolean isSpnego)
+       }
+       UserGroupInformation.getCurrentUser().checkTGTAndReloginFromKeytab();
+       final AuthenticatedURL.Token authToken = new AuthenticatedURL.Token();
+-      return new AuthenticatedURL(AUTH, connConfigurator).openConnection(url,
+-          authToken);
++      return new AuthenticatedURL(new KerberosUgiAuthenticator(),
++          connConfigurator).openConnection(url, authToken);
+     } else {
+       if (LOG.isDebugEnabled()) {
+         LOG.debug("open URL connection");
+-- 
+1.7.9.5
+

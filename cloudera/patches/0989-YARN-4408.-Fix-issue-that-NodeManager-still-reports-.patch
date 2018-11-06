@@ -1,0 +1,118 @@
+From fa653281111ed3c931a6428350e9bdfb76c05ffb Mon Sep 17 00:00:00 2001
+From: Junping Du <junping_du@apache.org>
+Date: Thu, 3 Dec 2015 06:36:37 -0800
+Subject: [PATCH 0989/1023] YARN-4408. Fix issue that NodeManager still
+ reports negative running containers. Contributed
+ by Robert Kanter. (cherry picked from commit
+ 62e9348bc10bb97a5fcb4281f7996a09d8e69c60)
+
+(cherry picked from commit e76ba91fa58dae6750f608c0f8b86e9a43e80005)
+
+Conflicts:
+	hadoop-yarn-project/CHANGES.txt
+
+Change-Id: I852c583e46b290864c1aec829a64608fac060923
+(cherry picked from commit 047aa5e89fc4eb9104e47928675f4dfa0ba5e641)
+---
+ .../containermanager/container/ContainerImpl.java  |    7 ++-
+ .../containermanager/container/TestContainer.java  |   59 +++++++++++++++++++-
+ 2 files changed, 64 insertions(+), 2 deletions(-)
+
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/containermanager/container/ContainerImpl.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/containermanager/container/ContainerImpl.java
+index e75a165..ce97c78 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/containermanager/container/ContainerImpl.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/containermanager/container/ContainerImpl.java
+@@ -975,7 +975,12 @@ public void transition(ContainerImpl container, ContainerEvent event) {
+       ContainerDoneTransition {
+     @Override
+     public void transition(ContainerImpl container, ContainerEvent event) {
+-      container.metrics.endRunningContainer();
++      if (container.wasLaunched) {
++        container.metrics.endRunningContainer();
++      } else {
++        LOG.warn("Container exited with success despite being killed and not" +
++            "actually running");
++      }
+       container.metrics.completedContainer();
+       NMAuditLogger.logSuccess(container.user,
+           AuditConstants.FINISH_SUCCESS_CONTAINER, "ContainerImpl",
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/test/java/org/apache/hadoop/yarn/server/nodemanager/containermanager/container/TestContainer.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/test/java/org/apache/hadoop/yarn/server/nodemanager/containermanager/container/TestContainer.java
+index a8ded3d..34704e9 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/test/java/org/apache/hadoop/yarn/server/nodemanager/containermanager/container/TestContainer.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/test/java/org/apache/hadoop/yarn/server/nodemanager/containermanager/container/TestContainer.java
+@@ -397,7 +397,8 @@ public void testKillOnLocalizationFailed() throws Exception {
+   }
+ 
+   @Test
+-  public void testKillOnLocalizedWhenContainerNotLaunched() throws Exception {
++  public void testKillOnLocalizedWhenContainerNotLaunchedContainerKilled()
++      throws Exception {
+     WrappedContainer wc = null;
+     try {
+       wc = new WrappedContainer(17, 314159265358979L, 4344, "yak");
+@@ -427,6 +428,62 @@ public void testKillOnLocalizedWhenContainerNotLaunched() throws Exception {
+   }
+ 
+   @Test
++  public void testKillOnLocalizedWhenContainerNotLaunchedContainerSuccess()
++      throws Exception {
++    WrappedContainer wc = null;
++    try {
++      wc = new WrappedContainer(17, 314159265358979L, 4344, "yak");
++      wc.initContainer();
++      wc.localizeResources();
++      assertEquals(ContainerState.LOCALIZED, wc.c.getContainerState());
++      wc.killContainer();
++      assertEquals(ContainerState.KILLING, wc.c.getContainerState());
++      wc.containerSuccessful();
++      wc.drainDispatcherEvents();
++      assertEquals(ContainerState.EXITED_WITH_SUCCESS,
++          wc.c.getContainerState());
++      assertNull(wc.c.getLocalizedResources());
++      verifyCleanupCall(wc);
++      wc.c.handle(new ContainerEvent(wc.c.getContainerId(),
++          ContainerEventType.CONTAINER_RESOURCES_CLEANEDUP));
++      assertEquals(ContainerState.DONE, wc.c.getContainerState());
++      assertEquals(0, metrics.getRunningContainers());
++    } finally {
++      if (wc != null) {
++        wc.finished();
++      }
++    }
++  }
++
++  @Test
++  public void testKillOnLocalizedWhenContainerNotLaunchedContainerFailure()
++      throws Exception {
++    WrappedContainer wc = null;
++    try {
++      wc = new WrappedContainer(17, 314159265358979L, 4344, "yak");
++      wc.initContainer();
++      wc.localizeResources();
++      assertEquals(ContainerState.LOCALIZED, wc.c.getContainerState());
++      wc.killContainer();
++      assertEquals(ContainerState.KILLING, wc.c.getContainerState());
++      wc.containerFailed(ExitCode.FORCE_KILLED.getExitCode());
++      wc.drainDispatcherEvents();
++      assertEquals(ContainerState.EXITED_WITH_FAILURE,
++          wc.c.getContainerState());
++      assertNull(wc.c.getLocalizedResources());
++      verifyCleanupCall(wc);
++      wc.c.handle(new ContainerEvent(wc.c.getContainerId(),
++          ContainerEventType.CONTAINER_RESOURCES_CLEANEDUP));
++      assertEquals(ContainerState.DONE, wc.c.getContainerState());
++      assertEquals(0, metrics.getRunningContainers());
++    } finally {
++      if (wc != null) {
++        wc.finished();
++      }
++    }
++  }
++
++  @Test
+   public void testKillOnLocalizedWhenContainerLaunched() throws Exception {
+     WrappedContainer wc = null;
+     try {
+-- 
+1.7.9.5
+

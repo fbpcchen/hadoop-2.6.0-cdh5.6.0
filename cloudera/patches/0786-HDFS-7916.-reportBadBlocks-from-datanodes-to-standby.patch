@@ -1,0 +1,135 @@
+From 6786a7ab924f1afa52ce8db0b8e7f95dc385c828 Mon Sep 17 00:00:00 2001
+From: Kihwal Lee <kihwal@apache.org>
+Date: Mon, 11 May 2015 14:33:45 -0500
+Subject: [PATCH 0786/1023] HDFS-7916. 'reportBadBlocks' from datanodes to
+ standby Node BPServiceActor goes for infinite
+ loop. Contributed by Rushabh Shah.
+
+(cherry picked from commit ea11590aad952b5b560a5101d064adf27d8656db)
+(cherry picked from commit 50778f9d458443c2cbfead4502df4e1204c4d567)
+
+Change-Id: I423b862200cdef6e9c2338f93a1bd8b98e65b709
+(cherry picked from commit a24c1833a4cdfa9a862154cae07b2dcc309f823b)
+---
+ .../hdfs/server/datanode/ErrorReportAction.java    |    4 ++
+ .../hdfs/server/datanode/ReportBadBlockAction.java |    4 ++
+ .../hdfs/server/datanode/TestBPOfferService.java   |   54 ++++++++++++++++++++
+ 3 files changed, 62 insertions(+)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/ErrorReportAction.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/ErrorReportAction.java
+index 331822a..b7a9dae 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/ErrorReportAction.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/ErrorReportAction.java
+@@ -22,6 +22,7 @@
+ 
+ import org.apache.hadoop.hdfs.protocolPB.DatanodeProtocolClientSideTranslatorPB;
+ import org.apache.hadoop.hdfs.server.protocol.DatanodeRegistration;
++import org.apache.hadoop.ipc.RemoteException;
+ 
+ 
+ /**
+@@ -43,6 +44,9 @@ public void reportTo(DatanodeProtocolClientSideTranslatorPB bpNamenode,
+     DatanodeRegistration bpRegistration) throws BPServiceActorActionException {
+     try {
+       bpNamenode.errorReport(bpRegistration, errorCode, errorMessage);
++    } catch (RemoteException re) {
++      DataNode.LOG.info("trySendErrorReport encountered RemoteException  "
++          + "errorMessage: " + errorMessage + "  errorCode: " + errorCode, re);
+     } catch(IOException e) {
+       throw new BPServiceActorActionException("Error reporting "
+           + "an error to namenode: ");
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/ReportBadBlockAction.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/ReportBadBlockAction.java
+index c6bb8aa..56312ac 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/ReportBadBlockAction.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/ReportBadBlockAction.java
+@@ -26,6 +26,7 @@
+ import org.apache.hadoop.hdfs.protocol.LocatedBlock;
+ import org.apache.hadoop.hdfs.protocolPB.DatanodeProtocolClientSideTranslatorPB;
+ import org.apache.hadoop.hdfs.server.protocol.DatanodeRegistration;
++import org.apache.hadoop.ipc.RemoteException;
+ 
+ /**
+  * ReportBadBlockAction is an instruction issued by {{BPOfferService}} to
+@@ -59,6 +60,9 @@ public void reportTo(DatanodeProtocolClientSideTranslatorPB bpNamenode,
+ 
+     try {
+       bpNamenode.reportBadBlocks(locatedBlock);
++    } catch (RemoteException re) {
++      DataNode.LOG.info("reportBadBlock encountered RemoteException for "
++          + "block:  " + block , re);
+     } catch (IOException e) {
+       throw new BPServiceActorActionException("Failed to report bad block "
+           + block + " to namenode: ");
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestBPOfferService.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestBPOfferService.java
+index 6e39c53..f970b3f 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestBPOfferService.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestBPOfferService.java
+@@ -56,6 +56,9 @@
+ import org.apache.hadoop.hdfs.server.protocol.StorageReceivedDeletedBlocks;
+ import org.apache.hadoop.hdfs.server.protocol.StorageReport;
+ import org.apache.hadoop.hdfs.server.protocol.VolumeFailureSummary;
++import org.apache.hadoop.ipc.RemoteException;
++import org.apache.hadoop.ipc.StandbyException;
++import org.apache.hadoop.ipc.protobuf.RpcHeaderProtos.RpcResponseHeaderProto.RpcErrorCodeProto;
+ import org.apache.hadoop.test.GenericTestUtils;
+ import org.apache.hadoop.test.PathUtils;
+ import org.apache.hadoop.util.Time;
+@@ -624,4 +627,55 @@ public Void answer(InvocationOnMock invocation) throws Throwable {
+       bpos.stop();
+     }
+   } 
++
++  /**
++   * This test case doesn't add the reportBadBlock request to
++   * {@link BPServiceActor#bpThreadEnqueue} when the Standby namenode throws
++   * {@link StandbyException}
++   * @throws Exception
++   */
++ @Test
++  public void testReportBadBlocksWhenNNThrowsStandbyException()
++      throws Exception {
++    BPOfferService bpos = setupBPOSForNNs(mockNN1, mockNN2);
++    bpos.start();
++    try {
++      waitForInitialization(bpos);
++      // Should start with neither NN as active.
++      assertNull(bpos.getActiveNN());
++      // Have NN1 claim active at txid 1
++      mockHaStatuses[0] = new NNHAStatusHeartbeat(HAServiceState.ACTIVE, 1);
++      bpos.triggerHeartbeatForTests();
++      // Now mockNN1 is acting like active namenode and mockNN2 as Standby
++      assertSame(mockNN1, bpos.getActiveNN());
++      // Return nothing when active Active Namenode calls reportBadBlocks
++      Mockito.doNothing().when(mockNN1).reportBadBlocks
++          (Mockito.any(LocatedBlock[].class));
++
++      RemoteException re = new RemoteException(StandbyException.class.
++          getName(), "Operation category WRITE is not supported in state "
++          + "standby", RpcErrorCodeProto.ERROR_APPLICATION);
++      // Return StandbyException wrapped in RemoteException when Standby NN
++      // calls reportBadBlocks
++      Mockito.doThrow(re).when(mockNN2).reportBadBlocks
++          (Mockito.any(LocatedBlock[].class));
++
++      bpos.reportBadBlocks(FAKE_BLOCK, mockFSDataset.getVolume(FAKE_BLOCK)
++          .getStorageID(), mockFSDataset.getVolume(FAKE_BLOCK)
++          .getStorageType());
++      // Send heartbeat so that the BpServiceActor can report bad block to
++      // namenode
++      bpos.triggerHeartbeatForTests();
++      Mockito.verify(mockNN2, Mockito.times(1))
++      .reportBadBlocks(Mockito.any(LocatedBlock[].class));
++
++      // Trigger another heartbeat, this will send reportBadBlock again if it
++      // is present in the queue.
++      bpos.triggerHeartbeatForTests();
++      Mockito.verify(mockNN2, Mockito.times(1))
++          .reportBadBlocks(Mockito.any(LocatedBlock[].class));
++    } finally {
++      bpos.stop();
++    }
++  }
+ }
+-- 
+1.7.9.5
+

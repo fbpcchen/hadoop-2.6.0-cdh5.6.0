@@ -1,0 +1,298 @@
+From fa4f9af3d1ea64872b2a53d0641b56ffd655d960 Mon Sep 17 00:00:00 2001
+From: Wangda Tan <wangda@apache.org>
+Date: Wed, 13 May 2015 13:06:07 -0700
+Subject: [PATCH 0658/1023] YARN-2921. Fix MockRM/MockAM#waitForState sleep
+ too long. (Tsuyoshi Ozawa via wangda)
+
+(cherry picked from commit 341a476812015d0d584b198b451ea9458645a47c)
+(cherry picked from commit 3df8880bbe75023bf4a814c36db00122e7931131)
+
+Conflicts:
+	hadoop-yarn-project/CHANGES.txt
+	hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/MockAM.java
+---
+ .../apache/hadoop/yarn/event/AsyncDispatcher.java  |    3 +-
+ .../hadoop/yarn/server/resourcemanager/MockAM.java |   34 ++++++++----
+ .../hadoop/yarn/server/resourcemanager/MockRM.java |   55 ++++++++++++++------
+ .../TestApplicationMasterService.java              |    1 +
+ .../yarn/server/resourcemanager/TestRMRestart.java |   15 +++++-
+ .../applicationsmanager/TestAMRestart.java         |   20 +++----
+ 6 files changed, 88 insertions(+), 40 deletions(-)
+
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/main/java/org/apache/hadoop/yarn/event/AsyncDispatcher.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/main/java/org/apache/hadoop/yarn/event/AsyncDispatcher.java
+index 28be6ac..8e25bb7 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/main/java/org/apache/hadoop/yarn/event/AsyncDispatcher.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/main/java/org/apache/hadoop/yarn/event/AsyncDispatcher.java
+@@ -139,7 +139,8 @@ protected void serviceStop() throws Exception {
+       synchronized (waitForDrained) {
+         while (!drained && eventHandlingThread.isAlive()) {
+           waitForDrained.wait(1000);
+-          LOG.info("Waiting for AsyncDispatcher to drain.");
++          LOG.info("Waiting for AsyncDispatcher to drain. Thread state is :" +
++              eventHandlingThread.getState());
+         }
+       }
+     }
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/MockAM.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/MockAM.java
+index e2e3cc1..2bb4488 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/MockAM.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/MockAM.java
+@@ -45,9 +45,13 @@
+ import org.apache.hadoop.yarn.server.resourcemanager.rmapp.attempt.RMAppAttempt;
+ import org.apache.hadoop.yarn.server.resourcemanager.rmapp.attempt.RMAppAttemptState;
+ import org.apache.hadoop.yarn.util.Records;
++import org.apache.log4j.Logger;
++import org.junit.Assert;
+ 
+ public class MockAM {
+ 
++  private static final Logger LOG = Logger.getLogger(MockAM.class);
++
+   private volatile int responseId = 0;
+   private final ApplicationAttemptId attemptId;
+   private RMContext context;
+@@ -73,18 +77,28 @@ public void setAMRMProtocol(ApplicationMasterProtocol amRMProtocol,
+   public void waitForState(RMAppAttemptState finalState) throws Exception {
+     RMApp app = context.getRMApps().get(attemptId.getApplicationId());
+     RMAppAttempt attempt = app.getRMAppAttempt(attemptId);
+-    int timeoutSecs = 0;
++    final int timeoutMsecs = 40000;
++    final int minWaitMsecs = 1000;
++    final int waitMsPerLoop = 500;
++    int loop = 0;
+     while (!finalState.equals(attempt.getAppAttemptState())
+-        && timeoutSecs++ < 40) {
+-      System.out
+-          .println("AppAttempt : " + attemptId + " State is : " 
+-              + attempt.getAppAttemptState()
+-              + " Waiting for state : " + finalState);
+-      Thread.sleep(1000);
++        && waitMsPerLoop * loop < timeoutMsecs) {
++      LOG.info("AppAttempt : " + attemptId + " State is : " +
++          attempt.getAppAttemptState() + " Waiting for state : " +
++          finalState);
++      Thread.yield();
++      Thread.sleep(waitMsPerLoop);
++      loop++;
++    }
++    int waitedMsecs = waitMsPerLoop * loop;
++    if (minWaitMsecs > waitedMsecs) {
++      Thread.sleep(minWaitMsecs - waitedMsecs);
++    }
++    LOG.info("Attempt State is : " + attempt.getAppAttemptState());
++    if (waitedMsecs >= timeoutMsecs) {
++      Assert.fail("Attempt state is not correct (timedout): expected: "
++          + finalState + " actual: " + attempt.getAppAttemptState());
+     }
+-    System.out.println("AppAttempt State is : " + attempt.getAppAttemptState());
+-    Assert.assertEquals("AppAttempt state is not correct (timedout)",
+-        finalState, attempt.getAppAttemptState());
+   }
+ 
+   public RegisterApplicationMasterResponse registerAppAttempt()
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/MockRM.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/MockRM.java
+index 5794b43..1e77441 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/MockRM.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/MockRM.java
+@@ -63,6 +63,7 @@
+ import org.apache.hadoop.yarn.server.resourcemanager.nodelabels.RMNodeLabelsManager;
+ import org.apache.hadoop.yarn.server.resourcemanager.recovery.RMStateStore;
+ import org.apache.hadoop.yarn.server.resourcemanager.rmapp.RMApp;
++import org.apache.hadoop.yarn.server.resourcemanager.rmapp.RMAppImpl;
+ import org.apache.hadoop.yarn.server.resourcemanager.rmapp.RMAppState;
+ import org.apache.hadoop.yarn.server.resourcemanager.rmapp.attempt.RMAppAttempt;
+ import org.apache.hadoop.yarn.server.resourcemanager.rmapp.attempt.RMAppAttemptEvent;
+@@ -93,6 +94,7 @@
+ @SuppressWarnings("unchecked")
+ public class MockRM extends ResourceManager {
+ 
++  static final Logger LOG = Logger.getLogger(MockRM.class);
+   static final String ENABLE_WEBAPP = "mockrm.webapp.enabled";
+ 
+   public MockRM() {
+@@ -124,15 +126,23 @@ public void waitForState(ApplicationId appId, RMAppState finalState)
+       throws Exception {
+     RMApp app = getRMContext().getRMApps().get(appId);
+     Assert.assertNotNull("app shouldn't be null", app);
+-    int timeoutSecs = 0;
+-    while (!finalState.equals(app.getState()) && timeoutSecs++ < 40) {
+-      System.out.println("App : " + appId + " State is : " + app.getState()
+-          + " Waiting for state : " + finalState);
+-      Thread.sleep(2000);
++    final int timeoutMsecs = 80000;
++    final int waitMsPerLoop = 500;
++    int loop = 0;
++    while (!finalState.equals(app.getState()) &&
++        ((waitMsPerLoop * loop) < timeoutMsecs)) {
++      LOG.info("App : " + appId + " State is : " + app.getState() +
++          " Waiting for state : " + finalState);
++      Thread.yield();
++      Thread.sleep(waitMsPerLoop);
++      loop++;
++    }
++    int waitedMsecs = waitMsPerLoop * loop;
++    LOG.info("App State is : " + app.getState());
++    if (waitedMsecs >= timeoutMsecs) {
++      Assert.fail("App state is not correct (timedout): expected: " +
++          finalState + " actual: " + app.getState());
+     }
+-    System.out.println("App State is : " + app.getState());
+-    Assert.assertEquals("App state is not correct (timedout)", finalState,
+-        app.getState());
+   }
+   
+   public void waitForState(ApplicationAttemptId attemptId, 
+@@ -141,16 +151,27 @@ public void waitForState(ApplicationAttemptId attemptId,
+     RMApp app = getRMContext().getRMApps().get(attemptId.getApplicationId());
+     Assert.assertNotNull("app shouldn't be null", app);
+     RMAppAttempt attempt = app.getRMAppAttempt(attemptId);
+-    int timeoutSecs = 0;
+-    while (!finalState.equals(attempt.getAppAttemptState()) && timeoutSecs++ < 40) {
+-      System.out.println("AppAttempt : " + attemptId 
+-          + " State is : " + attempt.getAppAttemptState()
+-          + " Waiting for state : " + finalState);
+-      Thread.sleep(1000);
++    final int timeoutMsecs = 40000;
++    final int minWaitMsecs = 1000;
++    final int waitMsPerLoop = 10;
++    int loop = 0;
++    while (!finalState.equals(attempt.getAppAttemptState())
++        && waitMsPerLoop * loop < timeoutMsecs) {
++      LOG.info("AppAttempt : " + attemptId + " State is : " +
++          attempt.getAppAttemptState() + " Waiting for state : " + finalState);
++      Thread.yield();
++      Thread.sleep(waitMsPerLoop);
++      loop++;
++    }
++    int waitedMsecs = waitMsPerLoop * loop;
++    if (minWaitMsecs > waitedMsecs) {
++      Thread.sleep(minWaitMsecs - waitedMsecs);
++    }
++    LOG.info("Attempt State is : " + attempt.getAppAttemptState());
++    if (waitedMsecs >= timeoutMsecs) {
++      Assert.fail("Attempt state is not correct (timedout): expected: "
++          + finalState + " actual: " + attempt.getAppAttemptState());
+     }
+-    System.out.println("Attempt State is : " + attempt.getAppAttemptState());
+-    Assert.assertEquals("Attempt state is not correct (timedout)", finalState,
+-        attempt.getAppAttemptState());
+   }
+ 
+   public void waitForContainerAllocated(MockNM nm, ContainerId containerId)
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/TestApplicationMasterService.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/TestApplicationMasterService.java
+index 47a8ca5..91d9ad9 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/TestApplicationMasterService.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/TestApplicationMasterService.java
+@@ -20,6 +20,7 @@
+ 
+ import org.apache.hadoop.yarn.api.protocolrecords.RegisterApplicationMasterResponse;
+ import org.apache.hadoop.yarn.proto.YarnServiceProtos.SchedulerResourceTypes;
++import org.apache.hadoop.yarn.server.resourcemanager.rmapp.RMAppState;
+ import org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.CapacityScheduler;
+ import org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.CapacitySchedulerConfiguration;
+ import org.apache.hadoop.yarn.server.resourcemanager.scheduler.fair.FairScheduler;
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/TestRMRestart.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/TestRMRestart.java
+index 0c47f57..59ecedb 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/TestRMRestart.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/TestRMRestart.java
+@@ -25,6 +25,7 @@
+ import static org.mockito.Mockito.verify;
+ import static org.mockito.Mockito.when;
+ 
++import com.google.common.base.Supplier;
+ import java.io.File;
+ import java.io.FileOutputStream;
+ import java.io.IOException;
+@@ -52,6 +53,7 @@
+ import org.apache.hadoop.security.token.Token;
+ import org.apache.hadoop.security.token.delegation.DelegationKey;
+ import org.apache.hadoop.service.Service.STATE;
++import org.apache.hadoop.test.GenericTestUtils;
+ import org.apache.hadoop.yarn.api.protocolrecords.FinishApplicationMasterRequest;
+ import org.apache.hadoop.yarn.api.protocolrecords.GetApplicationReportRequest;
+ import org.apache.hadoop.yarn.api.protocolrecords.GetApplicationReportResponse;
+@@ -577,10 +579,19 @@ public void testRMRestartWaitForPreviousAMToFinish() throws Exception {
+             .getAppAttemptState());
+     Assert.assertEquals(RMAppAttemptState.LAUNCHED,rmApp.getAppAttempts()
+         .get(latestAppAttemptId).getAppAttemptState());
+-    
++
+     rm3.waitForState(latestAppAttemptId, RMAppAttemptState.FAILED);
+     rm3.waitForState(rmApp.getApplicationId(), RMAppState.ACCEPTED);
+-    Assert.assertEquals(4, rmApp.getAppAttempts().size());
++    final int maxRetry = 10;
++    final RMApp rmAppForCheck = rmApp;
++    GenericTestUtils.waitFor(
++        new Supplier<Boolean>() {
++          @Override
++          public Boolean get() {
++            return new Boolean(rmAppForCheck.getAppAttempts().size() == 4);
++          }
++        },
++        100, maxRetry);
+     Assert.assertEquals(RMAppAttemptState.FAILED,
+         rmApp.getAppAttempts().get(latestAppAttemptId).getAppAttemptState());
+     
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/applicationsmanager/TestAMRestart.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/applicationsmanager/TestAMRestart.java
+index 7befba4..3387f41 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/applicationsmanager/TestAMRestart.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/applicationsmanager/TestAMRestart.java
+@@ -592,7 +592,7 @@ public void testRMRestartOrFailoverNotCountedForAMFailures()
+     rm2.stop();
+   }
+ 
+-  @Test (timeout = 50000)
++  @Test (timeout = 120000)
+   public void testRMAppAttemptFailuresValidityInterval() throws Exception {
+     YarnConfiguration conf = new YarnConfiguration();
+     conf.setClass(YarnConfiguration.RM_SCHEDULER, CapacityScheduler.class,
+@@ -612,10 +612,10 @@ public void testRMAppAttemptFailuresValidityInterval() throws Exception {
+         new MockNM("127.0.0.1:1234", 8000, rm1.getResourceTrackerService());
+     nm1.registerNode();
+ 
+-    // set window size to a larger number : 20s
++    // set window size to a larger number : 60s
+     // we will verify the app should be failed if
+-    // two continuous attempts failed in 20s.
+-    RMApp app = rm1.submitApp(200, 20000);
++    // two continuous attempts failed in 60s.
++    RMApp app = rm1.submitApp(200, 60000);
+     
+     MockAM am = MockRM.launchAM(app, rm1, nm1);
+     // Fail current attempt normally
+@@ -636,8 +636,8 @@ public void testRMAppAttemptFailuresValidityInterval() throws Exception {
+     rm1.waitForState(app.getApplicationId(), RMAppState.FAILED);
+ 
+     ControlledClock clock = new ControlledClock(new SystemClock());
+-    // set window size to 6s
+-    RMAppImpl app1 = (RMAppImpl)rm1.submitApp(200, 6000);;
++    // set window size to 10s
++    RMAppImpl app1 = (RMAppImpl)rm1.submitApp(200, 10000);;
+     app1.setSystemClock(clock);
+     MockAM am1 = MockRM.launchAndRegisterAM(app1, rm1, nm1);
+ 
+@@ -655,8 +655,8 @@ public void testRMAppAttemptFailuresValidityInterval() throws Exception {
+     MockAM am2 = MockRM.launchAndRegisterAM(app1, rm1, nm1);
+     am2.waitForState(RMAppAttemptState.RUNNING);
+ 
+-    // wait for 6 seconds
+-    clock.setTime(System.currentTimeMillis() + 6*1000);
++    // wait for 10 seconds
++    clock.setTime(System.currentTimeMillis() + 10*1000);
+     // Fail attempt2 normally
+     nm1.nodeHeartbeat(am2.getApplicationAttemptId(),
+       1, ContainerState.COMPLETE);
+@@ -693,8 +693,8 @@ public void testRMAppAttemptFailuresValidityInterval() throws Exception {
+     MockAM am4 =
+         rm2.waitForNewAMToLaunchAndRegister(app1.getApplicationId(), 4, nm1);
+ 
+-    // wait for 6 seconds
+-    clock.setTime(System.currentTimeMillis() + 6*1000);
++    // wait for 10 seconds
++    clock.setTime(System.currentTimeMillis() + 10*1000);
+     // Fail attempt4 normally
+     nm1
+       .nodeHeartbeat(am4.getApplicationAttemptId(), 1, ContainerState.COMPLETE);
+-- 
+1.7.9.5
+

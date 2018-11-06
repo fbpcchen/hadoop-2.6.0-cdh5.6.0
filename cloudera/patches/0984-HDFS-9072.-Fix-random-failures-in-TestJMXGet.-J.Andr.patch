@@ -1,0 +1,49 @@
+From 56cb33e4b3e0ed670081c940a9d87ac27086249c Mon Sep 17 00:00:00 2001
+From: Steve Loughran <stevel@apache.org>
+Date: Wed, 16 Sep 2015 10:08:18 +0100
+Subject: [PATCH 0984/1023] HDFS-9072. Fix random failures in TestJMXGet. 
+ (J.Andreina via stevel)
+
+(cherry picked from commit 1f28703d936873ce5ecf08091862af7afa6f0340)
+
+Change-Id: I0742a7cfff7c2cfb628d75e9676c43b6ff4b5596
+---
+ .../java/org/apache/hadoop/tools/TestJMXGet.java   |    4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tools/TestJMXGet.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tools/TestJMXGet.java
+index 4c429ec..d9a3b79 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tools/TestJMXGet.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tools/TestJMXGet.java
+@@ -41,6 +41,7 @@
+ import org.apache.hadoop.fs.FileSystem;
+ import org.apache.hadoop.fs.FileUtil;
+ import org.apache.hadoop.fs.Path;
++import org.apache.hadoop.hdfs.DFSTestUtil;
+ import org.apache.hadoop.hdfs.HdfsConfiguration;
+ import org.apache.hadoop.hdfs.MiniDFSCluster;
+ import org.apache.hadoop.hdfs.tools.JMXGet;
+@@ -114,10 +115,12 @@ public void testNameNode() throws Exception {
+     assertTrue("error printAllValues", checkPrintAllValues(jmx));
+ 
+     //get some data from different source
++    DFSTestUtil.waitForMetric(jmx, "NumLiveDataNodes", numDatanodes);
+     assertEquals(numDatanodes, Integer.parseInt(
+         jmx.getValue("NumLiveDataNodes")));
+     assertGauge("CorruptBlocks", Long.parseLong(jmx.getValue("CorruptBlocks")),
+                 getMetrics("FSNamesystem"));
++    DFSTestUtil.waitForMetric(jmx, "NumOpenConnections", numDatanodes);
+     assertEquals(numDatanodes, Integer.parseInt(
+         jmx.getValue("NumOpenConnections")));
+ 
+@@ -166,6 +169,7 @@ public void testDataNode() throws Exception {
+     String serviceName = "DataNode";
+     jmx.setService(serviceName);
+     jmx.init();
++    DFSTestUtil.waitForMetric(jmx, "BytesWritten", fileSize);
+     assertEquals(fileSize, Integer.parseInt(jmx.getValue("BytesWritten")));
+ 
+     cluster.shutdown();
+-- 
+1.7.9.5
+

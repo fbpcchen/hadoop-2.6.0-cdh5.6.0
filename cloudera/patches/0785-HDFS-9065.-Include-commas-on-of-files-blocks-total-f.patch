@@ -1,0 +1,74 @@
+From a12b60dd1d685a54a28fa02e172102920e966474 Mon Sep 17 00:00:00 2001
+From: Haohui Mai <wheat9@apache.org>
+Date: Mon, 14 Sep 2015 20:26:56 -0700
+Subject: [PATCH 0785/1023] HDFS-9065. Include commas on # of files, blocks,
+ total filesystem objects in NN Web UI.
+ Contributed by Daniel Templeton.
+
+(cherry picked from commit d777757d21c15942275bff6bb98876637950d73f)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt
+	hadoop-hdfs-project/hadoop-hdfs/src/main/webapps/hdfs/dfshealth.js
+
+Change-Id: I94b350c4a253f246fc6c7435f0bdd60c0d7658a4
+(cherry picked from commit 6799915e9f8b0ff1d42165f2ac7f4797ff13c9fb)
+(cherry picked from commit 50ab899d0f82085cd28daf2a3c7052b3b64e593a)
+---
+ .../src/main/webapps/hdfs/dfshealth.html           |    2 +-
+ .../hadoop-hdfs/src/main/webapps/hdfs/dfshealth.js |   10 ++++++++++
+ .../src/main/webapps/static/dfs-dust.js            |    4 ++++
+ 3 files changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/webapps/hdfs/dfshealth.html b/hadoop-hdfs-project/hadoop-hdfs/src/main/webapps/hdfs/dfshealth.html
+index 4271e55..007d6e8 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/webapps/hdfs/dfshealth.html
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/webapps/hdfs/dfshealth.html
+@@ -140,7 +140,7 @@
+ 
+ <p>
+   {#fs}
+-  {FilesTotal} files and directories, {BlocksTotal} blocks = {@math key="{FilesTotal}" method="add" operand="{BlocksTotal}"/} total filesystem object(s).
++  {FilesTotal|fmt_number} files and directories, {BlocksTotal|fmt_number} blocks = {ObjectsTotal|fmt_number} total filesystem object(s).
+   {#helper_fs_max_objects/}
+   {/fs}
+ </p>
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/webapps/hdfs/dfshealth.js b/hadoop-hdfs-project/hadoop-hdfs/src/main/webapps/hdfs/dfshealth.js
+index 706ef61..5f18a55 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/webapps/hdfs/dfshealth.js
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/webapps/hdfs/dfshealth.js
+@@ -71,6 +71,16 @@
+         for (var k in d) {
+           data[k] = k === 'nn' ? workaround(d[k].beans[0]) : d[k].beans[0];
+         }
++
++        var blockstats = data['blockstats'];
++        for (var k in blockstats.StorageTypeStats) {
++          var b = blockstats.StorageTypeStats[k].value;
++          b.capacityUsedPercentage = b.capacityUsed * 100.0 / b.capacityTotal;
++          b.capacityRemainingPercentage = b.capacityRemaining * 100.0 / b.capacityTotal;
++        }
++
++        data.fs.ObjectsTotal = data.fs.FilesTotal + data.fs.BlocksTotal;
++
+         render();
+       }),
+       function (url, jqxhr, text, err) {
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/webapps/static/dfs-dust.js b/hadoop-hdfs-project/hadoop-hdfs/src/main/webapps/static/dfs-dust.js
+index 3c8efd9..0aa3fbe 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/webapps/static/dfs-dust.js
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/webapps/static/dfs-dust.js
+@@ -86,6 +86,10 @@
+ 
+     'helper_to_acl_bit': function (v) {
+       return v ? '+' : "";
++    },
++
++    'fmt_number': function (v) {
++      return v.toLocaleString();
+     }
+   };
+   $.extend(dust.filters, filters);
+-- 
+1.7.9.5
+

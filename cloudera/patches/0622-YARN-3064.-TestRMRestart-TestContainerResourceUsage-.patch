@@ -1,0 +1,101 @@
+From 0e133843e46263a2b86f5efe5443c41ce203b3fc Mon Sep 17 00:00:00 2001
+From: Junping Du <junping_du@apache.org>
+Date: Fri, 16 Jan 2015 00:08:36 -0800
+Subject: [PATCH 0622/1023] YARN-3064.
+ TestRMRestart/TestContainerResourceUsage/TestNodeManagerResync
+ failure with allocation timeout. (Contributed by
+ Jian He) (cherry picked from commit
+ 5d1cca34fa14706586f8bbe7f2a2264757fdcc11)
+
+(cherry picked from commit 7cddec31d760ff44358096c3f561dae705888cd9)
+
+Conflicts:
+	hadoop-yarn-project/CHANGES.txt
+---
+ .../server/nodemanager/TestNodeManagerResync.java  |    1 +
+ .../TestContainerResourceUsage.java                |    3 ++-
+ .../yarn/server/resourcemanager/TestRMRestart.java |    3 ++-
+ .../applicationsmanager/TestAMRestart.java         |    6 ++++++
+ 4 files changed, 11 insertions(+), 2 deletions(-)
+
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/test/java/org/apache/hadoop/yarn/server/nodemanager/TestNodeManagerResync.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/test/java/org/apache/hadoop/yarn/server/nodemanager/TestNodeManagerResync.java
+index a58294f..611e671 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/test/java/org/apache/hadoop/yarn/server/nodemanager/TestNodeManagerResync.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/test/java/org/apache/hadoop/yarn/server/nodemanager/TestNodeManagerResync.java
+@@ -165,6 +165,7 @@ public void testBlockNewContainerRequestsOnStartAndResync()
+       throws IOException, InterruptedException, YarnException {
+     NodeManager nm = new TestNodeManager2();
+     YarnConfiguration conf = createNMConfig();
++    conf.setBoolean(YarnConfiguration.RM_WORK_PRESERVING_RECOVERY_ENABLED, false);
+     nm.init(conf);
+     nm.start();
+ 
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/TestContainerResourceUsage.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/TestContainerResourceUsage.java
+index b9397bf..fcb48a0 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/TestContainerResourceUsage.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/TestContainerResourceUsage.java
+@@ -61,7 +61,6 @@ public void setup() throws UnknownHostException {
+     rootLogger.setLevel(Level.DEBUG);
+     conf = new YarnConfiguration();
+     UserGroupInformation.setConfiguration(conf);
+-    conf.set(YarnConfiguration.RECOVERY_ENABLED, "true");
+     conf.setInt(YarnConfiguration.RM_AM_MAX_ATTEMPTS,
+         YarnConfiguration.DEFAULT_RM_AM_MAX_ATTEMPTS);
+   }
+@@ -137,6 +136,8 @@ public void testUsageWithMultipleContainersAndRMRestart() throws Exception {
+     // Set max attempts to 1 so that when the first attempt fails, the app
+     // won't try to start a new one.
+     conf.setInt(YarnConfiguration.RM_AM_MAX_ATTEMPTS, 1);
++    conf.setBoolean(YarnConfiguration.RECOVERY_ENABLED, true);
++    conf.setBoolean(YarnConfiguration.RM_WORK_PRESERVING_RECOVERY_ENABLED, false);
+     MemoryRMStateStore memStore = new MemoryRMStateStore();
+     memStore.init(conf);
+ 
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/TestRMRestart.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/TestRMRestart.java
+index a42170b..0c47f57 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/TestRMRestart.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/TestRMRestart.java
+@@ -125,7 +125,8 @@ public void setup() throws IOException {
+     Logger rootLogger = LogManager.getRootLogger();
+     rootLogger.setLevel(Level.DEBUG);
+     UserGroupInformation.setConfiguration(conf);
+-    conf.set(YarnConfiguration.RECOVERY_ENABLED, "true");
++    conf.setBoolean(YarnConfiguration.RECOVERY_ENABLED, true);
++    conf.setBoolean(YarnConfiguration.RM_WORK_PRESERVING_RECOVERY_ENABLED, false);
+     conf.set(YarnConfiguration.RM_STORE, MemoryRMStateStore.class.getName());
+     rmAddr = new InetSocketAddress("localhost", 8032);
+     Assert.assertTrue(YarnConfiguration.DEFAULT_RM_AM_MAX_ATTEMPTS > 1);
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/applicationsmanager/TestAMRestart.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/applicationsmanager/TestAMRestart.java
+index 49b1841..7befba4 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/applicationsmanager/TestAMRestart.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/applicationsmanager/TestAMRestart.java
+@@ -470,6 +470,8 @@ public void testPreemptedAMRestartOnRMRestart() throws Exception {
+     conf.setClass(YarnConfiguration.RM_SCHEDULER, CapacityScheduler.class,
+       ResourceScheduler.class);
+     conf.setBoolean(YarnConfiguration.RECOVERY_ENABLED, true);
++    conf.setBoolean(YarnConfiguration.RM_WORK_PRESERVING_RECOVERY_ENABLED, false);
++
+     conf.set(YarnConfiguration.RM_STORE, MemoryRMStateStore.class.getName());
+     // explicitly set max-am-retry count as 1.
+     conf.setInt(YarnConfiguration.RM_AM_MAX_ATTEMPTS, 1);
+@@ -535,6 +537,8 @@ public void testRMRestartOrFailoverNotCountedForAMFailures()
+     conf.setClass(YarnConfiguration.RM_SCHEDULER, CapacityScheduler.class,
+       ResourceScheduler.class);
+     conf.setBoolean(YarnConfiguration.RECOVERY_ENABLED, true);
++    conf.setBoolean(YarnConfiguration.RM_WORK_PRESERVING_RECOVERY_ENABLED, false);
++
+     conf.set(YarnConfiguration.RM_STORE, MemoryRMStateStore.class.getName());
+     // explicitly set max-am-retry count as 1.
+     conf.setInt(YarnConfiguration.RM_AM_MAX_ATTEMPTS, 1);
+@@ -594,6 +598,8 @@ public void testRMAppAttemptFailuresValidityInterval() throws Exception {
+     conf.setClass(YarnConfiguration.RM_SCHEDULER, CapacityScheduler.class,
+       ResourceScheduler.class);
+     conf.setBoolean(YarnConfiguration.RECOVERY_ENABLED, true);
++    conf.setBoolean(YarnConfiguration.RM_WORK_PRESERVING_RECOVERY_ENABLED, false);
++
+     conf.set(YarnConfiguration.RM_STORE, MemoryRMStateStore.class.getName());
+     // explicitly set max-am-retry count as 2.
+     conf.setInt(YarnConfiguration.RM_AM_MAX_ATTEMPTS, 2);
+-- 
+1.7.9.5
+

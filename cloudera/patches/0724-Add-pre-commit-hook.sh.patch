@@ -1,0 +1,49 @@
+From 2bbc1699aa116a0a197db6266b787f7a1b7b1ed2 Mon Sep 17 00:00:00 2001
+From: Karthik Kambatla <kasha@cloudera.com>
+Date: Thu, 20 Aug 2015 22:48:21 -0700
+Subject: [PATCH 0724/1023] Add pre-commit-hook.sh
+
+Change-Id: I7b0e6fb07ed98b3ae4b1428e3cb0dfcfe7c8e022
+(cherry picked from commit ce55ec872f41a86ee1f23678aca16b12804f9ea2)
+---
+ cloudera/pre_commit_hook.sh |   28 ++++++++++++++++++++++++++++
+ 1 file changed, 28 insertions(+)
+ create mode 100755 cloudera/pre_commit_hook.sh
+
+diff --git a/cloudera/pre_commit_hook.sh b/cloudera/pre_commit_hook.sh
+new file mode 100755
+index 0000000..f7048a8
+--- /dev/null
++++ b/cloudera/pre_commit_hook.sh
+@@ -0,0 +1,28 @@
++#!/bin/bash
++set -xe
++
++SCRIPTS="jenkins-job-scripts"
++DIR="$( cd $( dirname $( dirname ${BASH_SOURCE[0]} ) ) && pwd )"
++cd $DIR
++
++if [[ -d $SCRIPTS ]]; then
++    echo "Cleaning up remnants from a previous run"
++    rm -rf $SCRIPTS
++fi
++
++# Clone the jenkins script repo
++git clone --depth 1 git://github.mtv.cloudera.com/CDH/$SCRIPTS.git $SCRIPTS || true
++
++# Fetch the right branch
++cd $SCRIPTS
++git fetch --depth 1 origin
++git checkout -f origin/master
++git ls-tree -r HEAD
++cd ..
++
++# Run the build and tests
++./jenkins-job-scripts/run_precommit.sh
++
++if [[ -d $SCRIPTS ]]; then
++    rm -rf $SCRIPTS
++fi
+-- 
+1.7.9.5
+

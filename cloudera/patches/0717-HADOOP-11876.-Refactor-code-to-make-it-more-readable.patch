@@ -1,0 +1,69 @@
+From 6b422d517aa9ace614fbc2127dd232d4e3142225 Mon Sep 17 00:00:00 2001
+From: Ravi Prakash <raviprak@altiscale.com>
+Date: Fri, 24 Apr 2015 13:39:07 -0700
+Subject: [PATCH 0717/1023] HADOOP-11876. Refactor code to make it more
+ readable, minor maybePrintStats bug (Zoran
+ Dimitrijevic via raviprak)
+
+(cherry picked from commit a287d2fb77d9873b61c6ab24134993d784ae8475)
+
+Conflicts:
+	hadoop-common-project/hadoop-common/CHANGES.txt
+---
+ .../org/apache/hadoop/tools/SimpleCopyListing.java |   10 +++++-----
+ 1 file changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/hadoop-tools/hadoop-distcp/src/main/java/org/apache/hadoop/tools/SimpleCopyListing.java b/hadoop-tools/hadoop-distcp/src/main/java/org/apache/hadoop/tools/SimpleCopyListing.java
+index 21ea39c..788b8e7 100644
+--- a/hadoop-tools/hadoop-distcp/src/main/java/org/apache/hadoop/tools/SimpleCopyListing.java
++++ b/hadoop-tools/hadoop-distcp/src/main/java/org/apache/hadoop/tools/SimpleCopyListing.java
+@@ -345,11 +345,12 @@ public FileStatusProcessor(FileSystem fileSystem) {
+           }
+         }
+         result = new WorkReport<FileStatus[]>(
+-            fileSystem.listStatus(parent.getPath()), 0, true);
++            fileSystem.listStatus(parent.getPath()), retry, true);
+       } catch (FileNotFoundException fnf) {
+         LOG.error("FileNotFoundException exception in listStatus: " +
+                   fnf.getMessage());
+-        result = new WorkReport<FileStatus[]>(new FileStatus[0], 0, true, fnf);
++        result = new WorkReport<FileStatus[]>(new FileStatus[0], retry, true,
++                                              fnf);
+       } catch (Exception e) {
+         LOG.error("Exception in listStatus. Will send for retry.");
+         FileStatus[] parentList = new FileStatus[1];
+@@ -393,7 +394,6 @@ private void traverseDirectory(SequenceFile.Writer fileListWriter,
+ 
+     for (FileStatus status : sourceDirs) {
+       workers.put(new WorkRequest<FileStatus>(status, 0));
+-      maybePrintStats();
+     }
+ 
+     while (workers.hasWork()) {
+@@ -404,7 +404,7 @@ private void traverseDirectory(SequenceFile.Writer fileListWriter,
+           if (LOG.isDebugEnabled()) {
+             LOG.debug("Recording source-path: " + child.getPath() + " for copy.");
+           }
+-          if (retry == 0) {
++          if (workResult.getSuccess()) {
+             CopyListingFileStatus childCopyListingStatus =
+               DistCpUtils.toCopyListingFileStatus(sourceFS, child,
+                 preserveAcls && child.isDirectory(),
+@@ -419,7 +419,6 @@ private void traverseDirectory(SequenceFile.Writer fileListWriter,
+                 LOG.debug("Traversing into source dir: " + child.getPath());
+               }
+               workers.put(new WorkRequest<FileStatus>(child, retry));
+-              maybePrintStats();
+             }
+           } else {
+             LOG.error("Giving up on " + child.getPath() +
+@@ -471,5 +470,6 @@ private void writeToFileListing(SequenceFile.Writer fileListWriter,
+       totalDirs++;
+     }
+     totalPaths++;
++    maybePrintStats();
+   }
+ }
+-- 
+1.7.9.5
+

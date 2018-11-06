@@ -1,0 +1,29 @@
+From 4c21e1c6f635cca4d65f5816dd74f5b3d601cc89 Mon Sep 17 00:00:00 2001
+From: Lei Xu <lei@apache.org>
+Date: Mon, 26 Oct 2015 15:16:09 -0700
+Subject: [PATCH 0944/1023] HDFS-9291. Fix TestInterDatanodeProtocol to be
+ FsDataset-agnostic. (lei)
+
+(cherry picked from commit ce02c438fd64827f02633bd285952886fb31b4aa)
+
+Change-Id: Ie6823fa8c6aa46af3abdd4bfe778595b7da02d4d
+---
+ .../fsdataset/impl/TestInterDatanodeProtocol.java  |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/TestInterDatanodeProtocol.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/TestInterDatanodeProtocol.java
+index abb52ae..3bea67f 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/TestInterDatanodeProtocol.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/TestInterDatanodeProtocol.java
+@@ -358,7 +358,7 @@ public void testUpdateReplicaUnderRecovery() throws IOException {
+       Assert.assertEquals(ReplicaState.RUR, replica.getState());
+ 
+       //check meta data before update
+-      FsDatasetImpl.checkReplicaFiles(replica);
++      cluster.getFsDatasetTestUtils(datanode).checkStoredReplica(replica);
+ 
+       //case "THIS IS NOT SUPPOSED TO HAPPEN"
+       //with (block length) != (stored replica's on disk length). 
+-- 
+1.7.9.5
+

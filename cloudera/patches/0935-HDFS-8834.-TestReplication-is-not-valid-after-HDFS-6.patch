@@ -1,0 +1,84 @@
+From 5b3cc4512539e59878f7b54d9cd5a53dcc2cac79 Mon Sep 17 00:00:00 2001
+From: Lei Xu <lei@cloudera.com>
+Date: Tue, 28 Jul 2015 16:55:51 -0700
+Subject: [PATCH 0935/1023] HDFS-8834. TestReplication is not valid after
+ HDFS-6482. (Contributed by Lei Xu)
+
+(cherry picked from commit f4f1b8b267703b8bebab06e17e69a4a4de611592)
+(cherry picked from commit 9d8191604010c15a2b9c1eec6e09e04821e3fcee)
+
+Change-Id: Ic0c9d8889ec1a2f469453600a4f53f6c1d72cbe8
+---
+ .../org/apache/hadoop/hdfs/TestReplication.java    |   26 +++++++++++++++++++-
+ 1 file changed, 25 insertions(+), 1 deletion(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestReplication.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestReplication.java
+index 0027bbe..753a66c 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestReplication.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestReplication.java
+@@ -18,6 +18,8 @@
+ package org.apache.hadoop.hdfs;
+ 
+ import static org.junit.Assert.assertEquals;
++import static org.junit.Assert.assertFalse;
++import static org.junit.Assert.assertNull;
+ import static org.junit.Assert.assertTrue;
+ 
+ import java.io.File;
+@@ -25,6 +27,10 @@
+ import java.io.OutputStream;
+ import java.io.RandomAccessFile;
+ import java.net.InetSocketAddress;
++import java.nio.file.FileVisitResult;
++import java.nio.file.Files;
++import java.nio.file.SimpleFileVisitor;
++import java.nio.file.attribute.BasicFileAttributes;
+ import java.util.ArrayList;
+ import java.util.Iterator;
+ import java.util.Random;
+@@ -514,12 +520,28 @@ public void testReplicationWhenBlockCorruption() throws Exception {
+         if (data_dir.listFiles().length == 0) {
+           nonParticipatedNodeDirs.add(data_dir);
+         } else {
++          assertNull("participatedNodeDirs has already been set.",
++              participatedNodeDirs);
+           participatedNodeDirs = data_dir;
+         }
+       }
++      assertEquals(2, nonParticipatedNodeDirs.size());
+ 
+       String blockFile = null;
+-      File[] listFiles = participatedNodeDirs.listFiles();
++      final List<File> listFiles = new ArrayList<>();
++      Files.walkFileTree(participatedNodeDirs.toPath(),
++          new SimpleFileVisitor<java.nio.file.Path>() {
++            @Override
++            public FileVisitResult visitFile(
++                java.nio.file.Path file, BasicFileAttributes attrs)
++                throws IOException {
++              listFiles.add(file.toFile());
++              return FileVisitResult.CONTINUE;
++            }
++          }
++      );
++      assertFalse(listFiles.isEmpty());
++      int numReplicaCreated = 0;
+       for (File file : listFiles) {
+         if (file.getName().startsWith(Block.BLOCK_FILE_PREFIX)
+             && !file.getName().endsWith("meta")) {
+@@ -528,10 +550,12 @@ public void testReplicationWhenBlockCorruption() throws Exception {
+             file1.mkdirs();
+             new File(file1, blockFile).createNewFile();
+             new File(file1, blockFile + "_1000.meta").createNewFile();
++            numReplicaCreated++;
+           }
+           break;
+         }
+       }
++      assertEquals(2, numReplicaCreated);
+ 
+       fs.setReplication(new Path("/test"), (short) 3);
+       cluster.restartDataNodes(); // Lets detect all DNs about dummy copied
+-- 
+1.7.9.5
+

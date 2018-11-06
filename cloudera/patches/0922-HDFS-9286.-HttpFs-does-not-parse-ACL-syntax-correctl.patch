@@ -1,0 +1,100 @@
+From 4a8c26590d6fde0c83889af5e539145d23a3a7d8 Mon Sep 17 00:00:00 2001
+From: cnauroth <cnauroth@apache.org>
+Date: Thu, 22 Oct 2015 15:25:10 -0700
+Subject: [PATCH 0922/1023] HDFS-9286. HttpFs does not parse ACL syntax
+ correctly for operation REMOVEACLENTRIES.
+ Contributed by Wei-Chiu Chuang.
+
+(cherry picked from commit 124a412a3711bd42eaeebe531376004c739a15d6)
+
+Change-Id: I461dbdd26ae7c7786af15030fc68df6007434e61
+(cherry picked from commit 7913792d23c53f4ac55988db618d7011b70c4a20)
+---
+ .../apache/hadoop/fs/http/server/FSOperations.java |    2 +-
+ .../hadoop/fs/http/client/BaseTestHttpFSWith.java  |    3 ++-
+ .../hadoop/fs/http/server/TestHttpFSServer.java    |    3 ++-
+ .../fs/http/server/TestHttpFSServerNoACLs.java     |    5 +++--
+ 4 files changed, 8 insertions(+), 5 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs-httpfs/src/main/java/org/apache/hadoop/fs/http/server/FSOperations.java b/hadoop-hdfs-project/hadoop-hdfs-httpfs/src/main/java/org/apache/hadoop/fs/http/server/FSOperations.java
+index e7d92f5..37e77d1 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs-httpfs/src/main/java/org/apache/hadoop/fs/http/server/FSOperations.java
++++ b/hadoop-hdfs-project/hadoop-hdfs-httpfs/src/main/java/org/apache/hadoop/fs/http/server/FSOperations.java
+@@ -981,7 +981,7 @@ public Void execute(FileSystem fs) throws IOException {
+      */
+     public FSRemoveAclEntries(String path, String aclSpec) {
+       this.path = new Path(path);
+-      this.aclEntries = AclEntry.parseAclSpec(aclSpec, true);
++      this.aclEntries = AclEntry.parseAclSpec(aclSpec, false);
+     }
+ 
+     /**
+diff --git a/hadoop-hdfs-project/hadoop-hdfs-httpfs/src/test/java/org/apache/hadoop/fs/http/client/BaseTestHttpFSWith.java b/hadoop-hdfs-project/hadoop-hdfs-httpfs/src/test/java/org/apache/hadoop/fs/http/client/BaseTestHttpFSWith.java
+index f063e33..48c3bca 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs-httpfs/src/test/java/org/apache/hadoop/fs/http/client/BaseTestHttpFSWith.java
++++ b/hadoop-hdfs-project/hadoop-hdfs-httpfs/src/test/java/org/apache/hadoop/fs/http/client/BaseTestHttpFSWith.java
+@@ -711,6 +711,7 @@ private void testFileAcls() throws Exception {
+     }
+ 
+     final String aclUser1 = "user:foo:rw-";
++    final String rmAclUser1 = "user:foo:";
+     final String aclUser2 = "user:bar:r--";
+     final String aclGroup1 = "group::r--";
+     final String aclSet = "user::rwx," + aclUser1 + ","
+@@ -738,7 +739,7 @@ private void testFileAcls() throws Exception {
+     httpfsAclStat = httpfs.getAclStatus(path);
+     assertSameAcls(httpfsAclStat, proxyAclStat);
+ 
+-    httpfs.removeAclEntries(path, AclEntry.parseAclSpec(aclUser1, true));
++    httpfs.removeAclEntries(path, AclEntry.parseAclSpec(rmAclUser1, false));
+     proxyAclStat = proxyFs.getAclStatus(path);
+     httpfsAclStat = httpfs.getAclStatus(path);
+     assertSameAcls(httpfsAclStat, proxyAclStat);
+diff --git a/hadoop-hdfs-project/hadoop-hdfs-httpfs/src/test/java/org/apache/hadoop/fs/http/server/TestHttpFSServer.java b/hadoop-hdfs-project/hadoop-hdfs-httpfs/src/test/java/org/apache/hadoop/fs/http/server/TestHttpFSServer.java
+index 14b7a43..c6a7a9d 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs-httpfs/src/test/java/org/apache/hadoop/fs/http/server/TestHttpFSServer.java
++++ b/hadoop-hdfs-project/hadoop-hdfs-httpfs/src/test/java/org/apache/hadoop/fs/http/server/TestHttpFSServer.java
+@@ -501,12 +501,13 @@ public static String setXAttrParam(String name, byte[] value) throws IOException
+   @TestHdfs
+   public void testFileAcls() throws Exception {
+     final String aclUser1 = "user:foo:rw-";
++    final String remAclUser1 = "user:foo:";
+     final String aclUser2 = "user:bar:r--";
+     final String aclGroup1 = "group::r--";
+     final String aclSpec = "aclspec=user::rwx," + aclUser1 + ","
+             + aclGroup1 + ",other::---";
+     final String modAclSpec = "aclspec=" + aclUser2;
+-    final String remAclSpec = "aclspec=" + aclUser1;
++    final String remAclSpec = "aclspec=" + remAclUser1;
+     final String dir = "/aclFileTest";
+     final String path = dir + "/test";
+     String statusJson;
+diff --git a/hadoop-hdfs-project/hadoop-hdfs-httpfs/src/test/java/org/apache/hadoop/fs/http/server/TestHttpFSServerNoACLs.java b/hadoop-hdfs-project/hadoop-hdfs-httpfs/src/test/java/org/apache/hadoop/fs/http/server/TestHttpFSServerNoACLs.java
+index 8f95a90..cadec2e 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs-httpfs/src/test/java/org/apache/hadoop/fs/http/server/TestHttpFSServerNoACLs.java
++++ b/hadoop-hdfs-project/hadoop-hdfs-httpfs/src/test/java/org/apache/hadoop/fs/http/server/TestHttpFSServerNoACLs.java
+@@ -243,12 +243,13 @@ private void putCmd(String filename, String command,
+   @TestJetty
+   public void testWithNoAcls() throws Exception {
+     final String aclUser1 = "user:foo:rw-";
++    final String rmAclUser1 = "user:foo:";
+     final String aclUser2 = "user:bar:r--";
+     final String aclGroup1 = "group::r--";
+     final String aclSpec = "aclspec=user::rwx," + aclUser1 + ","
+             + aclGroup1 + ",other::---";
+     final String modAclSpec = "aclspec=" + aclUser2;
+-    final String remAclSpec = "aclspec=" + aclUser1;
++    final String remAclSpec = "aclspec=" + rmAclUser1;
+     final String defUser1 = "default:user:glarch:r-x";
+     final String defSpec1 = "aclspec=" + defUser1;
+     final String dir = "/noACLs";
+@@ -278,4 +279,4 @@ public void testWithNoAcls() throws Exception {
+ 
+     miniDfs.shutdown();
+   }
+-}
+\ No newline at end of file
++}
+-- 
+1.7.9.5
+

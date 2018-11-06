@@ -1,0 +1,35 @@
+From d24777be46d1b44bf7fc619e8b5251671bb88655 Mon Sep 17 00:00:00 2001
+From: Andrew Wang <wang@apache.org>
+Date: Thu, 25 Jun 2015 17:29:24 -0700
+Subject: [PATCH 0612/1023] HDFS-8665. Fix replication check in
+ DFSTestUtils#waitForReplication.
+
+(cherry picked from commit ff0e5e572f5dcf7b49381cbe901360f6e171d423)
+(cherry picked from commit ba406b723d4b978d2dd02f35a2a8e20a812a3cee)
+---
+ .../java/org/apache/hadoop/hdfs/DFSTestUtil.java   |    9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/DFSTestUtil.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/DFSTestUtil.java
+index 541813e..0eb54aa 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/DFSTestUtil.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/DFSTestUtil.java
+@@ -482,7 +482,14 @@ public static void waitForReplication(final DistributedFileSystem dfs,
+       public Boolean get() {
+         try {
+           FileStatus stat = dfs.getFileStatus(file);
+-          return replication == stat.getReplication();
++          BlockLocation[] locs = dfs.getFileBlockLocations(stat, 0, stat
++              .getLen());
++          for (BlockLocation loc : locs) {
++            if (replication != loc.getHosts().length) {
++              return false;
++            }
++          }
++          return true;
+         } catch (IOException e) {
+           LOG.info("getFileStatus on path " + file + " failed!", e);
+           return false;
+-- 
+1.7.9.5
+

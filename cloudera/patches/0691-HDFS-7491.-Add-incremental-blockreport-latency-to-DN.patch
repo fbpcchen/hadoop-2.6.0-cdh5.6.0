@@ -1,0 +1,72 @@
+From d81338183a243aaf8f445089a31ffd87954ab414 Mon Sep 17 00:00:00 2001
+From: cnauroth <cnauroth@apache.org>
+Date: Wed, 11 Mar 2015 14:11:19 -0700
+Subject: [PATCH 0691/1023] HDFS-7491. Add incremental blockreport latency to
+ DN metrics. Contributed by Ming Ma.
+
+(cherry picked from commit fb34f45727e63ea55377fe90241328025307d818)
+(cherry picked from commit 5e99b7cd2fdf49803703f00463754aa6c56a52a8)
+---
+ .../hdfs/server/datanode/BPServiceActor.java       |    2 ++
+ .../server/datanode/metrics/DataNodeMetrics.java   |    5 +++++
+ .../hdfs/server/datanode/TestDataNodeMetrics.java  |    2 ++
+ 3 files changed, 9 insertions(+)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BPServiceActor.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BPServiceActor.java
+index 42994aa..fbdcb5b 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BPServiceActor.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BPServiceActor.java
+@@ -292,12 +292,14 @@ private void reportReceivedDeletedBlocks() throws IOException {
+ 
+     // Send incremental block reports to the Namenode outside the lock
+     boolean success = false;
++    final long startTime = Time.monotonicNow();
+     try {
+       bpNamenode.blockReceivedAndDeleted(bpRegistration,
+           bpos.getBlockPoolId(),
+           reports.toArray(new StorageReceivedDeletedBlocks[reports.size()]));
+       success = true;
+     } finally {
++      dn.getMetrics().addIncrementalBlockReport(Time.monotonicNow()-startTime);
+       if (!success) {
+         synchronized (pendingIncrementalBRperStorage) {
+           for (StorageReceivedDeletedBlocks report : reports) {
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/metrics/DataNodeMetrics.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/metrics/DataNodeMetrics.java
+index 09ad3da..ed001c8 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/metrics/DataNodeMetrics.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/metrics/DataNodeMetrics.java
+@@ -99,6 +99,7 @@
+   @Metric MutableRate replaceBlockOp;
+   @Metric MutableRate heartbeats;
+   @Metric MutableRate blockReports;
++  @Metric MutableRate incrementalBlockReports;
+   @Metric MutableRate cacheReports;
+   @Metric MutableRate packetAckRoundTripTimeNanos;
+   final MutableQuantiles[] packetAckRoundTripTimeNanosQuantiles;
+@@ -193,6 +194,10 @@ public void addBlockReport(long latency) {
+     blockReports.add(latency);
+   }
+ 
++  public void addIncrementalBlockReport(long latency) {
++    incrementalBlockReports.add(latency);
++  }
++
+   public void addCacheReport(long latency) {
+     cacheReports.add(latency);
+   }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestDataNodeMetrics.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestDataNodeMetrics.java
+index 0b85d35..95d90cb 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestDataNodeMetrics.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestDataNodeMetrics.java
+@@ -71,6 +71,8 @@ public void testDataNodeMetrics() throws Exception {
+       DataNode datanode = datanodes.get(0);
+       MetricsRecordBuilder rb = getMetrics(datanode.getMetrics().name());
+       assertCounter("BytesWritten", LONG_FILE_LEN, rb);
++      assertTrue("Expected non-zero number of incremental block reports",
++          getLongCounter("IncrementalBlockReportsNumOps", rb) > 0);
+     } finally {
+       if (cluster != null) {cluster.shutdown();}
+     }
+-- 
+1.7.9.5
+

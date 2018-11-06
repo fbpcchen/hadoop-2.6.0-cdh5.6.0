@@ -1,0 +1,737 @@
+From 4f7c28bc07d8decc8625bb4b6e1abef04926c06e Mon Sep 17 00:00:00 2001
+From: Tsz-Wo Nicholas Sze <szetszwo@hortonworks.com>
+Date: Wed, 11 Feb 2015 15:09:29 -0800
+Subject: [PATCH 0892/1023] HDFS-6133. Add a feature for replica pinning so
+ that a pinned replica will not be moved by
+ Balancer/Mover.  Contributed by zhaoyunjiong
+
+(cherry picked from commit 085b1e293ff53f7a86aa21406cfd4bfa0f3bf33b)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt
+	hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSConfigKeys.java
+	hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/datatransfer/Receiver.java
+	hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocolPB/PBHelper.java
+	hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BlockReceiver.java
+	hadoop-hdfs-project/hadoop-hdfs/src/main/resources/hdfs-default.xml
+	hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/balancer/TestBalancer.java
+
+(cherry picked from commit 2524c139907d20a44208620654ef39b8be341d11)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/FsDatasetSpi.java
+	hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetImpl.java
+	hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/SimulatedFSDataset.java
+	hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/extdataset/ExternalDatasetImpl.java
+
+Change-Id: I1d1b602a9469ad0275783d02b7d14f84ca584bd5
+---
+ .../java/org/apache/hadoop/hdfs/DFSConfigKeys.java |    4 ++
+ .../org/apache/hadoop/hdfs/DFSOutputStream.java    |   22 +++++-
+ .../apache/hadoop/hdfs/DistributedFileSystem.java  |    7 +-
+ .../datatransfer/DataTransferProtocol.java         |    6 +-
+ .../hdfs/protocol/datatransfer/Receiver.java       |   10 +--
+ .../hadoop/hdfs/protocol/datatransfer/Sender.java  |    8 ++-
+ .../apache/hadoop/hdfs/protocolPB/PBHelper.java    |   22 ++++++
+ .../hadoop/hdfs/server/datanode/BlockReceiver.java |   11 ++-
+ .../hadoop/hdfs/server/datanode/DataNode.java      |    2 +-
+ .../hadoop/hdfs/server/datanode/DataXceiver.java   |   34 ++++++---
+ .../server/datanode/fsdataset/FsDatasetSpi.java    |   13 ++++
+ .../datanode/fsdataset/impl/FsDatasetImpl.java     |   40 +++++++++++
+ .../hadoop-hdfs/src/main/proto/datatransfer.proto  |    3 +
+ .../src/main/resources/hdfs-default.xml            |    6 ++
+ .../java/org/apache/hadoop/hdfs/DFSTestUtil.java   |   27 ++++++--
+ .../hadoop/hdfs/TestDataTransferProtocol.java      |    2 +-
+ .../hadoop/hdfs/server/balancer/TestBalancer.java  |   72 ++++++++++++++++----
+ .../hdfs/server/datanode/SimulatedFSDataset.java   |   11 +++
+ .../hadoop/hdfs/server/datanode/TestDiskError.java |    2 +-
+ .../datanode/extdataset/ExternalDatasetImpl.java   |    9 +++
+ 20 files changed, 271 insertions(+), 40 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSConfigKeys.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSConfigKeys.java
+index 48d0659..e6ceba2 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSConfigKeys.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSConfigKeys.java
+@@ -792,4 +792,8 @@
+ 
+   static final String REPLICA_ACCESSOR_BUILDER_CLASSES_KEY =
+       "dfs.client.replica.accessor.builder.classes";
++  public static final String DFS_DATANODE_BLOCK_PINNING_ENABLED = 
++    "dfs.datanode.block-pinning.enabled";
++  public static final boolean DFS_DATANODE_BLOCK_PINNING_ENABLED_DEFAULT =
++    false;
+ }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSOutputStream.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSOutputStream.java
+index 4264659..11eb5f7 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSOutputStream.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSOutputStream.java
+@@ -1551,11 +1551,13 @@ private boolean createBlockOutputStream(DatanodeInfo[] nodes,
+           ExtendedBlock blockCopy = new ExtendedBlock(block);
+           blockCopy.setNumBytes(blockSize);
+ 
++          boolean[] targetPinnings = getPinnings(nodes);
+           // send the request
+           new Sender(out).writeBlock(blockCopy, nodeStorageTypes[0], accessToken,
+               dfsClient.clientName, nodes, nodeStorageTypes, null, bcs, 
+               nodes.length, block.getNumBytes(), bytesSent, newGS,
+-              checksum4WriteBlock, cachingStrategy.get(), isLazyPersistFile);
++              checksum4WriteBlock, cachingStrategy.get(), isLazyPersistFile,
++            (targetPinnings == null ? false : targetPinnings[0]), targetPinnings);
+   
+           // receive ack for connect
+           BlockOpResponseProto resp = BlockOpResponseProto.parseFrom(
+@@ -1643,6 +1645,24 @@ private boolean createBlockOutputStream(DatanodeInfo[] nodes,
+       }
+     }
+ 
++    private boolean[] getPinnings(DatanodeInfo[] nodes) {
++      if (favoredNodes == null) {
++        return null;
++      } else {
++        boolean[] pinnings = new boolean[nodes.length];
++        for (int i = 0; i < nodes.length; i++) {
++          pinnings[i] = false;
++          for (int j = 0; j < favoredNodes.length; j++) {
++            if (nodes[i].getXferAddrWithHostname().equals(favoredNodes[j])) {
++              pinnings[i] = true;
++              break;
++            }
++          }
++        }
++        return pinnings;
++      }
++    }
++
+     private LocatedBlock locateFollowingBlock(long start,
+         DatanodeInfo[] excludedNodes)  throws IOException {
+       int retries = dfsClient.getConf().nBlockWriteLocateFollowingRetry;
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DistributedFileSystem.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DistributedFileSystem.java
+index 168d985..7638bb9 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DistributedFileSystem.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DistributedFileSystem.java
+@@ -352,9 +352,10 @@ public FSDataOutputStream create(Path f, FsPermission permission,
+    * Progressable)} with the addition of favoredNodes that is a hint to 
+    * where the namenode should place the file blocks.
+    * The favored nodes hint is not persisted in HDFS. Hence it may be honored
+-   * at the creation time only. HDFS could move the blocks during balancing or
+-   * replication, to move the blocks from favored nodes. A value of null means
+-   * no favored nodes for this create
++   * at the creation time only. And with favored nodes, blocks will be pinned
++   * on the datanodes to prevent balancing move the block. HDFS could move the
++   * blocks during replication, to move the blocks from favored nodes. A value
++   * of null means no favored nodes for this create
+    */
+   public HdfsDataOutputStream create(final Path f,
+       final FsPermission permission, final boolean overwrite,
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/datatransfer/DataTransferProtocol.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/datatransfer/DataTransferProtocol.java
+index ea77f44..eb41d4c 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/datatransfer/DataTransferProtocol.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/datatransfer/DataTransferProtocol.java
+@@ -92,6 +92,8 @@ public void readBlock(final ExtendedBlock blk,
+    * @param minBytesRcvd minimum number of bytes received.
+    * @param maxBytesRcvd maximum number of bytes received.
+    * @param latestGenerationStamp the latest generation stamp of the block.
++   * @param pinning whether to pin the block, so Balancer won't move it.
++   * @param targetPinnings whether to pin the block on target datanode
+    */
+   public void writeBlock(final ExtendedBlock blk,
+       final StorageType storageType, 
+@@ -107,7 +109,9 @@ public void writeBlock(final ExtendedBlock blk,
+       final long latestGenerationStamp,
+       final DataChecksum requestedChecksum,
+       final CachingStrategy cachingStrategy,
+-      final boolean allowLazyPersist) throws IOException;
++      final boolean allowLazyPersist,
++      final boolean pinning,
++      final boolean[] targetPinnings) throws IOException;
+   /**
+    * Transfer a block to another datanode.
+    * The block stage must be
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/datatransfer/Receiver.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/datatransfer/Receiver.java
+index 56e125b..7199e90 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/datatransfer/Receiver.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/datatransfer/Receiver.java
+@@ -179,10 +179,12 @@ private void opWriteBlock(DataInputStream in) throws IOException {
+           (proto.hasCachingStrategy() ?
+               getCachingStrategy(proto.getCachingStrategy()) :
+             CachingStrategy.newDefaultStrategy()),
+-            (proto.hasAllowLazyPersist() ? proto.getAllowLazyPersist() : false));
+-     } finally {
+-      if (traceScope != null) traceScope.close();
+-     }
++          (proto.hasAllowLazyPersist() ? proto.getAllowLazyPersist() : false),
++          (proto.hasPinning() ? proto.getPinning(): false),
++          (PBHelper.convertBooleanList(proto.getTargetPinningsList())));
++    } finally {
++     if (traceScope != null) traceScope.close();
++    }
+   }
+ 
+   /** Receive {@link Op#TRANSFER_BLOCK} */
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/datatransfer/Sender.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/datatransfer/Sender.java
+index 95b3446..ac74473 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/datatransfer/Sender.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/datatransfer/Sender.java
+@@ -129,7 +129,9 @@ public void writeBlock(final ExtendedBlock blk,
+       final long latestGenerationStamp,
+       DataChecksum requestedChecksum,
+       final CachingStrategy cachingStrategy,
+-      final boolean allowLazyPersist) throws IOException {
++      final boolean allowLazyPersist,
++      final boolean pinning,
++      final boolean[] targetPinnings) throws IOException {
+     ClientOperationHeaderProto header = DataTransferProtoUtil.buildClientHeader(
+         blk, clientName, blockToken);
+     
+@@ -148,7 +150,9 @@ public void writeBlock(final ExtendedBlock blk,
+       .setLatestGenerationStamp(latestGenerationStamp)
+       .setRequestedChecksum(checksumProto)
+       .setCachingStrategy(getCachingStrategy(cachingStrategy))
+-      .setAllowLazyPersist(allowLazyPersist);
++      .setAllowLazyPersist(allowLazyPersist)
++      .setPinning(pinning)
++      .addAllTargetPinnings(PBHelper.convert(targetPinnings, 1));
+     
+     if (source != null) {
+       proto.setSource(PBHelper.convertDatanodeInfo(source));
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocolPB/PBHelper.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocolPB/PBHelper.java
+index cf4ee08..c97dd2b 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocolPB/PBHelper.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocolPB/PBHelper.java
+@@ -2985,4 +2985,26 @@ public static BlockReportContextProto convert(BlockReportContext context) {
+         setLeaseId(context.getLeaseId()).
+         build();
+   }
++
++  public static List<Boolean> convert(boolean[] targetPinnings, int idx) {
++    List<Boolean> pinnings = new ArrayList<Boolean>();
++    if (targetPinnings == null) {
++      pinnings.add(Boolean.FALSE);
++    } else {
++      for (; idx < targetPinnings.length; ++idx) {
++        pinnings.add(Boolean.valueOf(targetPinnings[idx]));
++      }
++    }
++    return pinnings;
++  }
++
++  public static boolean[] convertBooleanList(
++    List<Boolean> targetPinningsList) {
++    final boolean[] targetPinnings = new boolean[targetPinningsList.size()];
++    for (int i = 0; i < targetPinningsList.size(); i++) {
++      targetPinnings[i] = targetPinningsList.get(i);
++    }
++    return targetPinnings;
++  }
++
+ }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BlockReceiver.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BlockReceiver.java
+index 6ac8a78..3661ac0 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BlockReceiver.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BlockReceiver.java
+@@ -131,6 +131,8 @@
+   private long lastResponseTime = 0;
+   private boolean isReplaceBlock = false;
+   private DataOutputStream replyOut = null;
++  
++  private boolean pinning;
+ 
+   BlockReceiver(final ExtendedBlock block, final StorageType storageType,
+       final DataInputStream in,
+@@ -140,7 +142,8 @@
+       final String clientname, final DatanodeInfo srcDataNode,
+       final DataNode datanode, DataChecksum requestedChecksum,
+       CachingStrategy cachingStrategy,
+-      final boolean allowLazyPersist) throws IOException {
++      final boolean allowLazyPersist,
++      final boolean pinning) throws IOException {
+     try{
+       this.block = block;
+       this.in = in;
+@@ -164,12 +167,14 @@
+       this.isTransfer = stage == BlockConstructionStage.TRANSFER_RBW
+           || stage == BlockConstructionStage.TRANSFER_FINALIZED;
+ 
++      this.pinning = pinning;
+       if (LOG.isDebugEnabled()) {
+         LOG.debug(getClass().getSimpleName() + ": " + block
+             + "\n  isClient  =" + isClient + ", clientname=" + clientname
+             + "\n  isDatanode=" + isDatanode + ", srcDataNode=" + srcDataNode
+             + "\n  inAddr=" + inAddr + ", myAddr=" + myAddr
+             + "\n  cachingStrategy = " + cachingStrategy
++            + "\n  pinning=" + pinning
+             );
+       }
+ 
+@@ -1295,6 +1300,10 @@ private void finalizeBlock(long startTime) throws IOException {
+         datanode.data.finalizeBlock(block);
+       }
+ 
++      if (pinning) {
++        datanode.data.setPinning(block);
++      }
++
+       datanode.closeBlock(
+           block, DataNode.EMPTY_DEL_HINT, replicaInfo.getStorageUuid());
+       if (ClientTraceLog.isInfoEnabled() && isClient) {
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java
+index 1a6a5be..288def5 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java
+@@ -2148,7 +2148,7 @@ public void run() {
+         new Sender(out).writeBlock(b, targetStorageTypes[0], accessToken,
+             clientname, targets, targetStorageTypes, srcNode,
+             stage, 0, 0, 0, 0, blockSender.getChecksum(), cachingStrategy,
+-            false);
++            false, false, null);
+ 
+         // send data & checksum
+         blockSender.sendBlock(out, unbufOut, null);
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataXceiver.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataXceiver.java
+index e9309b8..b97dbd7 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataXceiver.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataXceiver.java
+@@ -608,7 +608,9 @@ public void writeBlock(final ExtendedBlock block,
+       final long latestGenerationStamp,
+       DataChecksum requestedChecksum,
+       CachingStrategy cachingStrategy,
+-      final boolean allowLazyPersist) throws IOException {
++      final boolean allowLazyPersist,
++      final boolean pinning,
++      final boolean[] targetPinnings) throws IOException {
+     previousOpClientName = clientname;
+     updateCurrentThreadName("Receiving block " + block);
+     final boolean isDatanode = clientname.length() == 0;
+@@ -621,14 +623,14 @@ public void writeBlock(final ExtendedBlock block,
+       throw new IOException(stage + " does not support multiple targets "
+           + Arrays.asList(targets));
+     }
+-
++    
+     if (LOG.isDebugEnabled()) {
+       LOG.debug("opWriteBlock: stage=" + stage + ", clientname=" + clientname 
+       		+ "\n  block  =" + block + ", newGs=" + latestGenerationStamp
+       		+ ", bytesRcvd=[" + minBytesRcvd + ", " + maxBytesRcvd + "]"
+           + "\n  targets=" + Arrays.asList(targets)
+           + "; pipelineSize=" + pipelineSize + ", srcDataNode=" + srcDataNode
+-          );
++          + ", pinning=" + pinning);
+       LOG.debug("isDatanode=" + isDatanode
+           + ", isClient=" + isClient
+           + ", isTransfer=" + isTransfer);
+@@ -670,7 +672,7 @@ public void writeBlock(final ExtendedBlock block,
+             peer.getLocalAddressString(),
+             stage, latestGenerationStamp, minBytesRcvd, maxBytesRcvd,
+             clientname, srcDataNode, datanode, requestedChecksum,
+-            cachingStrategy, allowLazyPersist);
++            cachingStrategy, allowLazyPersist, pinning);
+ 
+         storageUuid = blockReceiver.getStorageUuid();
+       } else {
+@@ -713,10 +715,19 @@ public void writeBlock(final ExtendedBlock block,
+           mirrorIn = new DataInputStream(unbufMirrorIn);
+ 
+           // Do not propagate allowLazyPersist to downstream DataNodes.
+-          new Sender(mirrorOut).writeBlock(originalBlock, targetStorageTypes[0],
++          if (targetPinnings != null && targetPinnings.length > 0) {
++            new Sender(mirrorOut).writeBlock(originalBlock, targetStorageTypes[0],
+               blockToken, clientname, targets, targetStorageTypes, srcDataNode,
+               stage, pipelineSize, minBytesRcvd, maxBytesRcvd,
+-              latestGenerationStamp, requestedChecksum, cachingStrategy, false);
++              latestGenerationStamp, requestedChecksum, cachingStrategy,
++              false, targetPinnings[0], targetPinnings);
++          } else {
++            new Sender(mirrorOut).writeBlock(originalBlock, targetStorageTypes[0],
++              blockToken, clientname, targets, targetStorageTypes, srcDataNode,
++              stage, pipelineSize, minBytesRcvd, maxBytesRcvd,
++              latestGenerationStamp, requestedChecksum, cachingStrategy,
++              false, false, targetPinnings);
++          }
+ 
+           mirrorOut.flush();
+ 
+@@ -978,7 +989,14 @@ public void copyBlock(final ExtendedBlock block,
+       }
+ 
+     }
+-
++    
++    if (datanode.data.getPinning(block)) {
++      String msg = "Not able to copy block " + block.getBlockId() + " " +
++          "to " + peer.getRemoteAddressString() + " because it's pinned ";
++      LOG.info(msg);
++      sendResponse(ERROR, msg);
++    }
++    
+     if (!dataXceiverServer.balanceThrottler.acquire()) { // not able to start
+       String msg = "Not able to copy block " + block.getBlockId() + " " +
+           "to " + peer.getRemoteAddressString() + " because threads " +
+@@ -1141,7 +1159,7 @@ public void replaceBlock(final ExtendedBlock block,
+             proxyReply, proxySock.getRemoteSocketAddress().toString(),
+             proxySock.getLocalSocketAddress().toString(),
+             null, 0, 0, 0, "", null, datanode, remoteChecksum,
+-            CachingStrategy.newDropBehind(), false);
++            CachingStrategy.newDropBehind(), false, false);
+         
+         // receive a block
+         blockReceiver.receiveBlock(null, null, replyOut, null, 
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/FsDatasetSpi.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/FsDatasetSpi.java
+index 8a0791b..a3acec9 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/FsDatasetSpi.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/FsDatasetSpi.java
+@@ -535,6 +535,19 @@ public ReplicaInfo moveBlockAcrossStorage(final ExtendedBlock block,
+         StorageType targetStorageType) throws IOException;
+ 
+   /**
++   * Set a block to be pinned on this datanode so that it cannot be moved
++   * by Balancer/Mover.
++   *
++   * It is a no-op when dfs.datanode.block-pinning.enabled is set to false.
++   */
++  public void setPinning(ExtendedBlock block) throws IOException;
++
++  /**
++   * Check whether the block was pinned
++   */
++  public boolean getPinning(ExtendedBlock block) throws IOException;
++
++  /**
+    * Confirm whether the block is deleting
+    */
+   public boolean isDeletingBlock(String bpid, long blockId);
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetImpl.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetImpl.java
+index 05c7d1f..ff55f92 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetImpl.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetImpl.java
+@@ -54,6 +54,10 @@
+ import org.apache.commons.logging.LogFactory;
+ import org.apache.hadoop.classification.InterfaceAudience;
+ import org.apache.hadoop.conf.Configuration;
++import org.apache.hadoop.fs.FileStatus;
++import org.apache.hadoop.fs.FileSystem;
++import org.apache.hadoop.fs.LocalFileSystem;
++import org.apache.hadoop.fs.permission.FsPermission;
+ import org.apache.hadoop.fs.Path;
+ import org.apache.hadoop.hdfs.ExtendedBlockId;
+ import org.apache.hadoop.hdfs.DFSConfigKeys;
+@@ -245,6 +249,10 @@ public LengthInputStream getMetaDataInputStream(ExtendedBlock b)
+   // Used for synchronizing access to usage stats
+   private final Object statsLock = new Object();
+ 
++  final LocalFileSystem localFS;
++
++  private boolean blockPinningEnabled;
++  
+   /**
+    * An FSDataset has a directory where it loads its data files.
+    */
+@@ -307,6 +315,10 @@ public LengthInputStream getMetaDataInputStream(ExtendedBlock b)
+     lazyWriter = new Daemon(new LazyWriter(conf));
+     lazyWriter.start();
+     registerMBean(datanode.getDatanodeUuid());
++    localFS = FileSystem.getLocal(conf);
++    blockPinningEnabled = conf.getBoolean(
++      DFSConfigKeys.DFS_DATANODE_BLOCK_PINNING_ENABLED,
++      DFSConfigKeys.DFS_DATANODE_BLOCK_PINNING_ENABLED_DEFAULT);
+   }
+ 
+   /**
+@@ -2890,8 +2902,36 @@ public void stop() {
+       shouldRun = false;
+     }
+   }
++ 
++  @Override 
++  public void setPinning(ExtendedBlock block) throws IOException {
++    if (!blockPinningEnabled) {
++      return;
++    }
++
++    File f = getBlockFile(block);
++    Path p = new Path(f.getAbsolutePath());
++    
++    FsPermission oldPermission = localFS.getFileStatus(
++        new Path(f.getAbsolutePath())).getPermission();
++    //sticky bit is used for pinning purpose
++    FsPermission permission = new FsPermission(oldPermission.getUserAction(),
++        oldPermission.getGroupAction(), oldPermission.getOtherAction(), true);
++    localFS.setPermission(p, permission);
++  }
+   
+   @Override
++  public boolean getPinning(ExtendedBlock block) throws IOException {
++    if (!blockPinningEnabled) {
++      return  false;
++    }
++    File f = getBlockFile(block);
++        
++    FileStatus fss = localFS.getFileStatus(new Path(f.getAbsolutePath()));
++    return fss.getPermission().getStickyBit();
++  }
++
++  @Override
+   public boolean isDeletingBlock(String bpid, long blockId) {
+     synchronized(deletingBlock) {
+       Set<Long> s = deletingBlock.get(bpid);
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/proto/datatransfer.proto b/hadoop-hdfs-project/hadoop-hdfs/src/main/proto/datatransfer.proto
+index 6e5c333..4c520b2 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/proto/datatransfer.proto
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/proto/datatransfer.proto
+@@ -123,6 +123,9 @@ message OpWriteBlockProto {
+    * to ignore this hint.
+    */
+   optional bool allowLazyPersist = 13 [default = false];
++  //whether to pin the block, so Balancer won't move it.
++  optional bool pinning = 14 [default = false];
++  repeated bool targetPinnings = 15;
+ }
+   
+ message OpTransferBlockProto {
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/resources/hdfs-default.xml b/hadoop-hdfs-project/hadoop-hdfs/src/main/resources/hdfs-default.xml
+index e9b92d4..e4ba4d7 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/resources/hdfs-default.xml
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/resources/hdfs-default.xml
+@@ -2312,4 +2312,10 @@
+   </description>
+ </property>
+ 
++  <property>
++    <name>dfs.datanode.block-pinning.enabled</name>
++    <value>false</value>
++    <description>Whether pin blocks on favored DataNode.</description>
++  </property>
++
+ </configuration>
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/DFSTestUtil.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/DFSTestUtil.java
+index 0eb54aa..26e89ac 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/DFSTestUtil.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/DFSTestUtil.java
+@@ -321,13 +321,21 @@ public static void createFile(FileSystem fs, Path fileName, long fileLen,
+   public static void createFile(FileSystem fs, Path fileName, int bufferLen,
+                                 long fileLen, long blockSize, short replFactor, long seed)
+       throws IOException {
+-    createFile(fs, fileName, false, bufferLen, fileLen, blockSize,
+-            replFactor, seed, false);
++    createFile(fs, fileName, false, bufferLen, fileLen, blockSize, replFactor,
++      seed, false);
+   }
+ 
+   public static void createFile(FileSystem fs, Path fileName,
+       boolean isLazyPersist, int bufferLen, long fileLen, long blockSize,
+       short replFactor, long seed, boolean flush) throws IOException {
++        createFile(fs, fileName, isLazyPersist, bufferLen, fileLen, blockSize,
++          replFactor, seed, flush, null);
++  }
++
++  public static void createFile(FileSystem fs, Path fileName,
++      boolean isLazyPersist, int bufferLen, long fileLen, long blockSize,
++      short replFactor, long seed, boolean flush,
++      InetSocketAddress[] favoredNodes) throws IOException {
+   assert bufferLen > 0;
+   if (!fs.mkdirs(fileName.getParent())) {
+       throw new IOException("Mkdirs failed to create " +
+@@ -340,10 +348,19 @@ public static void createFile(FileSystem fs, Path fileName,
+     createFlags.add(LAZY_PERSIST);
+   }
+   try {
+-      out = fs.create(fileName, FsPermission.getFileDefault(), createFlags,
+-        fs.getConf().getInt(CommonConfigurationKeys.IO_FILE_BUFFER_SIZE_KEY, 4096),
++    if (favoredNodes == null) {
++      out = fs.create(
++        fileName,
++        FsPermission.getFileDefault(),
++        createFlags,
++        fs.getConf().getInt(
++          CommonConfigurationKeys.IO_FILE_BUFFER_SIZE_KEY, 4096),
+         replFactor, blockSize, null);
+-
++    } else {
++      out = ((DistributedFileSystem) fs).create(fileName,
++        FsPermission.getDefault(), true, bufferLen, replFactor, blockSize,
++        null, favoredNodes);
++    }
+       if (fileLen > 0) {
+         byte[] toWrite = new byte[bufferLen];
+         Random rb = new Random(seed);
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDataTransferProtocol.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDataTransferProtocol.java
+index fd4f1a5..0dcdc987 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDataTransferProtocol.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDataTransferProtocol.java
+@@ -534,6 +534,6 @@ void writeBlock(ExtendedBlock block, BlockConstructionStage stage,
+         BlockTokenSecretManager.DUMMY_TOKEN, "cl",
+         new DatanodeInfo[1], new StorageType[1], null, stage,
+         0, block.getNumBytes(), block.getNumBytes(), newGS,
+-        checksum, CachingStrategy.newDefaultStrategy(), false);
++        checksum, CachingStrategy.newDefaultStrategy(), false, false, null);
+   }
+ }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/balancer/TestBalancer.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/balancer/TestBalancer.java
+index 61a7cb6..06d3851 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/balancer/TestBalancer.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/balancer/TestBalancer.java
+@@ -17,12 +17,7 @@
+  */
+ package org.apache.hadoop.hdfs.server.balancer;
+ 
+-import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_BLOCK_SIZE_KEY;
+-import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_DATANODE_LAZY_WRITER_INTERVAL_SEC;
+-import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_DATANODE_RAM_DISK_LOW_WATERMARK_BYTES;
+-import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_HEARTBEAT_INTERVAL_KEY;
+-import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_NAMENODE_HEARTBEAT_RECHECK_INTERVAL_KEY;
+-import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_NAMENODE_LAZY_PERSIST_FILE_SCRUB_INTERVAL_SEC;
++import static org.apache.hadoop.hdfs.DFSConfigKeys.*;
+ import static org.apache.hadoop.hdfs.StorageType.DEFAULT;
+ import static org.apache.hadoop.hdfs.StorageType.RAM_DISK;
+ import static org.junit.Assert.assertEquals;
+@@ -34,6 +29,7 @@
+ import java.io.PrintWriter;
+ import java.net.InetAddress;
+ import java.net.URI;
++import java.net.InetSocketAddress;
+ import java.util.ArrayList;
+ import java.util.Arrays;
+ import java.util.Collection;
+@@ -62,13 +58,8 @@
+ import org.apache.hadoop.hdfs.MiniDFSCluster;
+ import org.apache.hadoop.hdfs.NameNodeProxies;
+ import org.apache.hadoop.hdfs.StorageType;
+-import org.apache.hadoop.hdfs.protocol.Block;
+-import org.apache.hadoop.hdfs.protocol.ClientProtocol;
+-import org.apache.hadoop.hdfs.protocol.DatanodeInfo;
+-import org.apache.hadoop.hdfs.protocol.ExtendedBlock;
+-import org.apache.hadoop.hdfs.protocol.HdfsConstants;
++import org.apache.hadoop.hdfs.protocol.*;
+ import org.apache.hadoop.hdfs.protocol.HdfsConstants.DatanodeReportType;
+-import org.apache.hadoop.hdfs.protocol.LocatedBlock;
+ import org.apache.hadoop.hdfs.server.balancer.Balancer.Cli;
+ import org.apache.hadoop.hdfs.server.balancer.Balancer.Parameters;
+ import org.apache.hadoop.hdfs.server.balancer.Balancer.Result;
+@@ -314,6 +305,63 @@ static void waitForBalancer(long totalUsedSpace, long totalCapacity,
+   }
+   
+   /**
++   * Make sure that balancer can't move pinned blocks.
++   * If specified favoredNodes when create file, blocks will be pinned use 
++   * sticky bit.
++   * @throws Exception
++   */
++  @Test(timeout=100000)
++  public void testBalancerWithPinnedBlocks() throws Exception {
++    final Configuration conf = new HdfsConfiguration();
++    initConf(conf);
++    conf.setBoolean(DFS_DATANODE_BLOCK_PINNING_ENABLED, true);
++    
++    long[] capacities =  new long[] { CAPACITY, CAPACITY };
++    String[] racks = { RACK0, RACK1 };
++    int numOfDatanodes = capacities.length;
++
++    cluster = new MiniDFSCluster.Builder(conf).numDataNodes(capacities.length)
++      .hosts(new String[]{"localhost", "localhost"})
++      .racks(racks).simulatedCapacities(capacities).build();
++
++    try {
++      cluster.waitActive();
++      client = NameNodeProxies.createProxy(conf,
++          cluster.getFileSystem(0).getUri(), ClientProtocol.class).getProxy();
++      
++      // fill up the cluster to be 80% full
++      long totalCapacity = sum(capacities);
++      long totalUsedSpace = totalCapacity * 8 / 10;
++      InetSocketAddress[] favoredNodes = new InetSocketAddress[numOfDatanodes];
++      for (int i = 0; i < favoredNodes.length; i++) {
++        favoredNodes[i] = cluster.getDataNodes().get(i).getXferAddress();
++      }
++
++      DFSTestUtil.createFile(cluster.getFileSystem(0), filePath, false, 1024,
++          totalUsedSpace / numOfDatanodes, DEFAULT_BLOCK_SIZE,
++          (short) numOfDatanodes, 0, false, favoredNodes);
++      
++      // start up an empty node with the same capacity
++      cluster.startDataNodes(conf, 1, true, null, new String[] { RACK2 },
++          new long[] { CAPACITY });
++      
++      totalCapacity += CAPACITY;
++      
++      // run balancer and validate results
++      waitForHeartBeat(totalUsedSpace, totalCapacity, client, cluster);
++
++      // start rebalancing
++      Collection<URI> namenodes = DFSUtil.getNsServiceRpcUris(conf);
++      int r = Balancer.run(namenodes, Balancer.Parameters.DEFAULT, conf);
++      assertEquals(ExitStatus.NO_MOVE_PROGRESS.getExitCode(), r);
++      
++    } finally {
++      cluster.shutdown();
++    }
++    
++  }
++  
++  /**
+    * Wait until balanced: each datanode gives utilization within 
+    * BALANCE_ALLOWED_VARIANCE of average
+    * @throws IOException
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/SimulatedFSDataset.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/SimulatedFSDataset.java
+index 9a20e04..d9dcebf 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/SimulatedFSDataset.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/SimulatedFSDataset.java
+@@ -129,6 +129,7 @@ public static void setFactory(Configuration conf) {
+     SimulatedOutputStream oStream = null;
+     private long bytesAcked;
+     private long bytesRcvd;
++    private boolean pinned = false;
+     BInfo(String bpid, Block b, boolean forWriting) throws IOException {
+       theBlock = new Block(b);
+       if (theBlock.getNumBytes() < 0) {
+@@ -1322,6 +1323,16 @@ public ReplicaInfo moveBlockAcrossStorage(ExtendedBlock block,
+     // TODO Auto-generated method stub
+     return null;
+   }
++
++  @Override
++  public void setPinning(ExtendedBlock b) throws IOException {
++    blockMap.get(b.getBlockPoolId()).get(b.getLocalBlock()).pinned = true;
++  }
++  
++  @Override
++  public boolean getPinning(ExtendedBlock b) throws IOException {
++    return blockMap.get(b.getBlockPoolId()).get(b.getLocalBlock()).pinned;
++  }
+   
+   @Override
+   public boolean isDeletingBlock(String bpid, long blockId) {
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestDiskError.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestDiskError.java
+index f440bb6..fb219d7 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestDiskError.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestDiskError.java
+@@ -152,7 +152,7 @@ public void testReplicationError() throws Exception {
+         BlockTokenSecretManager.DUMMY_TOKEN, "",
+         new DatanodeInfo[0], new StorageType[0], null,
+         BlockConstructionStage.PIPELINE_SETUP_CREATE, 1, 0L, 0L, 0L,
+-        checksum, CachingStrategy.newDefaultStrategy(), false);
++        checksum, CachingStrategy.newDefaultStrategy(), false, false, null);
+     out.flush();
+ 
+     // close the connection before sending the content of the block
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/extdataset/ExternalDatasetImpl.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/extdataset/ExternalDatasetImpl.java
+index c9b4a5e..904dd1b 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/extdataset/ExternalDatasetImpl.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/extdataset/ExternalDatasetImpl.java
+@@ -419,6 +419,15 @@ public long getNumBlocksFailedToCache() {
+   public long getNumBlocksFailedToUncache() {
+     return 0;
+   }
++
++  @Override
++  public void setPinning(ExtendedBlock block) throws IOException {    
++  }
++
++  @Override
++  public boolean getPinning(ExtendedBlock block) throws IOException {
++    return false;
++  }
+   
+   @Override
+   public boolean isDeletingBlock(String bpid, long blockId) {
+-- 
+1.7.9.5
+

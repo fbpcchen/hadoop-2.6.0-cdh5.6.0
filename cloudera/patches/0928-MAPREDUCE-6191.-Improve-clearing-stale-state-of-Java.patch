@@ -1,0 +1,31 @@
+From bb5318e89caa82d97122899fb26697dc7d527c7c Mon Sep 17 00:00:00 2001
+From: Eric Yang <eyang@apache.org>
+Date: Mon, 15 Dec 2014 19:39:41 -0800
+Subject: [PATCH 0928/1023] MAPREDUCE-6191. Improve clearing stale state of
+ Java serialization testcase.  (Sam Liu via Eric
+ Yang)
+
+(cherry picked from commit c379e102ddab1b83fd69e4492a40c9901fb50675)
+
+Change-Id: I622e49603e3e5b3ed3e19b33bbbb6c992033b07f
+(cherry picked from commit 8ffbba066883ac7fc7deb414642d4843c976a718)
+---
+ .../hadoop/mapred/TestJavaSerialization.java       |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-jobclient/src/test/java/org/apache/hadoop/mapred/TestJavaSerialization.java b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-jobclient/src/test/java/org/apache/hadoop/mapred/TestJavaSerialization.java
+index 4dea0d7..265118a 100644
+--- a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-jobclient/src/test/java/org/apache/hadoop/mapred/TestJavaSerialization.java
++++ b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-jobclient/src/test/java/org/apache/hadoop/mapred/TestJavaSerialization.java
+@@ -81,7 +81,7 @@ public void reduce(K key, Iterator<Long> values,
+   }
+ 
+   private void cleanAndCreateInput(FileSystem fs) throws IOException {
+-    fs.delete(INPUT_FILE, true);
++    fs.delete(INPUT_DIR, true);
+     fs.delete(OUTPUT_DIR, true);
+ 
+     OutputStream os = fs.create(INPUT_FILE);
+-- 
+1.7.9.5
+

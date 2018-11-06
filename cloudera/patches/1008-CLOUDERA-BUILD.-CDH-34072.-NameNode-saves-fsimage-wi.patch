@@ -1,0 +1,759 @@
+From a67259a6febd1c2a02744dc0a71a3c47f0247e05 Mon Sep 17 00:00:00 2001
+From: Yongjun Zhang <yzhang@cloudera.com>
+Date: Fri, 18 Dec 2015 11:42:47 -0800
+Subject: [PATCH 1008/1023] CLOUDERA-BUILD. CDH-34072. NameNode saves fsimage
+ with wrong user / group if Sentry
+ AuthorizationProvider misfunction.
+
+Change-Id: I22e984d007797e8fdd60c18d2b451fc646d1add9
+(cherry picked from commit f5ccc65763a686bd969877e5a7f354151a0148bc)
+---
+ .../server/namenode/AuthorizationProvider.java     |   38 ++++++++++-
+ .../namenode/DefaultAuthorizationProvider.java     |    6 +-
+ .../hadoop/hdfs/server/namenode/FSEditLog.java     |   12 ++--
+ .../hdfs/server/namenode/FSImageFormatPBINode.java |    8 +--
+ .../hdfs/server/namenode/FSImageSerialization.java |    4 +-
+ .../apache/hadoop/hdfs/server/namenode/INode.java  |   67 +++++++++++++++++++-
+ .../hdfs/server/namenode/INodeAttributes.java      |   36 ++++++++++-
+ .../hdfs/server/namenode/INodeDirectory.java       |    6 +-
+ .../hdfs/server/namenode/INodeReference.java       |   33 ++++++++--
+ .../server/namenode/INodeWithAdditionalFields.java |   29 +++++++++
+ .../server/namenode/TestAuthorizationProvider.java |   60 ++++++++++++------
+ 11 files changed, 256 insertions(+), 43 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/AuthorizationProvider.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/AuthorizationProvider.java
+index 9078ddd..7b21b92 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/AuthorizationProvider.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/AuthorizationProvider.java
+@@ -151,6 +151,15 @@ static void set(AuthorizationProvider authzProvider) {
+     public String getUserName(int snapshotId);
+ 
+     /**
++     * Return the Fsimage-stored inode user for the specified snapshot.
++     * 
++     * @param snapshotId a snapshot ID or {@link #CURRENT_STATE_ID} for latest 
++     * value.
++     * @return the Fsimage-stored inode user for the specified snapshot.
++     */
++    public String getFsimageUserName(int snapshotId);
++
++    /**
+      * Return the inode group for the specified snapshot.
+      *
+      * @param snapshotId a snapshot ID or {@link #CURRENT_STATE_ID} for latest
+@@ -160,6 +169,15 @@ static void set(AuthorizationProvider authzProvider) {
+     public String getGroupName(int snapshotId);
+ 
+     /**
++     * Return the Fsimage-stored inode group for the specified snapshot.
++     *
++     * @param snapshotId a snapshot ID or {@link #CURRENT_STATE_ID} for latest
++     * value.
++     * @return the Fsimage-stored inode group for the specified snapshot.
++     */
++    public String getFsimageGroupName(int snapshotId);
++
++    /**
+      * Return the inode permission for the specified snapshot.
+      *
+      * @param snapshotId a snapshot ID or {@link #CURRENT_STATE_ID} for latest
+@@ -169,6 +187,15 @@ static void set(AuthorizationProvider authzProvider) {
+     public FsPermission getFsPermission(int snapshotId);
+ 
+     /**
++     * Return the inode permission for the specified snapshot.
++     *
++     * @param snapshotId a snapshot ID or {@link #CURRENT_STATE_ID} for latest
++     * value.
++     * @return the Fsimage-stored inode permission for the specified snapshot.
++     */
++    public FsPermission getFsimageFsPermission(int snapshotId);
++
++    /**
+      * Return the inode ACL feature for the specified snapshot.
+      *
+      * @param snapshotId a snapshot ID or {@link #CURRENT_STATE_ID} for latest
+@@ -176,7 +203,16 @@ static void set(AuthorizationProvider authzProvider) {
+      * @return the inode ACL feature for the specified snapshot.
+      */
+     public AclFeature getAclFeature(int snapshotId);
+-    
++
++    /**
++     * Return the Fsimage-stored inode ACL feature for the specified snapshot.
++     *
++     * @param snapshotId a snapshot ID or {@link #CURRENT_STATE_ID} for latest
++     * value.
++     * @return the Fsimage-stored inode ACL feature for the specified snapshot.
++     */
++    public AclFeature getFsimageAclFeature(int snapshotId);
++
+   }
+ 
+   /**
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/DefaultAuthorizationProvider.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/DefaultAuthorizationProvider.java
+index d03cf4f..930d45f 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/DefaultAuthorizationProvider.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/DefaultAuthorizationProvider.java
+@@ -100,7 +100,7 @@ public AclFeature getAclFeature(INodeAuthorizationInfo node,
+       int snapshotId) {
+     INodeWithAdditionalFields inode = (INodeWithAdditionalFields) node;
+     if (snapshotId != Snapshot.CURRENT_STATE_ID) {
+-      return inode.getSnapshotINode(snapshotId).getAclFeature();
++      return inode.getSnapshotINode(snapshotId).getFsimageAclFeature();
+     }
+     return inode.getFeature(AclFeature.class);
+   }
+@@ -108,7 +108,7 @@ public AclFeature getAclFeature(INodeAuthorizationInfo node,
+   @Override
+   public void removeAclFeature(INodeAuthorizationInfo node) {
+     INodeWithAdditionalFields inode = (INodeWithAdditionalFields) node;
+-    AclFeature f = inode.getAclFeature();
++    AclFeature f = inode.getFsimageAclFeature();
+     Preconditions.checkNotNull(f);
+     inode.removeFeature(f);
+   }
+@@ -116,7 +116,7 @@ public void removeAclFeature(INodeAuthorizationInfo node) {
+   @Override
+   public void addAclFeature(INodeAuthorizationInfo node, AclFeature f) {
+     INodeWithAdditionalFields inode = (INodeWithAdditionalFields) node;
+-    AclFeature f1 = inode.getAclFeature();
++    AclFeature f1 = inode.getFsimageAclFeature();
+     if (f1 != null) {
+       throw new IllegalStateException("Duplicated ACLFeature");
+     }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSEditLog.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSEditLog.java
+index 7ef9880..e1e27aa 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSEditLog.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSEditLog.java
+@@ -718,7 +718,7 @@ private void logRpcIds(FSEditLogOp op, boolean toLogRpcIds) {
+   public void logOpenFile(String path, INodeFile newNode, boolean overwrite,
+       boolean toLogRpcIds) {
+     Preconditions.checkArgument(newNode.isUnderConstruction());
+-    PermissionStatus permissions = newNode.getPermissionStatus();
++    PermissionStatus permissions = newNode.getFsimagePermissionStatus();
+     AddOp op = AddOp.getInstance(cache.get())
+       .setInodeId(newNode.getId())
+       .setPath(path)
+@@ -734,7 +734,7 @@ public void logOpenFile(String path, INodeFile newNode, boolean overwrite,
+       .setOverwrite(overwrite)
+       .setStoragePolicyId(newNode.getLocalStoragePolicyID());
+ 
+-    AclFeature f = newNode.getAclFeature();
++    AclFeature f = newNode.getFsimageAclFeature();
+     if (f != null) {
+       op.setAclEntries(AclStorage.readINodeLogicalAcl(newNode));
+     }
+@@ -759,7 +759,7 @@ public void logCloseFile(String path, INodeFile newNode) {
+       .setAccessTime(newNode.getAccessTime())
+       .setBlockSize(newNode.getPreferredBlockSize())
+       .setBlocks(newNode.getBlocks())
+-      .setPermissionStatus(newNode.getPermissionStatus());
++      .setPermissionStatus(newNode.getFsimagePermissionStatus());
+     
+     logEdit(op);
+   }
+@@ -788,14 +788,14 @@ public void logUpdateBlocks(String path, INodeFile file, boolean toLogRpcIds) {
+    * Add create directory record to edit log
+    */
+   public void logMkDir(String path, INode newNode) {
+-    PermissionStatus permissions = newNode.getPermissionStatus();
++    PermissionStatus permissions = newNode.getFsimagePermissionStatus();
+     MkdirOp op = MkdirOp.getInstance(cache.get())
+       .setInodeId(newNode.getId())
+       .setPath(path)
+       .setTimestamp(newNode.getModificationTime())
+       .setPermissionStatus(permissions);
+ 
+-    AclFeature f = newNode.getAclFeature();
++    AclFeature f = newNode.getFsimageAclFeature();
+     if (f != null) {
+       op.setAclEntries(AclStorage.readINodeLogicalAcl(newNode));
+     }
+@@ -960,7 +960,7 @@ void logSymlink(String path, String value, long mtime, long atime,
+       .setValue(value)
+       .setModificationTime(mtime)
+       .setAccessTime(atime)
+-      .setPermissionStatus(node.getPermissionStatus());
++      .setPermissionStatus(node.getFsimagePermissionStatus());
+     logRpcIds(op, toLogRpcIds);
+     logEdit(op);
+   }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSImageFormatPBINode.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSImageFormatPBINode.java
+index 8442202..fa95c19 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSImageFormatPBINode.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSImageFormatPBINode.java
+@@ -354,8 +354,8 @@ private void loadRootINode(INodeSection.INode p) {
+   public final static class Saver {
+     private static long buildPermissionStatus(INodeAttributes n,
+         final SaverContext.DeduplicationMap<String> stringMap) {
+-      long userId = stringMap.getId(n.getUserName());
+-      long groupId = stringMap.getId(n.getGroupName());
++      long userId = stringMap.getId(n.getFsimageUserName());
++      long groupId = stringMap.getId(n.getFsimageGroupName());
+       return ((userId & USER_GROUP_STRID_MASK) << USER_STRID_OFFSET)
+           | ((groupId & USER_GROUP_STRID_MASK) << GROUP_STRID_OFFSET)
+           | n.getFsPermissionShort();
+@@ -407,7 +407,7 @@ private static long buildPermissionStatus(INodeAttributes n,
+           .setReplication(file.getFileReplication())
+           .setStoragePolicyID(file.getLocalStoragePolicyID());
+ 
+-      AclFeature f = file.getAclFeature();
++      AclFeature f = file.getFsimageAclFeature();
+       if (f != null) {
+         b.setAcl(buildAclEntries(f, state.getStringMap()));
+       }
+@@ -427,7 +427,7 @@ private static long buildPermissionStatus(INodeAttributes n,
+           .setDsQuota(quota.get(Quota.DISKSPACE))
+           .setPermission(buildPermissionStatus(dir, state.getStringMap()));
+ 
+-      AclFeature f = dir.getAclFeature();
++      AclFeature f = dir.getFsimageAclFeature();
+       if (f != null) {
+         b.setAcl(buildAclEntries(f, state.getStringMap()));
+       }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSImageSerialization.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSImageSerialization.java
+index e2a9a93..e11b4f3 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSImageSerialization.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSImageSerialization.java
+@@ -96,7 +96,9 @@ private static void writePermissionStatus(INodeAttributes inode,
+       DataOutput out) throws IOException {
+     final FsPermission p = TL_DATA.get().FILE_PERM;
+     p.fromShort(inode.getFsPermissionShort());
+-    PermissionStatus.write(out, inode.getUserName(), inode.getGroupName(), p);
++    
++    PermissionStatus.write(out,
++        inode.getFsimageUserName(), inode.getFsimageGroupName(), p);
+   }
+ 
+   private static void writeBlocks(final Block[] blocks,
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/INode.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/INode.java
+index e1827d4..64937c6 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/INode.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/INode.java
+@@ -73,11 +73,19 @@ final boolean isRoot() {
+   /** Get the {@link PermissionStatus} */
+   abstract PermissionStatus getPermissionStatus(int snapshotId);
+ 
++  /** Get the Fsimage-stored {@link PermissionStatus} */
++  abstract PermissionStatus getFsimagePermissionStatus(int snapshotId);
++
+   /** The same as getPermissionStatus(null). */
+   final PermissionStatus getPermissionStatus() {
+     return getPermissionStatus(Snapshot.CURRENT_STATE_ID);
+   }
+ 
++  /** The same as getFsimagePermissionStatus(null). */
++  final PermissionStatus getFsimagePermissionStatus() {
++    return getFsimagePermissionStatus(Snapshot.CURRENT_STATE_ID);
++  }
++
+   /**
+    * @param snapshotId
+    *          if it is not {@link Snapshot#CURRENT_STATE_ID}, get the result
+@@ -88,12 +96,28 @@ final PermissionStatus getPermissionStatus() {
+   @Override
+   public abstract String getUserName(int snapshotId);
+ 
++  /**
++   * @param snapshotId
++   *          if it is not {@link Snapshot#CURRENT_STATE_ID}, get the result
++   *          from the given snapshot; otherwise, get the result from the
++   *          current inode.
++   * @return stored user name
++   */
++  @Override
++  public abstract String getFsimageUserName(int snapshotId);
++
+   /** The same as getUserName(Snapshot.CURRENT_STATE_ID). */
+   @Override
+   public final String getUserName() {
+     return getUserName(Snapshot.CURRENT_STATE_ID);
+   }
+ 
++  /** The same as getFsimageUserName(Snapshot.CURRENT_STATE_ID). */
++  @Override
++  public final String getFsimageUserName() {
++    return getFsimageUserName(Snapshot.CURRENT_STATE_ID);
++  }
++
+   /** Set user */
+   abstract void setUser(String user);
+ 
+@@ -103,6 +127,7 @@ final INode setUser(String user, int latestSnapshotId) {
+     setUser(user);
+     return this;
+   }
++
+   /**
+    * @param snapshotId
+    *          if it is not {@link Snapshot#CURRENT_STATE_ID}, get the result
+@@ -113,12 +138,28 @@ final INode setUser(String user, int latestSnapshotId) {
+   @Override
+   public abstract String getGroupName(int snapshotId);
+ 
++  /**
++   * @param snapshotId
++   *          if it is not {@link Snapshot#CURRENT_STATE_ID}, get the result
++   *          from the given snapshot; otherwise, get the result from the
++   *          current inode.
++   * @return stored group name
++   */
++  @Override
++  public abstract String getFsimageGroupName(int snapshotId);
++
+   /** The same as getGroupName(Snapshot.CURRENT_STATE_ID). */
+   @Override
+   public final String getGroupName() {
+     return getGroupName(Snapshot.CURRENT_STATE_ID);
+   }
+ 
++  /** The same as getFsimageGroupName(Snapshot.CURRENT_STATE_ID). */
++  @Override
++  public final String getFsimageGroupName() {
++    return getFsimageGroupName(Snapshot.CURRENT_STATE_ID);
++  }
++
+   /** Set group */
+   abstract void setGroup(String group);
+ 
+@@ -138,13 +179,29 @@ final INode setGroup(String group, int latestSnapshotId) {
+    */
+   @Override
+   public abstract FsPermission getFsPermission(int snapshotId);
+-  
++
++  /**
++   * @param snapshotId
++   *          if it is not {@link Snapshot#CURRENT_STATE_ID}, get the result
++   *          from the given snapshot; otherwise, get the result from the
++   *          current inode.
++   * @return stored permission.
++   */
++  @Override
++  public abstract FsPermission getFsimageFsPermission(int snapshotId);
++
+   /** The same as getFsPermission(Snapshot.CURRENT_STATE_ID). */
+   @Override
+   public final FsPermission getFsPermission() {
+     return getFsPermission(Snapshot.CURRENT_STATE_ID);
+   }
+ 
++  /** The same as getFsPermission(Snapshot.CURRENT_STATE_ID). */
++  @Override
++  public final FsPermission getFsimageFsPermission() {
++    return getFsimageFsPermission(Snapshot.CURRENT_STATE_ID);
++  }
++
+   /** Set the {@link FsPermission} of this {@link INode} */
+   abstract void setPermission(FsPermission permission);
+ 
+@@ -159,10 +216,18 @@ INode setPermission(FsPermission permission, int latestSnapshotId) {
+   public abstract AclFeature getAclFeature(int snapshotId);
+ 
+   @Override
++  public abstract AclFeature getFsimageAclFeature(int snapshotId);
++
++  @Override
+   public final AclFeature getAclFeature() {
+     return getAclFeature(Snapshot.CURRENT_STATE_ID);
+   }
+ 
++  @Override
++  public final AclFeature getFsimageAclFeature() {
++    return getFsimageAclFeature(Snapshot.CURRENT_STATE_ID);
++  }
++
+   abstract void addAclFeature(AclFeature aclFeature);
+ 
+   final INode addAclFeature(AclFeature aclFeature, int latestSnapshotId) {
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/INodeAttributes.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/INodeAttributes.java
+index 8b0a5f0..d96d701 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/INodeAttributes.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/INodeAttributes.java
+@@ -37,12 +37,21 @@
+   /** @return the user name. */
+   public String getUserName();
+ 
++  /** @return the Fsimage-stored user name. */
++  public String getFsimageUserName();
++
+   /** @return the group name. */
+   public String getGroupName();
+-  
++
++  /** @return the Fsimage-stored default group name. */
++  public String getFsimageGroupName();
++
+   /** @return the permission. */
+   public FsPermission getFsPermission();
+ 
++  /** @return the permission. */
++  public FsPermission getFsimageFsPermission();
++
+   /** @return the permission as a short. */
+   public short getFsPermissionShort();
+   
+@@ -51,7 +60,10 @@
+ 
+   /** @return the ACL feature. */
+   public AclFeature getAclFeature();
+-  
++
++  /** @return the Fsimage-stored ACL feature. */
++  public AclFeature getFsimageAclFeature();
++
+   /** @return the XAttrs feature. */
+   public XAttrFeature getXAttrFeature();
+ 
+@@ -101,16 +113,31 @@ public final String getUserName() {
+     }
+ 
+     @Override
++    public final String getFsimageUserName() {
++      return getUserName();
++    }
++
++    @Override
+     public final String getGroupName() {
+       return PermissionStatusFormat.getGroup(permission);
+     }
+ 
+     @Override
++    public final String getFsimageGroupName() {
++      return getGroupName();
++    }
++
++    @Override
+     public final FsPermission getFsPermission() {
+       return new FsPermission(getFsPermissionShort());
+     }
+ 
+     @Override
++    public final FsPermission getFsimageFsPermission() {
++      return getFsPermission();
++    }
++    
++    @Override
+     public final short getFsPermissionShort() {
+       return PermissionStatusFormat.getMode(permission);
+     }
+@@ -126,6 +153,11 @@ public AclFeature getAclFeature() {
+     }
+ 
+     @Override
++    public AclFeature getFsimageAclFeature() {
++      return getAclFeature();
++    }
++
++    @Override
+     public final long getModificationTime() {
+       return modificationTime;
+     }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/INodeDirectory.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/INodeDirectory.java
+index a1d5ca7..2b34800 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/INodeDirectory.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/INodeDirectory.java
+@@ -547,8 +547,10 @@ private void addChild(final INode node, final int insertionPoint) {
+     node.setParent(this);
+     children.add(-insertionPoint - 1, node);
+ 
+-    if (node.getGroupName() == null) {
+-      node.setGroup(getGroupName());
++    if (node.getFsimageGroupName() == null) {
++      // CDH-34072: Cusotmized Provider (Sentry)'s setGroup API will 
++      // fall through to set Fsimage's group
++      node.setGroup(getFsimageGroupName());
+     }
+   }
+ 
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/INodeReference.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/INodeReference.java
+index 4df2322..e231e65 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/INodeReference.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/INodeReference.java
+@@ -189,38 +189,63 @@ public final long getId() {
+   public final PermissionStatus getPermissionStatus(int snapshotId) {
+     return referred.getPermissionStatus(snapshotId);
+   }
+-  
++
++  @Override
++  public final PermissionStatus getFsimagePermissionStatus(int snapshotId) {
++    return referred.getFsimagePermissionStatus(snapshotId);
++  }
++
+   @Override
+   public final String getUserName(int snapshotId) {
+     return referred.getUserName(snapshotId);
+   }
+   
+   @Override
++  public final String getFsimageUserName(int snapshotId) {
++    return referred.getFsimageUserName(snapshotId);
++  }
++
++  @Override
+   final void setUser(String user) {
+     referred.setUser(user);
+   }
+-  
++
+   @Override
+   public final String getGroupName(int snapshotId) {
+     return referred.getGroupName(snapshotId);
+   }
+   
+   @Override
++  public final String getFsimageGroupName(int snapshotId) {
++    return referred.getFsimageGroupName(snapshotId);
++  }
++
++  @Override
+   final void setGroup(String group) {
+     referred.setGroup(group);
+   }
+-  
++
+   @Override
+   public final FsPermission getFsPermission(int snapshotId) {
+     return referred.getFsPermission(snapshotId);
+   }
+ 
+   @Override
++  public final FsPermission getFsimageFsPermission(int snapshotId) {
++    return referred.getFsimageFsPermission(snapshotId);
++  }
++
++  @Override
+   public final AclFeature getAclFeature(int snapshotId) {
+     return referred.getAclFeature(snapshotId);
+   }
+ 
+   @Override
++  public final AclFeature getFsimageAclFeature(int snapshotId) {
++    return getAclFeature(snapshotId);
++  }
++
++  @Override
+   final void addAclFeature(AclFeature aclFeature) {
+     referred.addAclFeature(aclFeature);
+   }
+@@ -229,7 +254,7 @@ final void addAclFeature(AclFeature aclFeature) {
+   final void removeAclFeature() {
+     referred.removeAclFeature();
+   }
+-  
++
+   @Override
+   final XAttrFeature getXAttrFeature(int snapshotId) {
+     return referred.getXAttrFeature(snapshotId);
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/INodeWithAdditionalFields.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/INodeWithAdditionalFields.java
+index 917c30d..aa7e582 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/INodeWithAdditionalFields.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/INodeWithAdditionalFields.java
+@@ -101,6 +101,9 @@ static long toLong(PermissionStatus ps) {
+   private static final Feature[] EMPTY_FEATURE = new Feature[0];
+   protected Feature[] features = EMPTY_FEATURE;
+ 
++  private static AuthorizationProvider dfltAuthProvider = 
++      new DefaultAuthorizationProvider();
++  
+   private INodeWithAdditionalFields(INode parent, long id, byte[] name,
+       long permission, long modificationTime, long accessTime) {
+     super(parent);
+@@ -161,6 +164,12 @@ final PermissionStatus getPermissionStatus(int snapshotId) {
+         getFsPermission(snapshotId));
+   }
+ 
++  @Override
++  final PermissionStatus getFsimagePermissionStatus(int snapshotId) {
++    return new PermissionStatus(getFsimageUserName(snapshotId),
++        getFsimageGroupName(snapshotId), getFsimageFsPermission(snapshotId));
++  }
++
+   final void updatePermissionStatus(PermissionStatusFormat f, long n) {
+     this.permission = f.BITS.combine(n, permission);
+   }
+@@ -171,6 +180,11 @@ public final String getUserName(int snapshotId) {
+   }
+ 
+   @Override
++  public final String getFsimageUserName(int snapshotId) {
++    return dfltAuthProvider.getUser(this, snapshotId);
++  }
++
++  @Override
+   final void setUser(String user) {
+     AuthorizationProvider.get().setUser(this, user);
+   }
+@@ -181,6 +195,11 @@ public final String getGroupName(int snapshotId) {
+   }
+ 
+   @Override
++  public final String getFsimageGroupName(int snapshotId) {
++    return dfltAuthProvider.getGroup(this, snapshotId);
++  }
++
++  @Override
+   final void setGroup(String group) {
+     AuthorizationProvider.get().setGroup(this, group);
+   }
+@@ -191,6 +210,11 @@ public final FsPermission getFsPermission(int snapshotId) {
+   }
+ 
+   @Override
++  public final FsPermission getFsimageFsPermission(int snapshotId) {
++    return dfltAuthProvider.getFsPermission(this, snapshotId);
++  }
++
++  @Override
+   public final short getFsPermissionShort() {
+     return PermissionStatusFormat.getMode(permission);
+   }
+@@ -210,6 +234,11 @@ public final AclFeature getAclFeature(int snapshotId) {
+   }
+ 
+   @Override
++  public final AclFeature getFsimageAclFeature(int snapshotId) {
++    return dfltAuthProvider.getAclFeature(this, snapshotId);
++  }
++
++  @Override
+   final long getModificationTime(int snapshotId) {
+     if (snapshotId != Snapshot.CURRENT_STATE_ID) {
+       return getSnapshotINode(snapshotId).getModificationTime();
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestAuthorizationProvider.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestAuthorizationProvider.java
+index 763fad6..230eeb8 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestAuthorizationProvider.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestAuthorizationProvider.java
+@@ -18,6 +18,7 @@
+ package org.apache.hadoop.hdfs.server.namenode;
+ 
+ import com.google.common.collect.ImmutableList;
++
+ import org.apache.hadoop.conf.Configuration;
+ import org.apache.hadoop.fs.FileStatus;
+ import org.apache.hadoop.fs.FileSystem;
+@@ -31,6 +32,7 @@
+ import org.apache.hadoop.hdfs.DistributedFileSystem;
+ import org.apache.hadoop.hdfs.HdfsConfiguration;
+ import org.apache.hadoop.hdfs.MiniDFSCluster;
++import org.apache.hadoop.hdfs.protocol.HdfsConstants.SafeModeAction;
+ import org.apache.hadoop.security.AccessControlException;
+ import org.apache.hadoop.security.UserGroupInformation;
+ import org.junit.After;
+@@ -56,7 +58,9 @@
+     public void start() {
+       CALLED.add("start");
+       CALLED.add("isClientOp=" + isClientOp());
+-      defaultProvider = new DefaultAuthorizationProvider();
++      if (defaultProvider == null) {
++        defaultProvider = new DefaultAuthorizationProvider();
++      }
+       defaultProvider.start();
+     }
+ 
+@@ -64,8 +68,9 @@ public void start() {
+     public void stop() {
+       CALLED.add("stop");
+       CALLED.add("isClientOp=" + isClientOp());
+-      defaultProvider.stop();
+-      defaultProvider = null;
++      if (defaultProvider != null) {
++        defaultProvider.stop();
++      }
+     }
+ 
+     @Override
+@@ -126,9 +131,7 @@ private boolean useDefault(INodeAuthorizationInfo iNode) {
+     public void setUser(INodeAuthorizationInfo node, String user) {
+       CALLED.add("setUser");
+       CALLED.add("isClientOp=" + isClientOp());
+-      if (useDefault(node)) {
+-        defaultProvider.setUser(node, user);
+-      }
++      defaultProvider.setUser(node, user);
+     }
+ 
+     @Override
+@@ -148,9 +151,7 @@ public String getUser(INodeAuthorizationInfo node, int snapshotId) {
+     public void setGroup(INodeAuthorizationInfo node, String group) {
+       CALLED.add("setGroup");
+       CALLED.add("isClientOp=" + isClientOp());
+-      if (useDefault(node)) {
+-        defaultProvider.setGroup(node, group);
+-      }
++      defaultProvider.setGroup(node, group);
+     }
+ 
+     @Override
+@@ -171,9 +172,7 @@ public void setPermission(INodeAuthorizationInfo node,
+         FsPermission permission) {
+       CALLED.add("setPermission");
+       CALLED.add("isClientOp=" + isClientOp());
+-      if (useDefault(node)) {
+-        defaultProvider.setPermission(node, permission);
+-      }
++      defaultProvider.setPermission(node, permission);
+     }
+ 
+     @Override
+@@ -210,18 +209,14 @@ public AclFeature getAclFeature(INodeAuthorizationInfo node,
+     public void removeAclFeature(INodeAuthorizationInfo node) {
+       CALLED.add("removeAclFeature");
+       CALLED.add("isClientOp=" + isClientOp());
+-      if (useDefault(node)) {
+-        defaultProvider.removeAclFeature(node);
+-      }
++      defaultProvider.removeAclFeature(node);
+     }
+ 
+     @Override
+     public void addAclFeature(INodeAuthorizationInfo node, AclFeature f) {
+       CALLED.add("addAclFeature");
+       CALLED.add("isClientOp=" + isClientOp());
+-      if (useDefault(node)) {
+-        defaultProvider.addAclFeature(node, f);
+-      }
++      defaultProvider.addAclFeature(node, f);
+     }
+   }
+ 
+@@ -348,6 +343,33 @@ public void testCustomProvider() throws Exception {
+     Assert.assertEquals("foo", status.getOwner());
+     Assert.assertEquals("bar", status.getGroup());
+     Assert.assertEquals(new FsPermission((short) 0770), status.getPermission());
++    
++    // The following code test that the username/groupname supplied by 
++    // the customized authorization provider does not get saved to fsimage
++    //
++    miniDFS.getNameNodeRpc(0).setSafeMode(SafeModeAction.SAFEMODE_ENTER, true);
++    miniDFS.getNameNodeRpc(0).saveNamespace();
++    miniDFS.getNameNodeRpc(0).setSafeMode(SafeModeAction.SAFEMODE_LEAVE, true);
++   
++    miniDFS.getConfiguration(0).set(
++        DFSConfigKeys.DFS_NAMENODE_AUTHORIZATION_PROVIDER_KEY,
++        DefaultAuthorizationProvider.class.getName());
++    miniDFS.restartNameNodes();
++    miniDFS.waitClusterUp();
++    fs = FileSystem.get(miniDFS.getConfiguration(0));
++    status = fs.getFileStatus(new Path("/user/authz"));
++    Assert.assertEquals(System.getProperty("user.name"), status.getOwner());
++    Assert.assertEquals("supergroup", status.getGroup());
++    
++    miniDFS.getConfiguration(0).set(
++        DFSConfigKeys.DFS_NAMENODE_AUTHORIZATION_PROVIDER_KEY,
++        MyAuthorizationProvider.class.getName());
++    miniDFS.restartNameNodes();
++    miniDFS.waitClusterUp();
++    fs = FileSystem.get(miniDFS.getConfiguration(0));
++    status = fs.getFileStatus(new Path("/user/authz"));
++    Assert.assertEquals("foo", status.getOwner());
++    Assert.assertEquals("bar", status.getGroup());
++    Assert.assertEquals(new FsPermission((short) 0770), status.getPermission());
+   }
+-
+ }
+-- 
+1.7.9.5
+

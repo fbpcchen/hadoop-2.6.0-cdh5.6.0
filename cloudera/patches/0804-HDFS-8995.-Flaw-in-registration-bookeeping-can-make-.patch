@@ -1,0 +1,78 @@
+From 43112e7be1768e9b07dd5ad40cd03bca003ff6da Mon Sep 17 00:00:00 2001
+From: yliu <yliu@apache.org>
+Date: Wed, 2 Sep 2015 09:01:31 +0800
+Subject: [PATCH 0804/1023] HDFS-8995. Flaw in registration bookeeping can
+ make DN die on reconnect. (Kihwal Lee via yliu)
+
+(cherry picked from commit 0fb6b68101001221e14c2e86f4a63028074cced0)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt
+
+Change-Id: I0b81d10fa37fbc810a51bab96ec7ff7ac4560336
+(cherry picked from commit ae82cb690d85a9f5f807ed9b6cf3d41cd57ad955)
+(cherry picked from commit 02e575d9c17575042cadfb1dc56c431140fa6546)
+---
+ .../hdfs/server/datanode/BPOfferService.java       |    3 +--
+ .../hdfs/server/datanode/BPServiceActor.java       |    7 ++++---
+ .../hadoop/hdfs/server/datanode/DataNode.java      |    5 +----
+ 3 files changed, 6 insertions(+), 9 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BPOfferService.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BPOfferService.java
+index 0822898..f7dd3ef 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BPOfferService.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BPOfferService.java
+@@ -351,9 +351,8 @@ void registrationSucceeded(BPServiceActor bpServiceActor,
+             reg.getStorageInfo().getNamespaceID(), "namespace ID");
+         checkNSEquality(bpRegistration.getStorageInfo().getClusterID(),
+             reg.getStorageInfo().getClusterID(), "cluster ID");
+-      } else {
+-        bpRegistration = reg;
+       }
++      bpRegistration = reg;
+ 
+       dn.bpRegistrationSucceeded(bpRegistration, getBlockPoolId());
+       // Add the initial block token secret keys to the DN's secret manager.
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BPServiceActor.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BPServiceActor.java
+index 985e969..9dfd2d1 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BPServiceActor.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BPServiceActor.java
+@@ -766,15 +766,16 @@ private void offerService() throws Exception {
+   void register(NamespaceInfo nsInfo) throws IOException {
+     // The handshake() phase loaded the block pool storage
+     // off disk - so update the bpRegistration object from that info
+-    bpRegistration = bpos.createRegistration();
++    DatanodeRegistration newBpRegistration = bpos.createRegistration();
+ 
+     LOG.info(this + " beginning handshake with NN");
+ 
+     while (shouldRun()) {
+       try {
+         // Use returned registration from namenode with updated fields
+-        bpRegistration = bpNamenode.registerDatanode(bpRegistration);
+-        bpRegistration.setNamespaceInfo(nsInfo);
++        newBpRegistration = bpNamenode.registerDatanode(newBpRegistration);
++        newBpRegistration.setNamespaceInfo(nsInfo);
++        bpRegistration = newBpRegistration;
+         break;
+       } catch(SocketTimeoutException e) {  // namenode is busy
+         LOG.info("Problem connecting to server: " + nnAddr);
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java
+index 3193c14..91ecb03 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java
+@@ -1248,10 +1248,7 @@ DatanodeRegistration createBPRegistration(NamespaceInfo nsInfo) {
+    */
+   synchronized void bpRegistrationSucceeded(DatanodeRegistration bpRegistration,
+       String blockPoolId) throws IOException {
+-    // Set the ID if we haven't already
+-    if (null == id) {
+-      id = bpRegistration;
+-    }
++    id = bpRegistration;
+ 
+     if(!storage.getDatanodeUuid().equals(bpRegistration.getDatanodeUuid())) {
+       throw new IOException("Inconsistent Datanode IDs. Name-node returned "
+-- 
+1.7.9.5
+

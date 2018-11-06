@@ -1,0 +1,108 @@
+From bbd8e23c29f761dc7bcfe627c8072951a90cd231 Mon Sep 17 00:00:00 2001
+From: Lei Xu <lei@apache.org>
+Date: Fri, 4 Dec 2015 18:03:41 -0800
+Subject: [PATCH 0994/1023] HDFS-9491. Tests should get the number of pending
+ async deletes via FsDatasetTestUtils. (Tony Wu
+ via lei)
+
+(cherry picked from commit c92713dac56da0f836382005d84b577cfeb36a05)
+(cherry picked from commit ce49ba39d2aff6c58fa5751174f9d0559d7e1f56)
+
+Change-Id: I6b43479bc0e011ed2b1bddb2706ff308e7f8b1f6
+---
+ .../hdfs/server/datanode/DataNodeTestUtils.java    |    4 ----
+ .../hdfs/server/datanode/FsDatasetTestUtils.java   |    5 +++++
+ .../fsdataset/impl/FsDatasetImplTestUtils.java     |    5 +++++
+ .../datanode/fsdataset/impl/FsDatasetTestUtil.java |    4 ----
+ .../fsdataset/impl/LazyPersistTestCase.java        |    2 +-
+ .../hadoop/hdfs/server/namenode/ha/HATestUtil.java |    2 +-
+ 6 files changed, 12 insertions(+), 10 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/DataNodeTestUtils.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/DataNodeTestUtils.java
+index c6d0ec8..b147f6b 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/DataNodeTestUtils.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/DataNodeTestUtils.java
+@@ -138,10 +138,6 @@ public static InterDatanodeProtocol createInterDatanodeProtocolProxy(
+     return dn.getFSDataset();
+   }
+ 
+-  public static long getPendingAsyncDeletions(DataNode dn) {
+-    return FsDatasetTestUtil.getPendingAsyncDeletions(dn.getFSDataset());
+-  }
+-
+   /**
+    * Fetch a copy of ReplicaInfo from a datanode by block id
+    * @param dn datanode to retrieve a replicainfo object from
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/FsDatasetTestUtils.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/FsDatasetTestUtils.java
+index e89e1f2..2a8119f 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/FsDatasetTestUtils.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/FsDatasetTestUtils.java
+@@ -255,4 +255,9 @@ void changeStoredGenerationStamp(ExtendedBlock block, long newGenStamp)
+ 
+   /** Get all stored replicas in the specified block pool. */
+   Iterator<Replica> getStoredReplicas(String bpid) throws IOException;
++
++  /**
++   * Get the number of pending async deletions.
++   */
++  long getPendingAsyncDeletions();
+ }
+\ No newline at end of file
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetImplTestUtils.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetImplTestUtils.java
+index f67eeb8..c85ca2b 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetImplTestUtils.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetImplTestUtils.java
+@@ -400,4 +400,9 @@ public void changeStoredGenerationStamp(
+     }
+     return ret.iterator();
+   }
++
++  @Override
++  public long getPendingAsyncDeletions() {
++    return dataset.asyncDiskService.countPendingDeletions();
++  }
+ }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetTestUtil.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetTestUtil.java
+index 164385e..f4480a1 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetTestUtil.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetTestUtil.java
+@@ -59,10 +59,6 @@ public static ReplicaInfo fetchReplicaInfo (final FsDatasetSpi<?> fsd,
+       final String bpid, final long blockId) {
+     return ((FsDatasetImpl)fsd).fetchReplicaInfo(bpid, blockId);
+   }
+-
+-  public static long getPendingAsyncDeletions(FsDatasetSpi<?> fsd) {
+-    return ((FsDatasetImpl)fsd).asyncDiskService.countPendingDeletions();
+-  }
+   
+   public static Collection<ReplicaInfo> getReplicas(FsDatasetSpi<?> fsd,
+       String bpid) {
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/LazyPersistTestCase.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/LazyPersistTestCase.java
+index 9ce263e..fb03241 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/LazyPersistTestCase.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/LazyPersistTestCase.java
+@@ -355,7 +355,7 @@ protected final boolean verifyDeletedBlocks(LocatedBlocks locatedBlocks)
+     triggerBlockReport();
+ 
+     while(
+-      DataNodeTestUtils.getPendingAsyncDeletions(cluster.getDataNodes().get(0))
++        cluster.getFsDatasetTestUtils(0).getPendingAsyncDeletions()
+         > 0L){
+       Thread.sleep(1000);
+     }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/ha/HATestUtil.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/ha/HATestUtil.java
+index c57efa9..c16fe81 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/ha/HATestUtil.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/ha/HATestUtil.java
+@@ -97,7 +97,7 @@ public static void waitForDNDeletions(final MiniDFSCluster cluster)
+       @Override
+       public Boolean get() {
+         for (DataNode dn : cluster.getDataNodes()) {
+-          if (DataNodeTestUtils.getPendingAsyncDeletions(dn) > 0) {
++          if (cluster.getFsDatasetTestUtils(dn).getPendingAsyncDeletions() > 0) {
+             return false;
+           }
+         }
+-- 
+1.7.9.5
+

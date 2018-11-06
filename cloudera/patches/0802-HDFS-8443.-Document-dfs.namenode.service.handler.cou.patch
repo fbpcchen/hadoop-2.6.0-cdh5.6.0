@@ -1,0 +1,50 @@
+From 74d025c9e583cb38663dde414a509032c60f671b Mon Sep 17 00:00:00 2001
+From: Akira Ajisaka <aajisaka@apache.org>
+Date: Fri, 29 May 2015 11:36:08 +0900
+Subject: [PATCH 0802/1023] HDFS-8443. Document
+ dfs.namenode.service.handler.count in
+ hdfs-site.xml. Contributed by J.Andreina.
+
+(cherry picked from commit d725dd8af682f0877cf523744d9801174b727f4e)
+(cherry picked from commit e7b81710dde11cf0209d3343cb4416df44a3ea0e)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt
+
+Change-Id: If5ab1b835447cc5602b04d953787035398425c17
+(cherry picked from commit 8f2c333135c03d9327f3dc281e7e0fbeb02f0776)
+(cherry picked from commit 65d863fce8cba85213772e28a7a28688ef4b8ca3)
+---
+ .../src/main/resources/hdfs-default.xml            |   16 +++++++++++++++-
+ 1 file changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/resources/hdfs-default.xml b/hadoop-hdfs-project/hadoop-hdfs/src/main/resources/hdfs-default.xml
+index bfc1e47..4be44bf 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/resources/hdfs-default.xml
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/resources/hdfs-default.xml
+@@ -608,7 +608,21 @@
+ <property>
+   <name>dfs.namenode.handler.count</name>
+   <value>10</value>
+-  <description>The number of server threads for the namenode.</description>
++  <description>The number of Namenode RPC server threads that listen to
++  requests from clients.
++  If dfs.namenode.servicerpc-address is not configured then
++  Namenode RPC server threads listen to requests from all nodes.
++  </description>
++</property>
++
++<property>
++  <name>dfs.namenode.service.handler.count</name>
++  <value>10</value>
++  <description>The number of Namenode RPC server threads that listen to
++  requests from DataNodes and from all other non-client nodes.
++  dfs.namenode.service.handler.count will be valid only if
++  dfs.namenode.servicerpc-address is configured.
++  </description>
+ </property>
+ 
+ <property>
+-- 
+1.7.9.5
+

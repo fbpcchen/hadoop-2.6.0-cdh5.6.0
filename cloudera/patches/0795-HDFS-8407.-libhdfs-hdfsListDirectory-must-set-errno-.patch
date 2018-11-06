@@ -1,0 +1,143 @@
+From b11073ae29af32e74d49534619d7e641f5df752e Mon Sep 17 00:00:00 2001
+From: Colin Patrick Mccabe <cmccabe@cloudera.com>
+Date: Thu, 28 May 2015 11:23:44 -0700
+Subject: [PATCH 0795/1023] HDFS-8407. libhdfs hdfsListDirectory must set
+ errno to 0 on success (Masatake Iwasaki via Colin
+ P. McCabe)
+
+(cherry picked from commit d2d95bfe886a7fdf9d58fd5c47ec7c0158393afb)
+(cherry picked from commit b9752f24a66be2c4d3e585fba6bb269e7aa904d0)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt
+
+Change-Id: I1ce071a34648daf09525b42af34c81e4706e07b8
+(cherry picked from commit d283e406706cd4850eb9b9eac71aedc6c3364f7c)
+---
+ .../hadoop-hdfs/src/main/native/libhdfs/expect.h   |   18 ++++++++++++++++++
+ .../hadoop-hdfs/src/main/native/libhdfs/hdfs.c     |    1 +
+ .../hadoop-hdfs/src/main/native/libhdfs/hdfs.h     |    3 ++-
+ .../main/native/libhdfs/test/test_libhdfs_ops.c    |    9 +++++++++
+ .../main/native/libhdfs/test_libhdfs_threaded.c    |   17 ++++++++++++++++-
+ 5 files changed, 46 insertions(+), 2 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/native/libhdfs/expect.h b/hadoop-hdfs-project/hadoop-hdfs/src/main/native/libhdfs/expect.h
+index e64b108..49aa285 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/native/libhdfs/expect.h
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/native/libhdfs/expect.h
+@@ -48,6 +48,24 @@ struct hdfsFile_internal;
+         } \
+     } while (0);
+ 
++#define EXPECT_NULL_WITH_ERRNO(x, e) \
++    do { \
++        const void* __my_ret__ = x; \
++        int __my_errno__ = errno; \
++        if (__my_ret__ != NULL) { \
++            fprintf(stderr, "TEST_ERROR: failed on %s:%d (errno: %d): " \
++		    "got non-NULL value %p from %s\n", \
++		    __FILE__, __LINE__, __my_errno__, __my_ret__, #x); \
++            return -1; \
++        } \
++        if (__my_errno__ != e) { \
++            fprintf(stderr, "TEST_ERROR: failed on %s:%d (errno: %d): " \
++		    "got expected NULL without expected errno %d from %s\n", \
++		    __FILE__, __LINE__, __my_errno__, e, #x); \
++            return -1; \
++        } \
++    } while (0);
++
+ #define EXPECT_NONNULL(x) \
+     do { \
+         const void* __my_ret__ = x; \
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/native/libhdfs/hdfs.c b/hadoop-hdfs-project/hadoop-hdfs/src/main/native/libhdfs/hdfs.c
+index 27a2809..93c6564 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/native/libhdfs/hdfs.c
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/native/libhdfs/hdfs.c
+@@ -3220,6 +3220,7 @@ done:
+         return NULL;
+     }
+     *numEntries = jPathListSize;
++    errno = 0;
+     return pathList;
+ }
+ 
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/native/libhdfs/hdfs.h b/hadoop-hdfs-project/hadoop-hdfs/src/main/native/libhdfs/hdfs.h
+index 3406d6b..e34c3ff 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/native/libhdfs/hdfs.h
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/native/libhdfs/hdfs.h
+@@ -588,7 +588,8 @@ extern  "C" {
+      * @param path The path of the directory. 
+      * @param numEntries Set to the number of files/directories in path.
+      * @return Returns a dynamically-allocated array of hdfsFileInfo
+-     * objects; NULL on error.
++     * objects; NULL on error or empty directory.
++     * errno is set to non-zero on error or zero on success.
+      */
+     hdfsFileInfo *hdfsListDirectory(hdfsFS fs, const char* path,
+                                     int *numEntries);
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/native/libhdfs/test/test_libhdfs_ops.c b/hadoop-hdfs-project/hadoop-hdfs/src/main/native/libhdfs/test/test_libhdfs_ops.c
+index aa9441a..f564de4 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/native/libhdfs/test/test_libhdfs_ops.c
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/native/libhdfs/test/test_libhdfs_ops.c
+@@ -307,6 +307,15 @@ int main(int argc, char **argv) {
+         }
+ 
+         fileList = 0;
++        fileList = hdfsListDirectory(fs, newDirectory, &numEntries);
++        if (!(fileList == NULL && numEntries == 0 && !errno)) {
++            fprintf(stderr, "waah! hdfsListDirectory for empty %s - FAILED!\n", newDirectory);
++            totalResult++;
++        } else {
++            fprintf(stderr, "hdfsListDirectory for empty %s - SUCCESS!\n", newDirectory);
++        }
++
++        fileList = 0;
+         if((fileList = hdfsListDirectory(fs, slashTmp, &numEntries)) != NULL) {
+             for(i=0; i < numEntries; ++i) {
+                 fprintf(stderr, "Name: %s, ", fileList[i].mName);
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/native/libhdfs/test_libhdfs_threaded.c b/hadoop-hdfs-project/hadoop-hdfs/src/main/native/libhdfs/test_libhdfs_threaded.c
+index 17ff7a8..702430c 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/native/libhdfs/test_libhdfs_threaded.c
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/native/libhdfs/test_libhdfs_threaded.c
+@@ -142,7 +142,7 @@ static int doTestHdfsOperations(struct tlhThreadInfo *ti, hdfsFS fs,
+ {
+     char tmp[4096];
+     hdfsFile file;
+-    int ret, expected;
++    int ret, expected, numEntries;
+     hdfsFileInfo *fileInfo;
+     struct hdfsReadStatistics *readStats = NULL;
+ 
+@@ -153,6 +153,14 @@ static int doTestHdfsOperations(struct tlhThreadInfo *ti, hdfsFS fs,
+ 
+     EXPECT_ZERO(doTestGetDefaultBlockSize(fs, paths->prefix));
+ 
++    /* There should be no entry in the directory. */
++    errno = EACCES; // see if errno is set to 0 on success
++    EXPECT_NULL_WITH_ERRNO(hdfsListDirectory(fs, paths->prefix, &numEntries), 0);
++    if (numEntries != 0) {
++        fprintf(stderr, "hdfsListDirectory set numEntries to "
++                "%d on empty directory.", numEntries);
++    }
++
+     /* There should not be any file to open for reading. */
+     EXPECT_NULL(hdfsOpenFile(fs, paths->file1, O_RDONLY, 0, 0, 0));
+ 
+@@ -179,6 +187,13 @@ static int doTestHdfsOperations(struct tlhThreadInfo *ti, hdfsFS fs,
+     EXPECT_ZERO(hdfsHSync(fs, file));
+     EXPECT_ZERO(hdfsCloseFile(fs, file));
+ 
++    /* There should be 1 entry in the directory. */
++    EXPECT_NONNULL(hdfsListDirectory(fs, paths->prefix, &numEntries));
++    if (numEntries != 1) {
++        fprintf(stderr, "hdfsListDirectory set numEntries to "
++                "%d on directory containing 1 file.", numEntries);
++    }
++
+     /* Let's re-open the file for reading */
+     file = hdfsOpenFile(fs, paths->file1, O_RDONLY, 0, 0, 0);
+     EXPECT_NONNULL(file);
+-- 
+1.7.9.5
+

@@ -1,0 +1,106 @@
+From 95a223f1bb7ef3c141e615003ff38e3340ad552c Mon Sep 17 00:00:00 2001
+From: Robert Kanter <rkanter@apache.org>
+Date: Wed, 19 Aug 2015 19:00:51 -0700
+Subject: [PATCH 0727/1023] HADOOP-12317. Applications fail on NM restart on
+ some linux distro because NM container recovery
+ declares AM container as LOST (adhoot via
+ rkanter)
+
+(cherry picked from commit 1e06299df82b98795124fe8a33578c111e744ff4)
+(cherry picked from commit acf241242dc6948b257de7e197418cac0b80ae84)
+
+Conflicts:
+	hadoop-common-project/hadoop-common/CHANGES.txt
+
+Change-Id: Ib99ca3f6a60c5a8c27321c688b0dfd7d53459d00
+---
+ .../main/java/org/apache/hadoop/util/Shell.java    |   11 ++++--
+ .../java/org/apache/hadoop/util/TestShell.java     |   39 ++++++++++++++++++++
+ 2 files changed, 47 insertions(+), 3 deletions(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/util/Shell.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/util/Shell.java
+index 3aac27b..acf9e48 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/util/Shell.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/util/Shell.java
+@@ -210,13 +210,18 @@ static private OSType getOSType() {
+   public static String[] getCheckProcessIsAliveCommand(String pid) {
+     return Shell.WINDOWS ?
+       new String[] { Shell.WINUTILS, "task", "isAlive", pid } :
+-      new String[] { "kill", "-0", isSetsidAvailable ? "-" + pid : pid };
++      isSetsidAvailable ?
++        new String[] { "kill", "-0", "--", "-" + pid } :
++        new String[] { "kill", "-0", pid };
+   }
+ 
+   /** Return a command to send a signal to a given pid */
+   public static String[] getSignalKillCommand(int code, String pid) {
+-    return Shell.WINDOWS ? new String[] { Shell.WINUTILS, "task", "kill", pid } :
+-      new String[] { "kill", "-" + code, isSetsidAvailable ? "-" + pid : pid };
++    return Shell.WINDOWS ?
++      new String[] { Shell.WINUTILS, "task", "kill", pid } :
++      isSetsidAvailable ?
++        new String[] { "kill", "-" + code, "--", "-" + pid } :
++        new String[] { "kill", "-" + code, pid };
+   }
+ 
+   /** Return a regular expression string that match environment variables */
+diff --git a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/util/TestShell.java b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/util/TestShell.java
+index d9dc9ef..a96a0c8 100644
+--- a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/util/TestShell.java
++++ b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/util/TestShell.java
+@@ -18,6 +18,7 @@
+ package org.apache.hadoop.util;
+ 
+ import junit.framework.TestCase;
++import org.junit.Assert;
+ 
+ import java.io.BufferedReader;
+ import java.io.File;
+@@ -150,6 +151,44 @@ public void testShellCommandTimerLeak() throws Exception {
+     System.err.println("after: " + timersAfter);
+     assertEquals(timersBefore, timersAfter);
+   }
++
++  public void testGetCheckProcessIsAliveCommand() throws Exception {
++    String anyPid = "9999";
++    String[] checkProcessAliveCommand = Shell.getCheckProcessIsAliveCommand(
++        anyPid);
++
++    String[] expectedCommand;
++
++    if (Shell.WINDOWS) {
++      expectedCommand =
++          new String[]{ Shell.WINUTILS, "task", "isAlive", anyPid };
++    } else if (Shell.isSetsidAvailable) {
++      expectedCommand = new String[]{ "kill", "-0", "--", "-" + anyPid };
++    } else {
++      expectedCommand = new String[]{"kill", "-0", anyPid};
++    }
++    Assert.assertArrayEquals(expectedCommand, checkProcessAliveCommand);
++  }
++
++  public void testGetSignalKillCommand() throws Exception {
++    String anyPid = "9999";
++    int anySignal = 9;
++    String[] checkProcessAliveCommand = Shell.getSignalKillCommand(anySignal,
++        anyPid);
++
++    String[] expectedCommand;
++    if (Shell.WINDOWS) {
++      expectedCommand =
++          new String[]{ Shell.WINUTILS, "task", "kill", anyPid };
++    } else if (Shell.isSetsidAvailable) {
++      expectedCommand =
++          new String[]{ "kill", "-" + anySignal, "--", "-" + anyPid };
++    } else {
++      expectedCommand =
++          new String[]{ "kill", "-" + anySignal, anyPid };
++    }
++    Assert.assertArrayEquals(expectedCommand, checkProcessAliveCommand);
++  }
+   
+ 
+   private void testInterval(long interval) throws IOException {
+-- 
+1.7.9.5
+

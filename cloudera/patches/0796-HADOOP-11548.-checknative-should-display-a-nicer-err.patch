@@ -1,0 +1,42 @@
+From b1a0329139b3238ae8af5b8e1dfc13c8e4a5b113 Mon Sep 17 00:00:00 2001
+From: cnauroth <cnauroth@apache.org>
+Date: Wed, 4 Feb 2015 10:01:28 -0800
+Subject: [PATCH 0796/1023] HADOOP-11548. checknative should display a nicer
+ error message when openssl support is not
+ compiled in. Contributed by Anu Engineer.
+
+(cherry picked from commit 064e0770a0f32e7f32a7ba16c71394d7e75a3eb3)
+(cherry picked from commit 85b2739508618e1236151aff5bd8c0914dc145d7)
+
+Conflicts:
+	hadoop-common-project/hadoop-common/CHANGES.txt
+
+Change-Id: I2dcf3c43e87b67190ba687b1d3a911a2be144ab1
+(cherry picked from commit 8454f1c9f7ff5fe8914bd00359d401a59971f879)
+---
+ .../hadoop-common/src/CMakeLists.txt               |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/CMakeLists.txt b/hadoop-common-project/hadoop-common/src/CMakeLists.txt
+index ddb3abf..942b19c 100644
+--- a/hadoop-common-project/hadoop-common/src/CMakeLists.txt
++++ b/hadoop-common-project/hadoop-common/src/CMakeLists.txt
+@@ -185,7 +185,6 @@ find_path(OPENSSL_INCLUDE_DIR NAMES openssl/evp.h)
+ SET(CMAKE_FIND_LIBRARY_SUFFIXES ${STORED_CMAKE_FIND_LIBRARY_SUFFIXES})
+ SET(USABLE_OPENSSL 0)
+ if (OPENSSL_LIBRARY AND OPENSSL_INCLUDE_DIR)
+-    GET_FILENAME_COMPONENT(HADOOP_OPENSSL_LIBRARY ${OPENSSL_LIBRARY} NAME)
+     INCLUDE(CheckCSourceCompiles)
+     SET(OLD_CMAKE_REQUIRED_INCLUDES ${CMAKE_REQUIRED_INCLUDES})
+     SET(CMAKE_REQUIRED_INCLUDES ${OPENSSL_INCLUDE_DIR})
+@@ -198,6 +197,7 @@ if (OPENSSL_LIBRARY AND OPENSSL_INCLUDE_DIR)
+     endif(NOT HAS_NEW_ENOUGH_OPENSSL)
+ endif (OPENSSL_LIBRARY AND OPENSSL_INCLUDE_DIR)
+ if (USABLE_OPENSSL)
++    GET_FILENAME_COMPONENT(HADOOP_OPENSSL_LIBRARY ${OPENSSL_LIBRARY} NAME)
+     SET(OPENSSL_SOURCE_FILES
+         "${D}/crypto/OpensslCipher.c"
+         "${D}/crypto/random/OpensslSecureRandom.c")
+-- 
+1.7.9.5
+

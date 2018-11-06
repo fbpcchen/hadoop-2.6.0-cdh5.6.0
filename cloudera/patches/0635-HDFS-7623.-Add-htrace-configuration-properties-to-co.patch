@@ -1,0 +1,116 @@
+From acfbe23f83dcfd4e0876f0152a4f29b0e9f0b297 Mon Sep 17 00:00:00 2001
+From: yliu <yliu@apache.org>
+Date: Wed, 21 Jan 2015 00:57:51 +0800
+Subject: [PATCH 0635/1023] HDFS-7623. Add htrace configuration properties to
+ core-default.xml and update user doc about how to
+ enable htrace. (yliu)
+
+(cherry picked from commit 3f37354daae7703779b767b22e5328dc13fa65c6)
+
+Conflicts:
+	hadoop-common-project/hadoop-common/src/main/resources/core-default.xml
+---
+ .../src/main/resources/core-default.xml            |   25 ++++++++++++++++++++
+ .../hadoop-common/src/site/apt/Tracing.apt.vm      |   25 +++++++++++++++-----
+ 2 files changed, 44 insertions(+), 6 deletions(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/resources/core-default.xml b/hadoop-common-project/hadoop-common/src/main/resources/core-default.xml
+index bda0c74..2badacb 100644
+--- a/hadoop-common-project/hadoop-common/src/main/resources/core-default.xml
++++ b/hadoop-common-project/hadoop-common/src/main/resources/core-default.xml
+@@ -1743,4 +1743,29 @@ for ldap providers in the same way as above does.
+     <name>hadoop.shell.missing.defaultFs.warning</name>
+     <value>true</value>
+   </property>
++
++<property>
++  <name>hadoop.htrace.sampler</name>
++  <value>NeverSampler</value>
++  <description>
++    Configure the samplers for HTrace, the value can be NeverSampler,
++    AlwaysSampler or ProbabilitySampler. NeverSampler: HTrace is OFF 
++    for all spans; AlwaysSampler: HTrace is ON for all spans;
++    ProbabilitySampler: HTrace is ON for some percentage% of top-level 
++    spans.
++  </description>
++</property>
++
++<property>
++  <name>hadoop.htrace.spanreceiver.classes</name>
++  <value></value>
++  <description>
++    A comma separated list of the fully-qualified class name of classes 
++    implementing SpanReceiver. The tracing system works by collecting 
++    information in structs called 'Spans'. It is up to you to choose 
++    how you want to receive this information by implementing the 
++    SpanReceiver interface.
++  </description>
++</property>
++
+ </configuration>
+diff --git a/hadoop-common-project/hadoop-common/src/site/apt/Tracing.apt.vm b/hadoop-common-project/hadoop-common/src/site/apt/Tracing.apt.vm
+index 9eda220..f04da33 100644
+--- a/hadoop-common-project/hadoop-common/src/site/apt/Tracing.apt.vm
++++ b/hadoop-common-project/hadoop-common/src/site/apt/Tracing.apt.vm
+@@ -16,19 +16,32 @@
+   ---
+   ${maven.build.timestamp}
+ 
+-Enabling Dapper-like Tracing in HDFS
++Enabling Dapper-like Tracing in Hadoop
+ 
+ %{toc|section=1|fromDepth=0}
+ 
+-* {Dapper-like Tracing in HDFS}
++* {Dapper-like Tracing in Hadoop}
+ 
+ ** HTrace
+ 
+   {{{https://issues.apache.org/jira/browse/HDFS-5274}HDFS-5274}}
+   added support for tracing requests through HDFS,
+-  using the open source tracing library, {{{https://github.com/cloudera/htrace}HTrace}}.
++  using the open source tracing library, {{{https://git-wip-us.apache.org/repos/asf/incubator-htrace.git}Apache HTrace}}.
+   Setting up tracing is quite simple, however it requires some very minor changes to your client code.
+ 
++** Samplers
++  Configure the samplers in <<<core-site.xml>>> property: <<<hadoop.htrace.sampler>>>.
++  The value can be NeverSampler, AlwaysSampler or ProbabilitySampler. NeverSampler: HTrace is OFF 
++  for all spans; AlwaysSampler: HTrace is ON for all spans; ProbabilitySampler: HTrace is ON for 
++  some percentage% of top-level spans.
++
+++----
++  <property>
++    <name>hadoop.htrace.sampler</name>
++    <value>NeverSampler</value>
++  </property>
+++----
++
+ ** SpanReceivers
+ 
+   The tracing system works by collecting information in structs called 'Spans'.
+@@ -42,7 +55,7 @@ public void receiveSpan(Span span);
+   Configure what SpanReceivers you'd like to use
+   by putting a comma separated list of the fully-qualified class name of
+   classes implementing SpanReceiver
+-  in <<<hdfs-site.xml>>> property: <<<hadoop.htrace.spanreceiver.classes>>>.
++  in <<<core-site.xml>>> property: <<<hadoop.htrace.spanreceiver.classes>>>.
+ 
+ +----
+   <property>
+@@ -83,11 +96,11 @@ public void receiveSpan(Span span);
+   $ git clone https://github.com/cloudera/htrace
+   $ cd htrace/htrace-zipkin
+   $ mvn compile assembly:single
+-  $ cp target/htrace-zipkin-*-jar-with-dependencies.jar $HADOOP_HOME/share/hadoop/hdfs/lib/
++  $ cp target/htrace-zipkin-*-jar-with-dependencies.jar $HADOOP_HOME/share/hadoop/common/lib/
+ +----
+ 
+   The sample configuration for <<<ZipkinSpanReceiver>>> is shown below.
+-  By adding these to <<<hdfs-site.xml>>> of NameNode and DataNodes,
++  By adding these to <<<core-site.xml>>> of NameNode and DataNodes,
+   <<<ZipkinSpanReceiver>>> is initialized on the startup.
+   You also need this configuration on the client node in addition to the servers.
+ 
+-- 
+1.7.9.5
+

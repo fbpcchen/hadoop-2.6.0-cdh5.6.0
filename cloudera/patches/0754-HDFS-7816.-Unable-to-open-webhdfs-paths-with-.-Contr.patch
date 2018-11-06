@@ -1,0 +1,151 @@
+From 8e7bf2f77fbb390d3e062a86b99ca0d08092c2b8 Mon Sep 17 00:00:00 2001
+From: Kihwal Lee <kihwal@apache.org>
+Date: Thu, 19 Mar 2015 08:01:01 -0500
+Subject: [PATCH 0754/1023] HDFS-7816. Unable to open webhdfs paths with "+".
+ Contributed by Haohui Mai
+
+(cherry picked from commit e79be0ee123d05104eb34eb854afcf9fa78baef2)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt
+
+Change-Id: Id299387d8d6e3ebc41e2673a4db5f63f59623238
+---
+ .../datanode/web/webhdfs/ParameterParser.java      |   79 +++++++++++++++++++-
+ .../datanode/web/webhdfs/TestParameterParser.java  |    9 +--
+ 2 files changed, 82 insertions(+), 6 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/web/webhdfs/ParameterParser.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/web/webhdfs/ParameterParser.java
+index f34402f..0ebf3dc 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/web/webhdfs/ParameterParser.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/web/webhdfs/ParameterParser.java
+@@ -18,6 +18,7 @@
+ package org.apache.hadoop.hdfs.server.datanode.web.webhdfs;
+ 
+ import io.netty.handler.codec.http.QueryStringDecoder;
++import org.apache.commons.io.Charsets;
+ import org.apache.hadoop.conf.Configuration;
+ import org.apache.hadoop.fs.permission.FsPermission;
+ import org.apache.hadoop.hdfs.HAUtil;
+@@ -39,6 +40,7 @@
+ 
+ import java.io.IOException;
+ import java.net.URI;
++import java.nio.charset.Charset;
+ import java.util.List;
+ import java.util.Map;
+ 
+@@ -51,7 +53,8 @@
+   private final Map<String, List<String>> params;
+ 
+   ParameterParser(QueryStringDecoder decoder, Configuration conf) {
+-    this.path = QueryStringDecoder.decodeComponent(decoder.path().substring(WEBHDFS_PREFIX_LENGTH));
++    this.path = decodeComponent(decoder.path().substring
++        (WEBHDFS_PREFIX_LENGTH), Charsets.UTF_8);
+     this.params = decoder.parameters();
+     this.conf = conf;
+   }
+@@ -127,4 +130,78 @@ private String param(String key) {
+     List<String> p = params.get(key);
+     return p == null ? null : p.get(0);
+   }
++
++  /**
++   * The following function behaves exactly the same as netty's
++   * <code>QueryStringDecoder#decodeComponent</code> except that it
++   * does not decode the '+' character as space. WebHDFS takes this scheme
++   * to maintain the backward-compatibility for pre-2.7 releases.
++   */
++  private static String decodeComponent(final String s, final Charset charset) {
++    if (s == null) {
++      return "";
++    }
++    final int size = s.length();
++    boolean modified = false;
++    for (int i = 0; i < size; i++) {
++      final char c = s.charAt(i);
++      if (c == '%' || c == '+') {
++        modified = true;
++        break;
++      }
++    }
++    if (!modified) {
++      return s;
++    }
++    final byte[] buf = new byte[size];
++    int pos = 0;  // position in `buf'.
++    for (int i = 0; i < size; i++) {
++      char c = s.charAt(i);
++      if (c == '%') {
++        if (i == size - 1) {
++          throw new IllegalArgumentException("unterminated escape sequence at" +
++                                                 " end of string: " + s);
++        }
++        c = s.charAt(++i);
++        if (c == '%') {
++          buf[pos++] = '%';  // "%%" -> "%"
++          break;
++        }
++        if (i == size - 1) {
++          throw new IllegalArgumentException("partial escape sequence at end " +
++                                                 "of string: " + s);
++        }
++        c = decodeHexNibble(c);
++        final char c2 = decodeHexNibble(s.charAt(++i));
++        if (c == Character.MAX_VALUE || c2 == Character.MAX_VALUE) {
++          throw new IllegalArgumentException(
++              "invalid escape sequence `%" + s.charAt(i - 1) + s.charAt(
++                  i) + "' at index " + (i - 2) + " of: " + s);
++        }
++        c = (char) (c * 16 + c2);
++        // Fall through.
++      }
++      buf[pos++] = (byte) c;
++    }
++    return new String(buf, 0, pos, charset);
++  }
++
++  /**
++   * Helper to decode half of a hexadecimal number from a string.
++   * @param c The ASCII character of the hexadecimal number to decode.
++   * Must be in the range {@code [0-9a-fA-F]}.
++   * @return The hexadecimal value represented in the ASCII character
++   * given, or {@link Character#MAX_VALUE} if the character is invalid.
++   */
++  private static char decodeHexNibble(final char c) {
++    if ('0' <= c && c <= '9') {
++      return (char) (c - '0');
++    } else if ('a' <= c && c <= 'f') {
++      return (char) (c - 'a' + 10);
++    } else if ('A' <= c && c <= 'F') {
++      return (char) (c - 'A' + 10);
++    } else {
++      return Character.MAX_VALUE;
++    }
++  }
+ }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/web/webhdfs/TestParameterParser.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/web/webhdfs/TestParameterParser.java
+index 8aee1d8..217d6b5 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/web/webhdfs/TestParameterParser.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/web/webhdfs/TestParameterParser.java
+@@ -56,13 +56,12 @@ public void testDeserializeHAToken() throws IOException {
+ 
+   @Test
+   public void testDecodePath() {
+-    final String SCAPED_PATH = "hdfs-6662/test%25251%26%3Dtest?op=OPEN";
+-    final String EXPECTED_PATH = "/hdfs-6662/test%251&=test";
++    final String ESCAPED_PATH = "/test%25+1%26%3Dtest?op=OPEN&foo=bar";
++    final String EXPECTED_PATH = "/test%+1&=test";
+ 
+-    Configuration conf = DFSTestUtil.newHAConfiguration(LOGICAL_NAME);
++    Configuration conf = new Configuration();
+     QueryStringDecoder decoder = new QueryStringDecoder(
+-      WebHdfsHandler.WEBHDFS_PREFIX + "/"
+-      + SCAPED_PATH);
++      WebHdfsHandler.WEBHDFS_PREFIX + ESCAPED_PATH);
+     ParameterParser testParser = new ParameterParser(decoder, conf);
+     Assert.assertEquals(EXPECTED_PATH, testParser.path());
+   }
+-- 
+1.7.9.5
+

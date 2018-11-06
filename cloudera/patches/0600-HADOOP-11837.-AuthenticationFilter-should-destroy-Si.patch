@@ -1,0 +1,46 @@
+From eec6530a085cf5fc57eb19b0f7e2b87d5cae422d Mon Sep 17 00:00:00 2001
+From: Haohui Mai <wheat9@apache.org>
+Date: Fri, 17 Apr 2015 10:59:47 -0700
+Subject: [PATCH 0600/1023] HADOOP-11837. AuthenticationFilter should destroy
+ SignerSecretProvider in Tomcat deployments.
+ Contributed by Bowen Zhang.
+
+(cherry picked from commit dbe1cec0dafeedc4dc63489d509276ba1839e354)
+---
+ .../server/AuthenticationFilter.java               |    6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/hadoop-common-project/hadoop-auth/src/main/java/org/apache/hadoop/security/authentication/server/AuthenticationFilter.java b/hadoop-common-project/hadoop-auth/src/main/java/org/apache/hadoop/security/authentication/server/AuthenticationFilter.java
+index d5d44cb..1a04d69 100644
+--- a/hadoop-common-project/hadoop-auth/src/main/java/org/apache/hadoop/security/authentication/server/AuthenticationFilter.java
++++ b/hadoop-common-project/hadoop-auth/src/main/java/org/apache/hadoop/security/authentication/server/AuthenticationFilter.java
+@@ -184,6 +184,7 @@
+   private long validity;
+   private String cookieDomain;
+   private String cookiePath;
++  private boolean isInitializedByTomcat;
+ 
+   /**
+    * Initializes the authentication filter and signer secret provider.
+@@ -250,6 +251,7 @@ protected void initializeSecretProvider(FilterConfig filterConfig)
+         secretProvider = constructSecretProvider(
+             filterConfig.getServletContext(),
+             config, false);
++        isInitializedByTomcat = true;
+       } catch (Exception ex) {
+         throw new ServletException(ex);
+       }
+@@ -378,6 +380,10 @@ public void destroy() {
+       authHandler.destroy();
+       authHandler = null;
+     }
++    if (secretProvider != null && isInitializedByTomcat) {
++      secretProvider.destroy();
++      secretProvider = null;
++    }
+   }
+ 
+   /**
+-- 
+1.7.9.5
+

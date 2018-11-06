@@ -1,0 +1,189 @@
+From a3d18ba90af459de2a38c48d0244d7d4a5307fd0 Mon Sep 17 00:00:00 2001
+From: Daniel Templeton <templedf@gmail.com>
+Date: Wed, 16 Sep 2015 16:18:08 -0700
+Subject: [PATCH 0815/1023] HDFS-8404. Pending block replication can get stuck
+ using older genstamp. Contributed by Nathan
+ Roberts. (cherry picked from commit
+ 8860e352c394372e4eb3ebdf82ea899567f34e4e)
+
+(cherry picked from commit 536b9ee6d6e5b8430fda23cbdcfd859c299fa8ad)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt
+	hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlockManager.java
+
+Change-Id: Ifd9aee51a85dd327e99e6ca37205cfb2a9d176a8
+(cherry picked from commit df501604e485feb868ddf1b8ea65eb31a95f167b)
+(cherry picked from commit e835fcbcc04aeef6472882be7888f6813466a97c)
+---
+ .../hdfs/server/blockmanagement/BlockManager.java  |   17 ++--
+ .../blockmanagement/TestPendingReplication.java    |   98 +++++++++++++++++++-
+ 2 files changed, 105 insertions(+), 10 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlockManager.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlockManager.java
+index 810b876..787ebbb 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlockManager.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlockManager.java
+@@ -1690,13 +1690,18 @@ private void processPendingReplications() {
+       namesystem.writeLock();
+       try {
+         for (int i = 0; i < timedOutItems.length; i++) {
++          /*
++           * Use the blockinfo from the blocksmap to be certain we're working
++           * with the most up-to-date block information (e.g. genstamp).
++           */
++          BlockInfo bi = blocksMap.getStoredBlock(timedOutItems[i]);
++          if (bi == null) {
++            continue;
++          }
+           NumberReplicas num = countNodes(timedOutItems[i]);
+-          if (isNeededReplication(timedOutItems[i], getReplication(timedOutItems[i]),
+-                                 num.liveReplicas())) {
+-            neededReplications.add(timedOutItems[i],
+-                                   num.liveReplicas(),
+-                                   num.decommissionedReplicas(),
+-                                   getReplication(timedOutItems[i]));
++          if (isNeededReplication(bi, getReplication(bi), num.liveReplicas())) {
++            neededReplications.add(bi, num.liveReplicas(),
++                num.decommissionedReplicas(), getReplication(bi));
+           }
+         }
+       } finally {
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/blockmanagement/TestPendingReplication.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/blockmanagement/TestPendingReplication.java
+index c63badc..085d5de 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/blockmanagement/TestPendingReplication.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/blockmanagement/TestPendingReplication.java
+@@ -42,6 +42,7 @@
+ import org.apache.hadoop.hdfs.server.protocol.ReceivedDeletedBlockInfo.BlockStatus;
+ import org.apache.hadoop.hdfs.server.protocol.StorageReceivedDeletedBlocks;
+ import org.junit.Test;
++import org.mockito.Mockito;
+ 
+ /**
+  * This class tests the internals of PendingReplicationBlocks.java,
+@@ -52,13 +53,11 @@
+   private static final int DFS_REPLICATION_INTERVAL = 1;
+   // Number of datanodes in the cluster
+   private static final int DATANODE_COUNT = 5;
+-
+   @Test
+   public void testPendingReplication() {
+     PendingReplicationBlocks pendingReplications;
+     pendingReplications = new PendingReplicationBlocks(TIMEOUT * 1000);
+     pendingReplications.start();
+-
+     //
+     // Add 10 blocks to pendingReplications.
+     //
+@@ -140,8 +139,7 @@ public void testPendingReplication() {
+     //
+     // Verify that everything has timed out.
+     //
+-    assertEquals("Size of pendingReplications ",
+-                 0, pendingReplications.size());
++    assertEquals("Size of pendingReplications ", 0, pendingReplications.size());
+     Block[] timedOut = pendingReplications.getTimedOutBlocks();
+     assertTrue(timedOut != null && timedOut.length == 15);
+     for (int i = 0; i < timedOut.length; i++) {
+@@ -149,6 +147,98 @@ public void testPendingReplication() {
+     }
+     pendingReplications.stop();
+   }
++
++/* Test that processPendingReplications will use the most recent
++ * blockinfo from the blocksmap by placing a larger genstamp into
++ * the blocksmap.
++ */
++  @Test
++  public void testProcessPendingReplications() throws Exception {
++    final Configuration conf = new HdfsConfiguration();
++    conf.setLong(
++        DFSConfigKeys.DFS_NAMENODE_REPLICATION_PENDING_TIMEOUT_SEC_KEY, TIMEOUT);
++    MiniDFSCluster cluster = null;
++    Block block;
++    BlockInfo blockInfo;
++    try {
++      cluster =
++          new MiniDFSCluster.Builder(conf).numDataNodes(DATANODE_COUNT).build();
++      cluster.waitActive();
++
++      FSNamesystem fsn = cluster.getNamesystem();
++      BlockManager blkManager = fsn.getBlockManager();
++
++      PendingReplicationBlocks pendingReplications =
++          blkManager.pendingReplications;
++      UnderReplicatedBlocks neededReplications = blkManager.neededReplications;
++      BlocksMap blocksMap = blkManager.blocksMap;
++
++      //
++      // Add 1 block to pendingReplications with GenerationStamp = 0.
++      //
++
++      block = new Block(1, 1, 0);
++      blockInfo = new BlockInfo(block, (short) 3);
++
++      pendingReplications.increment(block,
++          DatanodeStorageInfo.toDatanodeDescriptors(
++              DFSTestUtil.createDatanodeStorageInfos(1)));
++      BlockCollection bc = Mockito.mock(BlockCollection.class);
++      Mockito.doReturn((short) 3).when(bc).getBlockReplication();
++      // Place into blocksmap with GenerationStamp = 1
++      blockInfo.setGenerationStamp(1);
++      blocksMap.addBlockCollection(blockInfo, bc);
++
++      assertEquals("Size of pendingReplications ", 1,
++          pendingReplications.size());
++
++      // Add a second block to pendingReplications that has no
++      // corresponding entry in blocksmap
++      block = new Block(2, 2, 0);
++      pendingReplications.increment(block,
++          DatanodeStorageInfo.toDatanodeDescriptors(
++              DFSTestUtil.createDatanodeStorageInfos(1)));
++
++      // verify 2 blocks in pendingReplications
++      assertEquals("Size of pendingReplications ", 2,
++          pendingReplications.size());
++
++      //
++      // Wait for everything to timeout.
++      //
++      while (pendingReplications.size() > 0) {
++        try {
++          Thread.sleep(100);
++        } catch (Exception e) {
++        }
++      }
++
++      //
++      // Verify that block moves to neededReplications
++      //
++      while (neededReplications.size() == 0) {
++        try {
++          Thread.sleep(100);
++        } catch (Exception e) {
++        }
++      }
++
++      // Verify that the generation stamp we will try to replicate
++      // is now 1
++      for (Block b: neededReplications) {
++        assertEquals("Generation stamp is 1 ", 1,
++            b.getGenerationStamp());
++      }
++
++      // Verify size of neededReplications is exactly 1.
++      assertEquals("size of neededReplications is 1 ", 1,
++          neededReplications.size());
++    } finally {
++      if (cluster != null) {
++        cluster.shutdown();
++      }
++    }
++  }
+   
+   /**
+    * Test if DatanodeProtocol#blockReceivedAndDeleted can correctly update the
+-- 
+1.7.9.5
+

@@ -1,0 +1,54 @@
+From bf0bf186ab771a9b11beaafe5be3ac01f4a011db Mon Sep 17 00:00:00 2001
+From: Xiaoyu Yao <xyao@apache.org>
+Date: Tue, 9 Jun 2015 12:15:38 -0700
+Subject: [PATCH 0852/1023] HDFS-8568.
+ TestClusterId#testFormatWithEmptyClusterIdOption
+ is failing. Contributed by Rakesh R.
+
+(cherry picked from commit 3c2397cb041068172c8ad209996414d7371d2eca)
+(cherry picked from commit d8d904118738c7413af1d8691bcc7d31604f5873)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt
+
+Change-Id: Ic1bdbea259241cf0c10b8668c406d7426b6db225
+(cherry picked from commit aba8effde5c67608c642fc96fe30a58f84704824)
+(cherry picked from commit 460346005d5108af09c2385897e37c6a33c29f23)
+---
+ .../hadoop/hdfs/server/namenode/TestClusterId.java |    6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestClusterId.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestClusterId.java
+index 7c23dd5..28ecd10 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestClusterId.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestClusterId.java
+@@ -236,7 +236,7 @@ public void testFormatWithInvalidClusterIdOption() throws IOException {
+     NameNode.createNameNode(argv, config);
+ 
+     // Check if usage is printed
+-    assertTrue(baos.toString("UTF-8").contains("Usage: java NameNode"));
++    assertTrue(baos.toString("UTF-8").contains("Usage: hdfs namenode"));
+     System.setErr(origErr);
+ 
+     // check if the version file does not exists.
+@@ -262,7 +262,7 @@ public void testFormatWithNoClusterIdOption() throws IOException {
+     NameNode.createNameNode(argv, config);
+ 
+     // Check if usage is printed
+-    assertTrue(baos.toString("UTF-8").contains("Usage: java NameNode"));
++    assertTrue(baos.toString("UTF-8").contains("Usage: hdfs namenode"));
+     System.setErr(origErr);
+ 
+     // check if the version file does not exists.
+@@ -289,7 +289,7 @@ public void testFormatWithEmptyClusterIdOption() throws IOException {
+     NameNode.createNameNode(argv, config);
+ 
+     // Check if usage is printed
+-    assertTrue(baos.toString("UTF-8").contains("Usage: java NameNode"));
++    assertTrue(baos.toString("UTF-8").contains("Usage: hdfs namenode"));
+     System.setErr(origErr);
+ 
+     // check if the version file does not exists.
+-- 
+1.7.9.5
+

@@ -1,0 +1,44 @@
+From cbb6903bb9cd01ef1edef06ea198fb3d1fb74005 Mon Sep 17 00:00:00 2001
+From: Haohui Mai <wheat9@apache.org>
+Date: Sun, 22 Nov 2015 16:00:34 -0800
+Subject: [PATCH 1013/1023] HADOOP-11218. Add TLSv1.1,TLSv1.2 to KMS, HttpFS,
+ SSLFactory. Contributed by Vijay Singh.
+
+(cherry picked from commit 64add87f5cff2a0bb3a340488a91be79574cd393)
+
+Change-Id: Ie0e1a0e3f3743534e7722894ca92c89b8426d064
+(cherry picked from commit 1bc003dda1e6186a8f709c459e50ccd08c1416d2)
+---
+ .../hadoop-kms/src/main/tomcat/ssl-server.xml.conf |    2 +-
+ .../src/main/tomcat/ssl-server.xml                 |    2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/hadoop-common-project/hadoop-kms/src/main/tomcat/ssl-server.xml.conf b/hadoop-common-project/hadoop-kms/src/main/tomcat/ssl-server.xml.conf
+index b60da47..05b53e0 100644
+--- a/hadoop-common-project/hadoop-kms/src/main/tomcat/ssl-server.xml.conf
++++ b/hadoop-common-project/hadoop-kms/src/main/tomcat/ssl-server.xml.conf
+@@ -70,7 +70,7 @@
+          described in the APR documentation -->
+     <Connector port="${kms.http.port}" protocol="HTTP/1.1" SSLEnabled="true"
+                maxThreads="${kms.max.threads}" scheme="https" secure="true"
+-               clientAuth="false" sslEnabledProtocols="TLSv1,SSLv2Hello"
++               clientAuth="false" sslEnabledProtocols="TLSv1,TLSv1.1,TLSv1.2,SSLv2Hello"
+                truststorePass="_kms_ssl_truststore_pass_"
+                keystoreFile="${kms.ssl.keystore.file}"
+                keystorePass="_kms_ssl_keystore_pass_"/>
+diff --git a/hadoop-hdfs-project/hadoop-hdfs-httpfs/src/main/tomcat/ssl-server.xml b/hadoop-hdfs-project/hadoop-hdfs-httpfs/src/main/tomcat/ssl-server.xml
+index c91c2e2..287c9f5 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs-httpfs/src/main/tomcat/ssl-server.xml
++++ b/hadoop-hdfs-project/hadoop-hdfs-httpfs/src/main/tomcat/ssl-server.xml
+@@ -70,7 +70,7 @@
+          described in the APR documentation -->
+     <Connector port="${httpfs.http.port}" protocol="HTTP/1.1" SSLEnabled="true"
+                maxThreads="150" scheme="https" secure="true"
+-               clientAuth="false" sslEnabledProtocols="TLSv1,SSLv2Hello"
++               clientAuth="false" sslEnabledProtocols="TLSv1,TLSv1.1,TLSv1.2,SSLv2Hello"
+                keystoreFile="${httpfs.ssl.keystore.file}"
+                keystorePass="${httpfs.ssl.keystore.pass}"/>
+ 
+-- 
+1.7.9.5
+

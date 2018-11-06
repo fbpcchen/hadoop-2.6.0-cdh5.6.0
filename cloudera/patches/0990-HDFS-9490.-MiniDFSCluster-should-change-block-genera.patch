@@ -1,0 +1,110 @@
+From abc44036a9c1a73c5883985ac28097b2b8f37875 Mon Sep 17 00:00:00 2001
+From: Lei Xu <lei@apache.org>
+Date: Fri, 4 Dec 2015 10:24:55 -0800
+Subject: [PATCH 0990/1023] HDFS-9490. MiniDFSCluster should change block
+ generation stamp via FsDatasetTestUtils. (Tony Wu
+ via lei)
+
+(cherry picked from commit 0ac8fb4b336dd03a037092c9712b962e7ed8f852)
+(cherry picked from commit 58714f3b7357d05604987e1db8f6734a7d2827d9)
+
+Change-Id: I2a4cbec20505cb0a57c2b953e461192cd3063605
+(cherry picked from commit ce25099572cc60aaebf1eaf3b3f8eb7d6ab141b5)
+---
+ .../org/apache/hadoop/hdfs/MiniDFSCluster.java     |    8 +++-----
+ .../hdfs/server/datanode/FsDatasetTestUtils.java   |    9 +++++++++
+ .../fsdataset/impl/FsDatasetImplTestUtils.java     |   14 ++++++++++++++
+ .../namenode/ha/TestPendingCorruptDnMessages.java  |    2 +-
+ 4 files changed, 27 insertions(+), 6 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/MiniDFSCluster.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/MiniDFSCluster.java
+index 5b67922..3c85b1d 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/MiniDFSCluster.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/MiniDFSCluster.java
+@@ -1968,12 +1968,10 @@ public void truncateMeta(int i, ExtendedBlock blk, int newSize)
+     getMaterializedReplica(i, blk).truncateMeta(newSize);
+   }
+ 
+-  public boolean changeGenStampOfBlock(int dnIndex, ExtendedBlock blk,
++  public void changeGenStampOfBlock(int dnIndex, ExtendedBlock blk,
+       long newGenStamp) throws IOException {
+-    File blockFile = getBlockFile(dnIndex, blk);
+-    File metaFile = FsDatasetUtil.findMetaFile(blockFile);
+-    return metaFile.renameTo(new File(DatanodeUtil.getMetaName(
+-        blockFile.getAbsolutePath(), newGenStamp)));
++    getFsDatasetTestUtils(dnIndex)
++        .changeStoredGenerationStamp(blk, newGenStamp);
+   }
+ 
+   /*
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/FsDatasetTestUtils.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/FsDatasetTestUtils.java
+index 07fb7ce..fd47705 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/FsDatasetTestUtils.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/FsDatasetTestUtils.java
+@@ -242,4 +242,13 @@ Replica createReplicaUnderRecovery(ExtendedBlock block, long recoveryId)
+    * Get the persistently stored generation stamp.
+    */
+   long getStoredGenerationStamp(ExtendedBlock block) throws IOException;
++
++  /**
++   * Change the persistently stored generation stamp.
++   * @param block the block whose generation stamp will be changed
++   * @param newGenStamp the new generation stamp
++   * @throws IOException
++   */
++  void changeStoredGenerationStamp(ExtendedBlock block, long newGenStamp)
++      throws IOException;
+ }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetImplTestUtils.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetImplTestUtils.java
+index 8fce163..320ae9f 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetImplTestUtils.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetImplTestUtils.java
+@@ -29,6 +29,7 @@
+ import org.apache.hadoop.fs.FileUtil;
+ import org.apache.hadoop.hdfs.protocol.ExtendedBlock;
+ import org.apache.hadoop.hdfs.server.datanode.DataNode;
++import org.apache.hadoop.hdfs.server.datanode.DatanodeUtil;
+ import org.apache.hadoop.hdfs.server.datanode.FinalizedReplica;
+ import org.apache.hadoop.hdfs.server.datanode.FsDatasetTestUtils;
+ import org.apache.hadoop.hdfs.server.datanode.Replica;
+@@ -47,6 +48,7 @@
+ import java.io.RandomAccessFile;
+ import java.nio.channels.FileChannel;
+ import java.nio.file.Files;
++import java.nio.file.StandardCopyOption;
+ import java.util.Random;
+ 
+ /**
+@@ -363,4 +365,16 @@ public long getStoredGenerationStamp(ExtendedBlock block) throws IOException {
+     File[] files = FileUtil.listFiles(dir);
+     return FsDatasetUtil.getGenerationStampFromFile(files, f);
+   }
++
++  @Override
++  public void changeStoredGenerationStamp(
++      ExtendedBlock block, long newGenStamp) throws IOException {
++    File blockFile =
++        dataset.getBlockFile(block.getBlockPoolId(), block.getBlockId());
++    File metaFile = FsDatasetUtil.findMetaFile(blockFile);
++    File newMetaFile = new File(
++        DatanodeUtil.getMetaName(blockFile.getAbsolutePath(), newGenStamp));
++    Files.move(metaFile.toPath(), newMetaFile.toPath(),
++        StandardCopyOption.ATOMIC_MOVE);
++  }
+ }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/ha/TestPendingCorruptDnMessages.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/ha/TestPendingCorruptDnMessages.java
+index 4d4fed6..ac264f4 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/ha/TestPendingCorruptDnMessages.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/ha/TestPendingCorruptDnMessages.java
+@@ -67,7 +67,7 @@ public void testChangedStorageId() throws IOException, URISyntaxException,
+       // Change the gen stamp of the block on datanode to go back in time (gen
+       // stamps start at 1000)
+       ExtendedBlock block = DFSTestUtil.getFirstBlock(fs, filePath);
+-      assertTrue(cluster.changeGenStampOfBlock(0, block, 900));
++      cluster.changeGenStampOfBlock(0, block, 900);
+       
+       // Stop the DN so the replica with the changed gen stamp will be reported
+       // when this DN starts up.
+-- 
+1.7.9.5
+

@@ -1,0 +1,38 @@
+From be4d4470558a6b6045bec85cbe0c9e1ba01b5eca Mon Sep 17 00:00:00 2001
+From: Xiao Chen <xiao@cloudera.com>
+Date: Fri, 2 Oct 2015 14:37:46 -0700
+Subject: [PATCH 0890/1023] CDH-32377 Fix the test failure introduced when
+ backporting HDFS-7609   HDFS-7609 Avoid retry
+ cache collision when Standby NameNode loading
+ edits
+
+Change-Id: I6dfa494095e3cf0ae4468ed8d4542346da207606
+(cherry picked from commit e0902ab987ced2b1289f070e625d30d22e5d8078)
+---
+ .../hdfs/server/namenode/NameNodeRpcServer.java    |    3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNodeRpcServer.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNodeRpcServer.java
+index 996d807..6089ac17 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNodeRpcServer.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNodeRpcServer.java
+@@ -1105,7 +1105,6 @@ public void setTimes(String src, long mtime, long atime)
+   @Override // ClientProtocol
+   public void createSymlink(String target, String link, FsPermission dirPerms,
+       boolean createParent) throws IOException {
+-    metrics.incrCreateSymlinkOps();
+     checkNNStartup();
+     /* We enforce the MAX_PATH_LENGTH limit even though a symlink target
+      * URI may refer to a non-HDFS file system. 
+@@ -1118,6 +1117,8 @@ public void createSymlink(String target, String link, FsPermission dirPerms,
+     if ("".equals(target)) {
+       throw new IOException("Invalid symlink target");
+     }
++    namesystem.checkOperation(OperationCategory.WRITE);
++    metrics.incrCreateSymlinkOps();
+     final UserGroupInformation ugi = getRemoteUser();
+     namesystem.createSymlink(target, link,
+         new PermissionStatus(ugi.getShortUserName(), null, dirPerms),
+-- 
+1.7.9.5
+

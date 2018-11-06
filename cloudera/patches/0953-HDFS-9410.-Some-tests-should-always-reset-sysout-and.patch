@@ -1,0 +1,405 @@
+From 9b2099ef64617ac7a9794e3758b3148991c97241 Mon Sep 17 00:00:00 2001
+From: Walter Su <waltersu4549@apache.org>
+Date: Fri, 13 Nov 2015 14:21:14 +0800
+Subject: [PATCH 0953/1023] HDFS-9410. Some tests should always reset sysout
+ and syserr. Contributed by Xiao Chen.
+
+(cherry picked from commit cccf88480b0df71f15fb36e9693d492c9e16c685)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDFSShell.java
+	hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestQuota.java
+	hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestMetadataVersionOutput.java
+
+Change-Id: If06388f8b63d42b8aa7b243b67a48f78a0267b78
+---
+ .../java/org/apache/hadoop/hdfs/TestDFSShell.java  |    4 +-
+ .../apache/hadoop/hdfs/TestFsShellPermission.java  |   12 ++++--
+ .../hadoop/hdfs/server/namenode/TestClusterId.java |   36 +++++++++-------
+ .../server/namenode/TestMetadataVersionOutput.java |   25 ++++++-----
+ .../namenode/snapshot/TestSnapshotDeletion.java    |   45 +++++++++++---------
+ .../namenode/snapshot/TestSnapshotRename.java      |   45 +++++++++++---------
+ .../hadoop/hdfs/tools/TestDFSAdminWithHA.java      |   17 ++++----
+ .../java/org/apache/hadoop/tools/TestJMXGet.java   |   17 +++++---
+ .../java/org/apache/hadoop/tools/TestTools.java    |    5 +++
+ .../org/apache/hadoop/tracing/TestTraceAdmin.java  |    9 ++--
+ 10 files changed, 128 insertions(+), 87 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDFSShell.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDFSShell.java
+index 23f1cd1..02acf01 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDFSShell.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDFSShell.java
+@@ -882,9 +882,9 @@ private static void runCount(String path, long dirs, long files, FsShell shell
+       assertEquals(dirs, in.nextLong());
+       assertEquals(files, in.nextLong());
+     } finally {
++      System.setOut(oldOut);
+       if (in!=null) in.close();
+       IOUtils.closeStream(out);
+-      System.setOut(oldOut);
+       System.out.println("results:\n" + results);
+     }
+   }
+@@ -1647,9 +1647,9 @@ private static String runLsr(final FsShell shell, String root, int returnvalue
+       assertEquals(returnvalue, shell.run(new String[]{"-lsr", root}));
+       results = bytes.toString();
+     } finally {
+-      IOUtils.closeStream(out);
+       System.setOut(oldOut);
+       System.setErr(oldErr);
++      IOUtils.closeStream(out);
+     }
+     System.out.println("results:\n" + results);
+     return results;
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestFsShellPermission.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestFsShellPermission.java
+index ddb8fd0..cc456b2 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestFsShellPermission.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestFsShellPermission.java
+@@ -97,10 +97,14 @@ static String execCmd(FsShell shell, final String[] args) throws Exception {
+     ByteArrayOutputStream baout = new ByteArrayOutputStream();
+     PrintStream out = new PrintStream(baout, true);
+     PrintStream old = System.out;
+-    System.setOut(out);
+-    int ret = shell.run(args);
+-    out.close();
+-    System.setOut(old);
++    int ret;
++    try {
++      System.setOut(out);
++      ret = shell.run(args);
++      out.close();
++    } finally {
++      System.setOut(old);
++    }
+     return String.valueOf(ret);
+   }
+ 
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestClusterId.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestClusterId.java
+index 28ecd10..fa3399b 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestClusterId.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestClusterId.java
+@@ -232,12 +232,14 @@ public void testFormatWithInvalidClusterIdOption() throws IOException {
+     ByteArrayOutputStream baos = new ByteArrayOutputStream();
+     PrintStream stdErr = new PrintStream(baos);
+     System.setErr(stdErr);
++    try {
++      NameNode.createNameNode(argv, config);
+ 
+-    NameNode.createNameNode(argv, config);
+-
+-    // Check if usage is printed
+-    assertTrue(baos.toString("UTF-8").contains("Usage: hdfs namenode"));
+-    System.setErr(origErr);
++      // Check if usage is printed
++      assertTrue(baos.toString("UTF-8").contains("Usage: hdfs namenode"));
++    } finally {
++      System.setErr(origErr);
++    }
+ 
+     // check if the version file does not exists.
+     File version = new File(hdfsDir, "current/VERSION");
+@@ -258,12 +260,14 @@ public void testFormatWithNoClusterIdOption() throws IOException {
+     ByteArrayOutputStream baos = new ByteArrayOutputStream();
+     PrintStream stdErr = new PrintStream(baos);
+     System.setErr(stdErr);
++    try {
++      NameNode.createNameNode(argv, config);
+ 
+-    NameNode.createNameNode(argv, config);
+-
+-    // Check if usage is printed
+-    assertTrue(baos.toString("UTF-8").contains("Usage: hdfs namenode"));
+-    System.setErr(origErr);
++      // Check if usage is printed
++      assertTrue(baos.toString("UTF-8").contains("Usage: hdfs namenode"));
++    } finally {
++      System.setErr(origErr);
++    }
+ 
+     // check if the version file does not exists.
+     File version = new File(hdfsDir, "current/VERSION");
+@@ -285,12 +289,14 @@ public void testFormatWithEmptyClusterIdOption() throws IOException {
+     ByteArrayOutputStream baos = new ByteArrayOutputStream();
+     PrintStream stdErr = new PrintStream(baos);
+     System.setErr(stdErr);
++    try {
++      NameNode.createNameNode(argv, config);
+ 
+-    NameNode.createNameNode(argv, config);
+-
+-    // Check if usage is printed
+-    assertTrue(baos.toString("UTF-8").contains("Usage: hdfs namenode"));
+-    System.setErr(origErr);
++      // Check if usage is printed
++      assertTrue(baos.toString("UTF-8").contains("Usage: hdfs namenode"));
++    } finally {
++      System.setErr(origErr);
++    }
+ 
+     // check if the version file does not exists.
+     File version = new File(hdfsDir, "current/VERSION");
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestMetadataVersionOutput.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestMetadataVersionOutput.java
+index 03c7557..daa1e85 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestMetadataVersionOutput.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestMetadataVersionOutput.java
+@@ -72,18 +72,21 @@ public void testMetadataVersionOutput() throws IOException {
+     final PrintStream origOut = System.out;
+     final ByteArrayOutputStream baos = new ByteArrayOutputStream();
+     final PrintStream stdOut = new PrintStream(baos);
+-    System.setOut(stdOut);
+     try {
+-      NameNode.createNameNode(new String[] { "-metadataVersion" }, conf);
+-    } catch (Exception e) {
+-      assertExceptionContains("ExitException", e);
+-    }
++      System.setOut(stdOut);
++      try {
++        NameNode.createNameNode(new String[] { "-metadataVersion" }, conf);
++      } catch (Exception e) {
++        assertExceptionContains("ExitException", e);
++      }
+     /* Check if meta data version is printed correctly. */
+-    final String verNumStr = HdfsConstants.NAMENODE_LAYOUT_VERSION + "";
+-    assertTrue(baos.toString("UTF-8").
+-      contains("HDFS Image Version: " + verNumStr));
+-    assertTrue(baos.toString("UTF-8").
+-      contains("Software format version: " + verNumStr));
+-    System.setOut(origOut);
++      final String verNumStr = HdfsConstants.NAMENODE_LAYOUT_VERSION + "";
++      assertTrue(baos.toString("UTF-8").
++          contains("HDFS Image Version: " + verNumStr));
++      assertTrue(baos.toString("UTF-8").
++          contains("Software format version: " + verNumStr));
++    } finally {
++      System.setOut(origOut);
++    }
+   }
+ }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/snapshot/TestSnapshotDeletion.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/snapshot/TestSnapshotDeletion.java
+index 76e8392..d62fde9 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/snapshot/TestSnapshotDeletion.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/snapshot/TestSnapshotDeletion.java
+@@ -1037,25 +1037,32 @@ public void testRenameSnapshotDiff() throws Exception {
+   public void testDeleteSnapshotCommandWithIllegalArguments() throws Exception {
+     ByteArrayOutputStream out = new ByteArrayOutputStream();
+     PrintStream psOut = new PrintStream(out);
+-    System.setOut(psOut);
+-    System.setErr(psOut);
+-    FsShell shell = new FsShell();
+-    shell.setConf(conf);
+-    
+-    String[] argv1 = {"-deleteSnapshot", "/tmp"};
+-    int val = shell.run(argv1);
+-    assertTrue(val == -1);
+-    assertTrue(out.toString().contains(
+-        argv1[0] + ": Incorrect number of arguments."));
+-    out.reset();
+-    
+-    String[] argv2 = {"-deleteSnapshot", "/tmp", "s1", "s2"};
+-    val = shell.run(argv2);
+-    assertTrue(val == -1);
+-    assertTrue(out.toString().contains(
+-        argv2[0] + ": Incorrect number of arguments."));
+-    psOut.close();
+-    out.close();
++    PrintStream oldOut = System.out;
++    PrintStream oldErr = System.err;
++    try {
++      System.setOut(psOut);
++      System.setErr(psOut);
++      FsShell shell = new FsShell();
++      shell.setConf(conf);
++
++      String[] argv1 = { "-deleteSnapshot", "/tmp" };
++      int val = shell.run(argv1);
++      assertTrue(val == -1);
++      assertTrue(out.toString()
++          .contains(argv1[0] + ": Incorrect number of arguments."));
++      out.reset();
++
++      String[] argv2 = { "-deleteSnapshot", "/tmp", "s1", "s2" };
++      val = shell.run(argv2);
++      assertTrue(val == -1);
++      assertTrue(out.toString()
++          .contains(argv2[0] + ": Incorrect number of arguments."));
++      psOut.close();
++      out.close();
++    } finally {
++      System.setOut(oldOut);
++      System.setErr(oldErr);
++    }
+   }
+ 
+   /*
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/snapshot/TestSnapshotRename.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/snapshot/TestSnapshotRename.java
+index 3dcbad9..731b97b 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/snapshot/TestSnapshotRename.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/snapshot/TestSnapshotRename.java
+@@ -237,24 +237,31 @@ public void testRenameWithIllegalName() throws Exception {
+   public void testRenameSnapshotCommandWithIllegalArguments() throws Exception {
+     ByteArrayOutputStream out = new ByteArrayOutputStream();
+     PrintStream psOut = new PrintStream(out);
+-    System.setOut(psOut);
+-    System.setErr(psOut);
+-    FsShell shell = new FsShell();
+-    shell.setConf(conf);
+-    
+-    String[] argv1 = {"-renameSnapshot", "/tmp", "s1"};
+-    int val = shell.run(argv1);
+-    assertTrue(val == -1);
+-    assertTrue(out.toString().contains(
+-        argv1[0] + ": Incorrect number of arguments."));
+-    out.reset();
+-    
+-    String[] argv2 = {"-renameSnapshot", "/tmp", "s1", "s2", "s3"};
+-    val = shell.run(argv2);
+-    assertTrue(val == -1);
+-    assertTrue(out.toString().contains(
+-        argv2[0] + ": Incorrect number of arguments."));
+-    psOut.close();
+-    out.close();
++    PrintStream oldOut = System.out;
++    PrintStream oldErr = System.err;
++    try {
++      System.setOut(psOut);
++      System.setErr(psOut);
++      FsShell shell = new FsShell();
++      shell.setConf(conf);
++
++      String[] argv1 = { "-renameSnapshot", "/tmp", "s1" };
++      int val = shell.run(argv1);
++      assertTrue(val == -1);
++      assertTrue(out.toString()
++          .contains(argv1[0] + ": Incorrect number of arguments."));
++      out.reset();
++
++      String[] argv2 = { "-renameSnapshot", "/tmp", "s1", "s2", "s3" };
++      val = shell.run(argv2);
++      assertTrue(val == -1);
++      assertTrue(out.toString()
++          .contains(argv2[0] + ": Incorrect number of arguments."));
++      psOut.close();
++      out.close();
++    } finally {
++      System.setOut(oldOut);
++      System.setErr(oldErr);
++    }
+   }
+ }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/tools/TestDFSAdminWithHA.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/tools/TestDFSAdminWithHA.java
+index 6859e43..2b058d2 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/tools/TestDFSAdminWithHA.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/tools/TestDFSAdminWithHA.java
+@@ -43,8 +43,8 @@
+   private MiniQJMHACluster cluster;
+   private Configuration conf;
+   private DFSAdmin admin;
+-  private PrintStream originOut;
+-  private PrintStream originErr;
++  private static final PrintStream oldOut = System.out;
++  private static final PrintStream oldErr = System.err;
+ 
+   private static final String NSID = "ns1";
+   private static String newLine = System.getProperty("line.separator");
+@@ -89,18 +89,19 @@ private void setUpHaCluster(boolean security) throws Exception {
+     admin.setConf(conf);
+     assertTrue(HAUtil.isHAEnabled(conf, "ns1"));
+ 
+-    originOut = System.out;
+-    originErr = System.err;
+     System.setOut(new PrintStream(out));
+     System.setErr(new PrintStream(err));
+   }
+ 
+   @After
+   public void tearDown() throws Exception {
+-    System.out.flush();
+-    System.err.flush();
+-    System.setOut(originOut);
+-    System.setErr(originErr);
++    try {
++      System.out.flush();
++      System.err.flush();
++    } finally {
++      System.setOut(oldOut);
++      System.setErr(oldErr);
++    }
+     if (admin != null) {
+       admin.close();
+     }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tools/TestJMXGet.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tools/TestJMXGet.java
+index c69e73a..4c429ec 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tools/TestJMXGet.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tools/TestJMXGet.java
+@@ -134,14 +134,19 @@ private static boolean checkPrintAllValues(JMXGet jmx) throws Exception {
+     String pattern = "List of all the available keys:";
+     PipedOutputStream pipeOut = new PipedOutputStream();
+     PipedInputStream pipeIn = new PipedInputStream(pipeOut);
++    PrintStream oldErr = System.err;
+     System.setErr(new PrintStream(pipeOut));
+-    jmx.printAllValues();
+-    if ((size = pipeIn.available()) != 0) {
+-      bytes = new byte[size];
+-      pipeIn.read(bytes, 0, bytes.length);            
++    try {
++      jmx.printAllValues();
++      if ((size = pipeIn.available()) != 0) {
++        bytes = new byte[size];
++        pipeIn.read(bytes, 0, bytes.length);
++      }
++      pipeOut.close();
++      pipeIn.close();
++    } finally {
++      System.setErr(oldErr);
+     }
+-    pipeOut.close();
+-    pipeIn.close();
+     return bytes != null ? new String(bytes).contains(pattern) : false;
+   }
+   
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tools/TestTools.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tools/TestTools.java
+index c767ce2..346bba7 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tools/TestTools.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tools/TestTools.java
+@@ -103,6 +103,8 @@ public void testDFSAdminInvalidUsageHelp() {
+   private void checkOutput(String[] args, String pattern, PrintStream out,
+       Class<?> clazz) {       
+     ByteArrayOutputStream outBytes = new ByteArrayOutputStream();
++    PrintStream oldOut = System.out;
++    PrintStream oldErr = System.err;
+     try {
+       PipedOutputStream pipeOut = new PipedOutputStream();
+       PipedInputStream pipeIn = new PipedInputStream(pipeOut, PIPE_BUFFER_SIZE);
+@@ -125,6 +127,9 @@ private void checkOutput(String[] args, String pattern, PrintStream out,
+       assertTrue(new String(outBytes.toByteArray()).contains(pattern));            
+     } catch (Exception ex) {
+       fail("checkOutput error " + ex);
++    } finally {
++      System.setOut(oldOut);
++      System.setErr(oldErr);
+     }
+   }
+ 
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTraceAdmin.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTraceAdmin.java
+index 7e10d90..198dafb 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTraceAdmin.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTraceAdmin.java
+@@ -44,9 +44,12 @@ private String runTraceCommand(TraceAdmin trace, String... cmd)
+     try {
+       ret = trace.run(cmd);
+     } finally {
+-      System.out.flush();
+-      System.setOut(oldStdout);
+-      System.setErr(oldStderr);
++      try {
++        System.out.flush();
++      } finally {
++        System.setOut(oldStdout);
++        System.setErr(oldStderr);
++      }
+     }
+     return "ret:" + ret + ", " + baos.toString();
+   }
+-- 
+1.7.9.5
+

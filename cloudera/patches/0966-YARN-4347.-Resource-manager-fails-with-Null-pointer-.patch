@@ -1,0 +1,169 @@
+From 02d299a1f65a6ac4f238534a73ffa33381bef18f Mon Sep 17 00:00:00 2001
+From: Wangda Tan <wangda@apache.org>
+Date: Thu, 12 Nov 2015 11:23:40 -0800
+Subject: [PATCH 0966/1023] YARN-4347. Resource manager fails with Null
+ pointer exception. (Jian He via wangda)
+
+(cherry picked from commit 7f55a18071ebe1c5591ff8a410b227c855c3f428)
+
+Conflicts:
+	hadoop-yarn-project/CHANGES.txt
+	hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/rmapp/attempt/RMAppAttemptImpl.java
+	hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/TestWorkPreservingRMRestart.java
+
+Change-Id: Ib6d44333ddedffab4095f05bc10d73dbb66b6d94
+(cherry picked from commit 1775dcdead13a9cdc489454f9ac4857828e72b2d)
+(cherry picked from commit b264f1eb290b441465546d87defab25dd13389fd)
+---
+ .../server/resourcemanager/rmapp/RMAppImpl.java    |    2 +-
+ .../rmapp/attempt/RMAppAttemptImpl.java            |   33 +++++++++++++--
+ .../TestWorkPreservingRMRestart.java               |   43 ++++++++++++++++++++
+ 3 files changed, 74 insertions(+), 4 deletions(-)
+
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/rmapp/RMAppImpl.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/rmapp/RMAppImpl.java
+index 9b36c0f..d1a1c0f 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/rmapp/RMAppImpl.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/rmapp/RMAppImpl.java
+@@ -1406,7 +1406,7 @@ public static boolean isAppInFinalState(RMApp rmApp) {
+         || appState == RMAppState.KILLED;
+   }
+   
+-  private RMAppState getRecoveredFinalState() {
++  public RMAppState getRecoveredFinalState() {
+     return this.recoveredFinalState;
+   }
+ 
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/rmapp/attempt/RMAppAttemptImpl.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/rmapp/attempt/RMAppAttemptImpl.java
+index d1ad7b4..b57da1f 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/rmapp/attempt/RMAppAttemptImpl.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/rmapp/attempt/RMAppAttemptImpl.java
+@@ -84,6 +84,7 @@
+ import org.apache.hadoop.yarn.server.resourcemanager.rmapp.RMAppFinishedAttemptEvent;
+ import org.apache.hadoop.yarn.server.resourcemanager.rmapp.RMAppImpl;
+ import org.apache.hadoop.yarn.server.resourcemanager.rmapp.attempt.event.RMAppAttemptContainerAllocatedEvent;
++import org.apache.hadoop.yarn.server.resourcemanager.rmapp.RMAppState;
+ import org.apache.hadoop.yarn.server.resourcemanager.rmapp.attempt.event.RMAppAttemptContainerFinishedEvent;
+ import org.apache.hadoop.yarn.server.resourcemanager.rmapp.attempt.event.RMAppAttemptLaunchFailedEvent;
+ import org.apache.hadoop.yarn.server.resourcemanager.rmapp.attempt.event.RMAppAttemptRegistrationEvent;
+@@ -1032,6 +1033,9 @@ public void transition(RMAppAttemptImpl appAttempt,
+     @Override
+     public RMAppAttemptState transition(RMAppAttemptImpl appAttempt,
+         RMAppAttemptEvent event) {
++      RMApp rmApp = appAttempt.rmContext.getRMApps().get(
++          appAttempt.getAppAttemptId().getApplicationId());
++
+       /*
+        * If last attempt recovered final state is null .. it means attempt was
+        * started but AM container may or may not have started / finished.
+@@ -1039,8 +1043,13 @@ public RMAppAttemptState transition(RMAppAttemptImpl appAttempt,
+        */
+       if (appAttempt.recoveredFinalState != null) {
+         appAttempt.progress = 1.0f;
+-        RMApp rmApp =appAttempt.rmContext.getRMApps().get(
+-            appAttempt.getAppAttemptId().getApplicationId());
++
++        if (appAttempt.submissionContext
++            .getKeepContainersAcrossApplicationAttempts()
++            && !appAttempt.submissionContext.getUnmanagedAM()
++            && rmApp.getCurrentAppAttempt() != appAttempt) {
++          appAttempt.transferStateFromPreviousAttempt(rmApp.getCurrentAppAttempt());
++        }
+         // We will replay the final attempt only if last attempt is in final
+         // state but application is not in final state.
+         if (rmApp.getCurrentAppAttempt() == appAttempt
+@@ -1053,7 +1062,24 @@ public RMAppAttemptState transition(RMAppAttemptImpl appAttempt,
+               appAttempt, event);
+         }
+         return appAttempt.recoveredFinalState;
+-      } else {
++      } else if (RMAppImpl.isAppInFinalState(rmApp))  {
++        // Somehow attempt final state was not saved but app final state was saved.
++        // Skip adding the attempt into scheduler
++        RMAppState appState = ((RMAppImpl) rmApp).getRecoveredFinalState();
++        LOG.warn(rmApp.getApplicationId() + " final state (" + appState
++            + ") was recorded, but " + appAttempt.applicationAttemptId
++            + " final state (" + appAttempt.recoveredFinalState
++            + ") was not recorded.");
++        switch (appState) {
++        case FINISHED:
++          return RMAppAttemptState.FINISHED;
++        case FAILED:
++          return RMAppAttemptState.FAILED;
++        case KILLED:
++          return RMAppAttemptState.KILLED;
++        }
++        return RMAppAttemptState.FAILED;
++      } else{
+         // Add the current attempt to the scheduler.
+         if (appAttempt.rmContext.isWorkPreservingRecoveryEnabled()) {
+           // Need to register an app attempt before AM can register
+@@ -1087,6 +1113,7 @@ public RMAppAttemptState transition(RMAppAttemptImpl appAttempt,
+     }
+   }
+ 
++
+   private void rememberTargetTransitions(RMAppAttemptEvent event,
+       Object transitionToDo, RMAppAttemptState targetFinalState) {
+     transitionTodo = transitionToDo;
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/TestWorkPreservingRMRestart.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/TestWorkPreservingRMRestart.java
+index 8d0c7a7..5f7e0ed 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/TestWorkPreservingRMRestart.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/TestWorkPreservingRMRestart.java
+@@ -50,6 +50,8 @@
+ import org.apache.hadoop.yarn.server.api.protocolrecords.NMContainerStatus;
+ import org.apache.hadoop.yarn.server.resourcemanager.TestRMRestart.TestSecurityMockRM;
+ import org.apache.hadoop.yarn.server.resourcemanager.recovery.MemoryRMStateStore;
++import org.apache.hadoop.yarn.server.resourcemanager.recovery.records.ApplicationAttemptStateData;
++import org.apache.hadoop.yarn.server.resourcemanager.recovery.records.ApplicationStateData;
+ import org.apache.hadoop.yarn.server.resourcemanager.rmapp.RMApp;
+ import org.apache.hadoop.yarn.server.resourcemanager.rmapp.RMAppState;
+ import org.apache.hadoop.yarn.server.resourcemanager.rmapp.attempt.RMAppAttempt;
+@@ -985,4 +987,45 @@ public void addApplicationSync(ApplicationId applicationId,
+     rm2.waitForState(am1.getApplicationAttemptId(), RMAppAttemptState.FAILED);
+     rm2.waitForState(app1.getApplicationId(), RMAppState.FAILED);
+   }
++
++  // Test that if application state was saved, but attempt state was not saved.
++  // RM should start correctly.
++  @Test (timeout = 20000)
++  public void testAppStateSavedButAttemptStateNotSaved() throws Exception {
++    MemoryRMStateStore memStore = new MemoryRMStateStore() {
++      @Override public synchronized void updateApplicationAttemptStateInternal(
++          ApplicationAttemptId appAttemptId,
++          ApplicationAttemptStateData attemptState) {
++        // do nothing;
++        // simulate the failure that attempt final state is not saved.
++      }
++    };
++    memStore.init(conf);
++    rm1 = new MockRM(conf, memStore);
++    rm1.start();
++
++    MockNM nm1 = new MockNM("127.0.0.1:1234", 15120, rm1.getResourceTrackerService());
++    nm1.registerNode();
++
++    RMApp app1 = rm1.submitApp(200);
++    MockAM am1 = MockRM.launchAndRegisterAM(app1, rm1, nm1);
++    MockRM.finishAMAndVerifyAppState(app1, rm1, nm1, am1);
++
++    ApplicationStateData appSavedState =
++        memStore.getState().getApplicationState().get(app1.getApplicationId());
++
++    // check that app state is  saved.
++    assertEquals(RMAppState.FINISHED, appSavedState.getState());
++    // check that attempt state is not saved.
++    assertNull(appSavedState.getAttempt(am1.getApplicationAttemptId()).getState());
++
++    rm2 = new MockRM(conf, memStore);
++    rm2.start();
++    RMApp recoveredApp1 =
++        rm2.getRMContext().getRMApps().get(app1.getApplicationId());
++
++    assertEquals(RMAppState.FINISHED, recoveredApp1.getState());
++    // check that attempt state is recovered correctly.
++    assertEquals(RMAppAttemptState.FINISHED, recoveredApp1.getCurrentAppAttempt().getState());
++  }
+ }
+-- 
+1.7.9.5
+

@@ -1,0 +1,49 @@
+From 446c6d83c8be091a4753eb91e4c5ee9378bbc1e4 Mon Sep 17 00:00:00 2001
+From: Karthik Kambatla <kasha@cloudera.com>
+Date: Mon, 24 Aug 2015 14:55:10 -0700
+Subject: [PATCH 0725/1023] Add post-commit-hook
+
+Change-Id: Ieae1d02223a708142feba939da70b0b355669e80
+---
+ cloudera/post_commit_hook.sh |   29 +++++++++++++++++++++++++++++
+ 1 file changed, 29 insertions(+)
+ create mode 100755 cloudera/post_commit_hook.sh
+
+diff --git a/cloudera/post_commit_hook.sh b/cloudera/post_commit_hook.sh
+new file mode 100755
+index 0000000..1c64900
+--- /dev/null
++++ b/cloudera/post_commit_hook.sh
+@@ -0,0 +1,29 @@
++#!/bin/bash
++set -xe
++
++SCRIPTS="jenkins-job-scripts"
++DIR="$( cd $( dirname $( dirname ${BASH_SOURCE[0]} ) ) && pwd )"
++cd $DIR
++
++if [[ -d $SCRIPTS ]]; then
++    echo "Cleaning up remnants from a previous run"
++    rm -rf $SCRIPTS
++fi
++
++# Clone the jenkins script repo
++git clone --depth 1 git://github.mtv.cloudera.com/CDH/$SCRIPTS.git $SCRIPTS || true
++
++# Fetch the right branch
++cd $SCRIPTS
++git fetch --depth 1 origin
++git checkout -f origin/master
++git ls-tree -r HEAD
++cd ..
++
++# Run the build and tests
++export CONF_NAME=CDH5-Hadoop-2.6.0
++./jenkins-job-scripts/run.sh
++
++if [[ -d $SCRIPTS ]]; then
++    rm -rf $SCRIPTS
++fi
+-- 
+1.7.9.5
+

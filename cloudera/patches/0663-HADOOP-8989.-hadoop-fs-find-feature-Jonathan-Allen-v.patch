@@ -1,0 +1,3845 @@
+From 13a1fddc8b90058c518062e73ddd0ba395a43dc5 Mon Sep 17 00:00:00 2001
+From: Allen Wittenauer <aw@apache.org>
+Date: Thu, 15 Jan 2015 11:57:48 -0800
+Subject: [PATCH 0663/1023] HADOOP-8989. hadoop fs -find feature (Jonathan
+ Allen via aw) (missed some files) (cherry picked
+ from commit
+ 450561a93469ab7cd0f13fee8b9c3580cb8885a4)
+
+---
+ .../java/org/apache/hadoop/fs/shell/find/And.java  |   84 ++
+ .../hadoop/fs/shell/find/BaseExpression.java       |  302 +++++++
+ .../apache/hadoop/fs/shell/find/Expression.java    |  107 +++
+ .../hadoop/fs/shell/find/ExpressionFactory.java    |  156 ++++
+ .../hadoop/fs/shell/find/FilterExpression.java     |  144 ++++
+ .../java/org/apache/hadoop/fs/shell/find/Find.java |  444 ++++++++++
+ .../apache/hadoop/fs/shell/find/FindOptions.java   |  271 ++++++
+ .../java/org/apache/hadoop/fs/shell/find/Name.java |  100 +++
+ .../org/apache/hadoop/fs/shell/find/Print.java     |   76 ++
+ .../org/apache/hadoop/fs/shell/find/Result.java    |   88 ++
+ .../hadoop/fs/shell/find/MockFileSystem.java       |   86 ++
+ .../org/apache/hadoop/fs/shell/find/TestAnd.java   |  263 ++++++
+ .../hadoop/fs/shell/find/TestFilterExpression.java |  145 ++++
+ .../org/apache/hadoop/fs/shell/find/TestFind.java  |  900 ++++++++++++++++++++
+ .../apache/hadoop/fs/shell/find/TestHelper.java    |   35 +
+ .../org/apache/hadoop/fs/shell/find/TestIname.java |   93 ++
+ .../org/apache/hadoop/fs/shell/find/TestName.java  |   93 ++
+ .../org/apache/hadoop/fs/shell/find/TestPrint.java |   56 ++
+ .../apache/hadoop/fs/shell/find/TestPrint0.java    |   56 ++
+ .../apache/hadoop/fs/shell/find/TestResult.java    |  172 ++++
+ 20 files changed, 3671 insertions(+)
+ create mode 100644 hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/find/And.java
+ create mode 100644 hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/find/BaseExpression.java
+ create mode 100644 hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/find/Expression.java
+ create mode 100644 hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/find/ExpressionFactory.java
+ create mode 100644 hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/find/FilterExpression.java
+ create mode 100644 hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/find/Find.java
+ create mode 100644 hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/find/FindOptions.java
+ create mode 100644 hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/find/Name.java
+ create mode 100644 hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/find/Print.java
+ create mode 100644 hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/find/Result.java
+ create mode 100644 hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/shell/find/MockFileSystem.java
+ create mode 100644 hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/shell/find/TestAnd.java
+ create mode 100644 hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/shell/find/TestFilterExpression.java
+ create mode 100644 hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/shell/find/TestFind.java
+ create mode 100644 hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/shell/find/TestHelper.java
+ create mode 100644 hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/shell/find/TestIname.java
+ create mode 100644 hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/shell/find/TestName.java
+ create mode 100644 hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/shell/find/TestPrint.java
+ create mode 100644 hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/shell/find/TestPrint0.java
+ create mode 100644 hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/shell/find/TestResult.java
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/find/And.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/find/And.java
+new file mode 100644
+index 0000000..ced489c
+--- /dev/null
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/find/And.java
+@@ -0,0 +1,84 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.apache.hadoop.fs.shell.find;
++
++import java.io.IOException;
++import java.util.Deque;
++
++import org.apache.hadoop.fs.shell.PathData;
++
++/**
++ * Implements the -a (and) operator for the
++ * {@link org.apache.hadoop.fs.shell.find.Find} command.
++ */
++final class And extends BaseExpression {
++  /** Registers this expression with the specified factory. */
++  public static void registerExpression(ExpressionFactory factory)
++      throws IOException {
++    factory.addClass(And.class, "-a");
++    factory.addClass(And.class, "-and");
++  }
++
++  private static final String[] USAGE = { "expression -a expression",
++      "expression -and expression", "expression expression" };
++  private static final String[] HELP = {
++      "Logical AND operator for joining two expressions. Returns",
++      "true if both child expressions return true. Implied by the",
++      "juxtaposition of two expressions and so does not need to be",
++      "explicitly specified. The second expression will not be",
++      "applied if the first fails." };
++
++  public And() {
++    super();
++    setUsage(USAGE);
++    setHelp(HELP);
++  }
++
++  /**
++   * Applies child expressions to the {@link PathData} item. If all pass then
++   * returns {@link Result#PASS} else returns the result of the first
++   * non-passing expression.
++   */
++  @Override
++  public Result apply(PathData item, int depth) throws IOException {
++    Result result = Result.PASS;
++    for (Expression child : getChildren()) {
++      Result childResult = child.apply(item, -1);
++      result = result.combine(childResult);
++      if (!result.isPass()) {
++        return result;
++      }
++    }
++    return result;
++  }
++
++  @Override
++  public boolean isOperator() {
++    return true;
++  }
++
++  @Override
++  public int getPrecedence() {
++    return 200;
++  }
++
++  @Override
++  public void addChildren(Deque<Expression> expressions) {
++    addChildren(expressions, 2);
++  }
++}
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/find/BaseExpression.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/find/BaseExpression.java
+new file mode 100644
+index 0000000..db7d62f
+--- /dev/null
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/find/BaseExpression.java
+@@ -0,0 +1,302 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.apache.hadoop.fs.shell.find;
++
++import java.io.IOException;
++import java.util.Deque;
++import java.util.LinkedList;
++import java.util.List;
++
++import org.apache.hadoop.conf.Configurable;
++import org.apache.hadoop.conf.Configuration;
++import org.apache.hadoop.fs.FileStatus;
++import org.apache.hadoop.fs.FileSystem;
++import org.apache.hadoop.fs.Path;
++import org.apache.hadoop.fs.shell.PathData;
++
++/**
++ * Abstract expression for use in the
++ * {@link org.apache.hadoop.fs.shell.find.Find} command. Provides default
++ * behavior for a no-argument primary expression.
++ */
++public abstract class BaseExpression implements Expression, Configurable {
++  private String[] usage = { "Not yet implemented" };
++  private String[] help = { "Not yet implemented" };
++
++  /** Sets the usage text for this {@link Expression} */
++  protected void setUsage(String[] usage) {
++    this.usage = usage;
++  }
++
++  /** Sets the help text for this {@link Expression} */
++  protected void setHelp(String[] help) {
++    this.help = help;
++  }
++
++  @Override
++  public String[] getUsage() {
++    return this.usage;
++  }
++
++  @Override
++  public String[] getHelp() {
++    return this.help;
++  }
++
++  @Override
++  public void setOptions(FindOptions options) throws IOException {
++    this.options = options;
++    for (Expression child : getChildren()) {
++      child.setOptions(options);
++    }
++  }
++
++  @Override
++  public void prepare() throws IOException {
++    for (Expression child : getChildren()) {
++      child.prepare();
++    }
++  }
++
++  @Override
++  public void finish() throws IOException {
++    for (Expression child : getChildren()) {
++      child.finish();
++    }
++  }
++
++  /** Options passed in from the {@link Find} command. */
++  private FindOptions options;
++
++  /** Hadoop configuration. */
++  private Configuration conf;
++
++  /** Arguments for this expression. */
++  private LinkedList<String> arguments = new LinkedList<String>();
++
++  /** Children of this expression. */
++  private LinkedList<Expression> children = new LinkedList<Expression>();
++
++  /** Return the options to be used by this expression. */
++  protected FindOptions getOptions() {
++    return (this.options == null) ? new FindOptions() : this.options;
++  }
++
++  @Override
++  public void setConf(Configuration conf) {
++    this.conf = conf;
++  }
++
++  @Override
++  public Configuration getConf() {
++    return this.conf;
++  }
++
++  @Override
++  public String toString() {
++    StringBuilder sb = new StringBuilder();
++    sb.append(getClass().getSimpleName());
++    sb.append("(");
++    boolean firstArg = true;
++    for (String arg : getArguments()) {
++      if (!firstArg) {
++        sb.append(",");
++      } else {
++        firstArg = false;
++      }
++      sb.append(arg);
++    }
++    sb.append(";");
++    firstArg = true;
++    for (Expression child : getChildren()) {
++      if (!firstArg) {
++        sb.append(",");
++      } else {
++        firstArg = false;
++      }
++      sb.append(child.toString());
++    }
++    sb.append(")");
++    return sb.toString();
++  }
++
++  @Override
++  public boolean isAction() {
++    for (Expression child : getChildren()) {
++      if (child.isAction()) {
++        return true;
++      }
++    }
++    return false;
++  }
++
++  @Override
++  public boolean isOperator() {
++    return false;
++  }
++
++  /**
++   * Returns the arguments of this expression
++   *
++   * @return list of argument strings
++   */
++  protected List<String> getArguments() {
++    return this.arguments;
++  }
++
++  /**
++   * Returns the argument at the given position (starting from 1).
++   *
++   * @param position
++   *          argument to be returned
++   * @return requested argument
++   * @throws IOException
++   *           if the argument doesn't exist or is null
++   */
++  protected String getArgument(int position) throws IOException {
++    if (position > this.arguments.size()) {
++      throw new IOException("Missing argument at " + position);
++    }
++    String argument = this.arguments.get(position - 1);
++    if (argument == null) {
++      throw new IOException("Null argument at position " + position);
++    }
++    return argument;
++  }
++
++  /**
++   * Returns the children of this expression.
++   *
++   * @return list of child expressions
++   */
++  protected List<Expression> getChildren() {
++    return this.children;
++  }
++
++  @Override
++  public int getPrecedence() {
++    return 0;
++  }
++
++  @Override
++  public void addChildren(Deque<Expression> exprs) {
++    // no children by default, will be overridden by specific expressions.
++  }
++
++  /**
++   * Add a specific number of children to this expression. The children are
++   * popped off the head of the expressions.
++   *
++   * @param exprs
++   *          deque of expressions from which to take the children
++   * @param count
++   *          number of children to be added
++   */
++  protected void addChildren(Deque<Expression> exprs, int count) {
++    for (int i = 0; i < count; i++) {
++      addChild(exprs.pop());
++    }
++  }
++
++  /**
++   * Add a single argument to this expression. The argument is popped off the
++   * head of the expressions.
++   *
++   * @param expr
++   *          child to add to the expression
++   */
++  private void addChild(Expression expr) {
++    children.push(expr);
++  }
++
++  @Override
++  public void addArguments(Deque<String> args) {
++    // no children by default, will be overridden by specific expressions.
++  }
++
++  /**
++   * Add a specific number of arguments to this expression. The children are
++   * popped off the head of the expressions.
++   *
++   * @param args
++   *          deque of arguments from which to take the argument
++   * @param count
++   *          number of children to be added
++   */
++  protected void addArguments(Deque<String> args, int count) {
++    for (int i = 0; i < count; i++) {
++      addArgument(args.pop());
++    }
++  }
++
++  /**
++   * Add a single argument to this expression. The argument is popped off the
++   * head of the expressions.
++   *
++   * @param arg
++   *          argument to add to the expression
++   */
++  protected void addArgument(String arg) {
++    arguments.add(arg);
++  }
++
++  /**
++   * Returns the {@link FileStatus} from the {@link PathData} item. If the
++   * current options require links to be followed then the returned file status
++   * is that of the linked file.
++   *
++   * @param item
++   *          PathData
++   * @param depth
++   *          current depth in the process directories
++   * @return FileStatus
++   */
++  protected FileStatus getFileStatus(PathData item, int depth)
++      throws IOException {
++    FileStatus fileStatus = item.stat;
++    if (fileStatus.isSymlink()) {
++      if (options.isFollowLink() || (options.isFollowArgLink() &&
++          (depth == 0))) {
++        Path linkedFile = item.fs.resolvePath(fileStatus.getSymlink());
++        fileStatus = getFileSystem(item).getFileStatus(linkedFile);
++      }
++    }
++    return fileStatus;
++  }
++
++  /**
++   * Returns the {@link Path} from the {@link PathData} item.
++   *
++   * @param item
++   *          PathData
++   * @return Path
++   */
++  protected Path getPath(PathData item) throws IOException {
++    return item.path;
++  }
++
++  /**
++   * Returns the {@link FileSystem} associated with the {@link PathData} item.
++   *
++   * @param item PathData
++   * @return FileSystem
++   */
++  protected FileSystem getFileSystem(PathData item) throws IOException {
++    return item.fs;
++  }
++}
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/find/Expression.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/find/Expression.java
+new file mode 100644
+index 0000000..ccad631
+--- /dev/null
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/find/Expression.java
+@@ -0,0 +1,107 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.apache.hadoop.fs.shell.find;
++
++import java.io.IOException;
++import java.util.Deque;
++
++import org.apache.hadoop.fs.shell.PathData;
++
++/**
++ * Interface describing an expression to be used in the
++ * {@link org.apache.hadoop.fs.shell.find.Find} command.
++ */
++public interface Expression {
++  /**
++   * Set the options for this expression, called once before processing any
++   * items.
++   */
++  public void setOptions(FindOptions options) throws IOException;
++
++  /**
++   * Prepares the expression for execution, called once after setting options
++   * and before processing any options.
++   * @throws IOException
++   */
++  public void prepare() throws IOException;
++
++  /**
++   * Apply the expression to the specified item, called once for each item.
++   *
++   * @param item {@link PathData} item to be processed
++   * @param depth distance of the item from the command line argument
++   * @return {@link Result} of applying the expression to the item
++   */
++  public Result apply(PathData item, int depth) throws IOException;
++
++  /**
++   * Finishes the expression, called once after processing all items.
++   *
++   * @throws IOException
++   */
++  public void finish() throws IOException;
++
++  /**
++   * Returns brief usage instructions for this expression. Multiple items should
++   * be returned if there are multiple ways to use this expression.
++   *
++   * @return array of usage instructions
++   */
++  public String[] getUsage();
++
++  /**
++   * Returns a description of the expression for use in help. Multiple lines
++   * should be returned array items. Lines should be formated to 60 characters
++   * or less.
++   *
++   * @return array of description lines
++   */
++  public String[] getHelp();
++
++  /**
++   * Indicates whether this expression performs an action, i.e. provides output
++   * back to the user.
++   */
++  public boolean isAction();
++
++  /** Identifies the expression as an operator rather than a primary. */
++  public boolean isOperator();
++
++  /**
++   * Returns the precedence of this expression
++   * (only applicable to operators).
++   */
++  public int getPrecedence();
++
++  /**
++   * Adds children to this expression. Children are popped from the head of the
++   * deque.
++   *
++   * @param expressions
++   *          deque of expressions from which to take the children
++   */
++  public void addChildren(Deque<Expression> expressions);
++
++  /**
++   * Adds arguments to this expression. Arguments are popped from the head of
++   * the deque and added to the front of the child list, ie last child added is
++   * the first evaluated.
++   * @param args deque of arguments from which to take expression arguments
++   */
++  public void addArguments(Deque<String> args);
++}
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/find/ExpressionFactory.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/find/ExpressionFactory.java
+new file mode 100644
+index 0000000..b922a9e
+--- /dev/null
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/find/ExpressionFactory.java
+@@ -0,0 +1,156 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.apache.hadoop.fs.shell.find;
++
++import java.io.IOException;
++import java.lang.reflect.Method;
++import java.util.HashMap;
++import java.util.Map;
++
++import org.apache.hadoop.conf.Configuration;
++import org.apache.hadoop.util.ReflectionUtils;
++import org.apache.hadoop.util.StringUtils;
++
++/**
++ * Factory class for registering and searching for expressions for use in the
++ * {@link org.apache.hadoop.fs.shell.find.Find} command.
++ */
++final class ExpressionFactory {
++  private static final String REGISTER_EXPRESSION_METHOD = "registerExpression";
++  private Map<String, Class<? extends Expression>> expressionMap =
++      new HashMap<String, Class<? extends Expression>>();
++
++  private static final ExpressionFactory INSTANCE = new ExpressionFactory();
++
++  static ExpressionFactory getExpressionFactory() {
++    return INSTANCE;
++  }
++
++  /**
++   * Private constructor to ensure singleton.
++   */
++  private ExpressionFactory() {
++  }
++
++  /**
++   * Invokes "static void registerExpression(FindExpressionFactory)" on the
++   * given class. This method abstracts the contract between the factory and the
++   * expression class. Do not assume that directly invoking registerExpression
++   * on the given class will have the same effect.
++   *
++   * @param expressionClass
++   *          class to allow an opportunity to register
++   */
++  void registerExpression(Class<? extends Expression> expressionClass) {
++    try {
++      Method register = expressionClass.getMethod(REGISTER_EXPRESSION_METHOD,
++          ExpressionFactory.class);
++      if (register != null) {
++        register.invoke(null, this);
++      }
++    } catch (Exception e) {
++      throw new RuntimeException(StringUtils.stringifyException(e));
++    }
++  }
++
++  /**
++   * Register the given class as handling the given list of expression names.
++   *
++   * @param expressionClass
++   *          the class implementing the expression names
++   * @param names
++   *          one or more command names that will invoke this class
++   * @throws IOException
++   *           if the expression is not of an expected type
++   */
++  void addClass(Class<? extends Expression> expressionClass,
++      String... names) throws IOException {
++    for (String name : names)
++      expressionMap.put(name, expressionClass);
++  }
++
++  /**
++   * Determines whether the given expression name represents and actual
++   * expression.
++   *
++   * @param expressionName
++   *          name of the expression
++   * @return true if expressionName represents an expression
++   */
++  boolean isExpression(String expressionName) {
++    return expressionMap.containsKey(expressionName);
++  }
++
++  /**
++   * Get an instance of the requested expression
++   *
++   * @param expressionName
++   *          name of the command to lookup
++   * @param conf
++   *          the Hadoop configuration
++   * @return the {@link Expression} or null if the expression is unknown
++   */
++  Expression getExpression(String expressionName, Configuration conf) {
++    if (conf == null)
++      throw new NullPointerException("configuration is null");
++
++    Class<? extends Expression> expressionClass = expressionMap
++        .get(expressionName);
++    Expression instance = createExpression(expressionClass, conf);
++    return instance;
++  }
++
++  /**
++   * Creates an instance of the requested {@link Expression} class.
++   *
++   * @param expressionClass
++   *          {@link Expression} class to be instantiated
++   * @param conf
++   *          the Hadoop configuration
++   * @return a new instance of the requested {@link Expression} class
++   */
++  Expression createExpression(
++      Class<? extends Expression> expressionClass, Configuration conf) {
++    Expression instance = null;
++    if (expressionClass != null) {
++      instance = ReflectionUtils.newInstance(expressionClass, conf);
++    }
++    return instance;
++  }
++
++  /**
++   * Creates an instance of the requested {@link Expression} class.
++   *
++   * @param expressionClassname
++   *          name of the {@link Expression} class to be instantiated
++   * @param conf
++   *          the Hadoop configuration
++   * @return a new instance of the requested {@link Expression} class
++   */
++  Expression createExpression(String expressionClassname,
++      Configuration conf) {
++    try {
++      Class<? extends Expression> expressionClass = Class.forName(
++          expressionClassname).asSubclass(Expression.class);
++      return createExpression(expressionClass, conf);
++    } catch (ClassNotFoundException e) {
++      throw new IllegalArgumentException("Invalid classname "
++          + expressionClassname);
++    }
++  }
++}
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/find/FilterExpression.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/find/FilterExpression.java
+new file mode 100644
+index 0000000..0ebb0fa
+--- /dev/null
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/find/FilterExpression.java
+@@ -0,0 +1,144 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.apache.hadoop.fs.shell.find;
++
++import java.io.IOException;
++import java.util.Deque;
++
++import org.apache.hadoop.conf.Configurable;
++import org.apache.hadoop.conf.Configuration;
++import org.apache.hadoop.fs.shell.PathData;
++
++/**
++ * Provides an abstract composition filter for the {@link Expression} interface.
++ * Allows other {@link Expression} implementations to be reused without
++ * inheritance.
++ */
++public abstract class FilterExpression implements Expression, Configurable {
++  protected Expression expression;
++
++  protected FilterExpression(Expression expression) {
++    this.expression = expression;
++  }
++
++  @Override
++  public void setOptions(FindOptions options) throws IOException {
++    if (expression != null) {
++      expression.setOptions(options);
++    }
++  }
++
++  @Override
++  public void prepare() throws IOException {
++    if (expression != null) {
++      expression.prepare();
++    }
++  }
++
++  @Override
++  public Result apply(PathData item, int depth) throws IOException {
++    if (expression != null) {
++      return expression.apply(item, -1);
++    }
++    return Result.PASS;
++  }
++
++  @Override
++  public void finish() throws IOException {
++    if (expression != null) {
++      expression.finish();
++    }
++  }
++
++  @Override
++  public String[] getUsage() {
++    if (expression != null) {
++      return expression.getUsage();
++    }
++    return null;
++  }
++
++  @Override
++  public String[] getHelp() {
++    if (expression != null) {
++      return expression.getHelp();
++    }
++    return null;
++  }
++
++  @Override
++  public boolean isAction() {
++    if (expression != null) {
++      return expression.isAction();
++    }
++    return false;
++  }
++
++  @Override
++  public boolean isOperator() {
++    if (expression != null) {
++      return expression.isOperator();
++    }
++    return false;
++  }
++
++  @Override
++  public int getPrecedence() {
++    if (expression != null) {
++      return expression.getPrecedence();
++    }
++    return -1;
++  }
++
++  @Override
++  public void addChildren(Deque<Expression> expressions) {
++    if (expression != null) {
++      expression.addChildren(expressions);
++    }
++  }
++
++  @Override
++  public void addArguments(Deque<String> args) {
++    if (expression != null) {
++      expression.addArguments(args);
++    }
++  }
++
++  @Override
++  public void setConf(Configuration conf) {
++    if (expression instanceof Configurable) {
++      ((Configurable) expression).setConf(conf);
++    }
++  }
++
++  @Override
++  public Configuration getConf() {
++    if (expression instanceof Configurable) {
++      return ((Configurable) expression).getConf();
++    }
++    return null;
++  }
++
++  @Override
++  public String toString() {
++    if (expression != null) {
++      return getClass().getSimpleName() + "-" + expression.toString();
++    }
++    return getClass().getSimpleName();
++  }
++}
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/find/Find.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/find/Find.java
+new file mode 100644
+index 0000000..05cd818
+--- /dev/null
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/find/Find.java
+@@ -0,0 +1,444 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.apache.hadoop.fs.shell.find;
++
++import java.io.IOException;
++import java.util.ArrayList;
++import java.util.Collections;
++import java.util.Comparator;
++import java.util.Deque;
++import java.util.HashSet;
++import java.util.Iterator;
++import java.util.LinkedList;
++
++import org.apache.hadoop.classification.InterfaceAudience;
++import org.apache.hadoop.classification.InterfaceStability;
++import org.apache.hadoop.fs.Path;
++import org.apache.hadoop.fs.shell.CommandFactory;
++import org.apache.hadoop.fs.shell.CommandFormat;
++import org.apache.hadoop.fs.shell.FsCommand;
++import org.apache.hadoop.fs.shell.PathData;
++
++@InterfaceAudience.Private
++@InterfaceStability.Unstable
++/**
++ * Implements a Hadoop find command.
++ */
++public class Find extends FsCommand {
++  /**
++   * Register the names for the count command
++   * 
++   * @param factory the command factory that will instantiate this class
++   */
++  public static void registerCommands(CommandFactory factory) {
++    factory.addClass(Find.class, "-find");
++  }
++
++  public static final String NAME = "find";
++  public static final String USAGE = "<path> ... <expression> ...";
++  public static final String DESCRIPTION;
++  private static String[] HELP =
++  { "Finds all files that match the specified expression and",
++      "applies selected actions to them. If no <path> is specified",
++      "then defaults to the current working directory. If no",
++      "expression is specified then defaults to -print."
++  };
++
++  private static final String OPTION_FOLLOW_LINK = "L";
++  private static final String OPTION_FOLLOW_ARG_LINK = "H";
++
++  /** List of expressions recognized by this command. */
++  @SuppressWarnings("rawtypes")
++  private static final Class[] EXPRESSIONS;
++
++  static {
++    // Initialize the static variables.
++    EXPRESSIONS = new Class[] {
++        // Operator Expressions
++        And.class,
++        // Action Expressions
++        Print.class,
++        // Navigation Expressions
++        // Matcher Expressions
++        Name.class };
++    DESCRIPTION = buildDescription(ExpressionFactory.getExpressionFactory());
++
++    // Register the expressions with the expression factory.
++    registerExpressions(ExpressionFactory.getExpressionFactory());
++  }
++
++  /** Options for use in this command */
++  private FindOptions options;
++
++  /** Root expression for this instance of the command. */
++  private Expression rootExpression;
++
++  /** Set of path items returning a {@link Result#STOP} result. */
++  private HashSet<Path> stopPaths = new HashSet<Path>();
++
++  /** Register the expressions with the expression factory. */
++  @SuppressWarnings("unchecked")
++  private static void registerExpressions(ExpressionFactory factory) {
++    for (Class<? extends Expression> exprClass : EXPRESSIONS) {
++      factory.registerExpression(exprClass);
++    }
++  }
++
++  /** Build the description used by the help command. */
++  @SuppressWarnings("unchecked")
++  private static String buildDescription(ExpressionFactory factory) {
++    ArrayList<Expression> operators = new ArrayList<Expression>();
++    ArrayList<Expression> primaries = new ArrayList<Expression>();
++    for (Class<? extends Expression> exprClass : EXPRESSIONS) {
++      Expression expr = factory.createExpression(exprClass, null);
++      if (expr.isOperator()) {
++        operators.add(expr);
++      } else {
++        primaries.add(expr);
++      }
++    }
++    Collections.sort(operators, new Comparator<Expression>() {
++      @Override
++      public int compare(Expression arg0, Expression arg1) {
++        return arg0.getClass().getName().compareTo(arg1.getClass().getName());
++      }
++    });
++    Collections.sort(primaries, new Comparator<Expression>() {
++      @Override
++      public int compare(Expression arg0, Expression arg1) {
++        return arg0.getClass().getName().compareTo(arg1.getClass().getName());
++      }
++    });
++
++    StringBuilder sb = new StringBuilder();
++    for (String line : HELP) {
++      sb.append(line).append("\n");
++    }
++    sb.append("\n");
++    sb.append("The following primary expressions are recognised:\n");
++    for (Expression expr : primaries) {
++      for (String line : expr.getUsage()) {
++        sb.append("  ").append(line).append("\n");
++      }
++      for (String line : expr.getHelp()) {
++        sb.append("    ").append(line).append("\n");
++      }
++      sb.append("\n");
++    }
++    sb.append("The following operators are recognised:\n");
++    for (Expression expr : operators) {
++      for (String line : expr.getUsage()) {
++        sb.append("  ").append(line).append("\n");
++      }
++      for (String line : expr.getHelp()) {
++        sb.append("    ").append(line).append("\n");
++      }
++      sb.append("\n");
++    }
++    return sb.toString();
++  }
++
++  /** Default constructor for the Find command. */
++  public Find() {
++    setRecursive(true);
++  }
++
++  @Override
++  protected void processOptions(LinkedList<String> args) throws IOException {
++    CommandFormat cf =
++        new CommandFormat(1, Integer.MAX_VALUE, OPTION_FOLLOW_LINK,
++            OPTION_FOLLOW_ARG_LINK, null);
++    cf.parse(args);
++
++    if (cf.getOpt(OPTION_FOLLOW_LINK)) {
++      getOptions().setFollowLink(true);
++    } else if (cf.getOpt(OPTION_FOLLOW_ARG_LINK)) {
++      getOptions().setFollowArgLink(true);
++    }
++
++    // search for first non-path argument (ie starts with a "-") and capture and
++    // remove the remaining arguments as expressions
++    LinkedList<String> expressionArgs = new LinkedList<String>();
++    Iterator<String> it = args.iterator();
++    boolean isPath = true;
++    while (it.hasNext()) {
++      String arg = it.next();
++      if (isPath) {
++        if (arg.startsWith("-")) {
++          isPath = false;
++        }
++      }
++      if (!isPath) {
++        expressionArgs.add(arg);
++        it.remove();
++      }
++    }
++
++    if (args.isEmpty()) {
++      args.add(Path.CUR_DIR);
++    }
++
++    Expression expression = parseExpression(expressionArgs);
++    if (!expression.isAction()) {
++      Expression and = getExpression(And.class);
++      Deque<Expression> children = new LinkedList<Expression>();
++      children.add(getExpression(Print.class));
++      children.add(expression);
++      and.addChildren(children);
++      expression = and;
++    }
++
++    setRootExpression(expression);
++  }
++
++  /**
++   * Set the root expression for this find.
++   * 
++   * @param expression
++   */
++  @InterfaceAudience.Private
++  void setRootExpression(Expression expression) {
++    this.rootExpression = expression;
++  }
++
++  /**
++   * Return the root expression for this find.
++   * 
++   * @return the root expression
++   */
++  @InterfaceAudience.Private
++  Expression getRootExpression() {
++    return this.rootExpression;
++  }
++
++  /** Returns the current find options, creating them if necessary. */
++  @InterfaceAudience.Private
++  FindOptions getOptions() {
++    if (options == null) {
++      options = createOptions();
++    }
++    return options;
++  }
++
++  /** Create a new set of find options. */
++  private FindOptions createOptions() {
++    FindOptions options = new FindOptions();
++    options.setOut(out);
++    options.setErr(err);
++    options.setIn(System.in);
++    options.setCommandFactory(getCommandFactory());
++    options.setConfiguration(getConf());
++    return options;
++  }
++
++  /** Add the {@link PathData} item to the stop set. */
++  private void addStop(PathData item) {
++    stopPaths.add(item.path);
++  }
++
++  /** Returns true if the {@link PathData} item is in the stop set. */
++  private boolean isStop(PathData item) {
++    return stopPaths.contains(item.path);
++  }
++
++  /**
++   * Parse a list of arguments to to extract the {@link Expression} elements.
++   * The input Deque will be modified to remove the used elements.
++   * 
++   * @param args arguments to be parsed
++   * @return list of {@link Expression} elements applicable to this command
++   * @throws IOException if list can not be parsed
++   */
++  private Expression parseExpression(Deque<String> args) throws IOException {
++    Deque<Expression> primaries = new LinkedList<Expression>();
++    Deque<Expression> operators = new LinkedList<Expression>();
++    Expression prevExpr = getExpression(And.class);
++    while (!args.isEmpty()) {
++      String arg = args.pop();
++      if ("(".equals(arg)) {
++        Expression expr = parseExpression(args);
++        primaries.add(expr);
++        prevExpr = new BaseExpression() {
++          @Override
++          public Result apply(PathData item, int depth) throws IOException {
++            return Result.PASS;
++          }
++        }; // stub the previous expression to be a non-op
++      } else if (")".equals(arg)) {
++        break;
++      } else if (isExpression(arg)) {
++        Expression expr = getExpression(arg);
++        expr.addArguments(args);
++        if (expr.isOperator()) {
++          while (!operators.isEmpty()) {
++            if (operators.peek().getPrecedence() >= expr.getPrecedence()) {
++              Expression op = operators.pop();
++              op.addChildren(primaries);
++              primaries.push(op);
++            } else {
++              break;
++            }
++          }
++          operators.push(expr);
++        } else {
++          if (!prevExpr.isOperator()) {
++            Expression and = getExpression(And.class);
++            while (!operators.isEmpty()) {
++              if (operators.peek().getPrecedence() >= and.getPrecedence()) {
++                Expression op = operators.pop();
++                op.addChildren(primaries);
++                primaries.push(op);
++              } else {
++                break;
++              }
++            }
++            operators.push(and);
++          }
++          primaries.push(expr);
++        }
++        prevExpr = expr;
++      } else {
++        throw new IOException("Unexpected argument: " + arg);
++      }
++    }
++
++    while (!operators.isEmpty()) {
++      Expression operator = operators.pop();
++      operator.addChildren(primaries);
++      primaries.push(operator);
++    }
++
++    return primaries.isEmpty() ? getExpression(Print.class) : primaries.pop();
++  }
++
++  /** Returns true if the target is an ancestor of the source. */
++  private boolean isAncestor(PathData source, PathData target) {
++    for (Path parent = source.path; (parent != null) && !parent.isRoot();
++        parent = parent.getParent()) {
++      if (parent.equals(target.path)) {
++        return true;
++      }
++    }
++    return false;
++  }
++
++  @Override
++  protected void recursePath(PathData item) throws IOException {
++    if (isStop(item)) {
++      // this item returned a stop result so don't recurse any further
++      return;
++    }
++    if (getDepth() >= getOptions().getMaxDepth()) {
++      // reached the maximum depth so don't got any further.
++      return;
++    }
++    if (item.stat.isSymlink() && getOptions().isFollowLink()) {
++      PathData linkedItem =
++          new PathData(item.stat.getSymlink().toString(), getConf());
++      if (isAncestor(item, linkedItem)) {
++        getOptions().getErr().println(
++            "Infinite loop ignored: " + item.toString() + " -> "
++                + linkedItem.toString());
++        return;
++      }
++      if (linkedItem.exists) {
++        item = linkedItem;
++      }
++    }
++    if (item.stat.isDirectory()) {
++      super.recursePath(item);
++    }
++  }
++
++  @Override
++  protected boolean isPathRecursable(PathData item) throws IOException {
++    if (item.stat.isDirectory()) {
++      return true;
++    }
++    if (item.stat.isSymlink()) {
++      PathData linkedItem =
++          new PathData(item.fs.resolvePath(item.stat.getSymlink()).toString(),
++              getConf());
++      if (linkedItem.stat.isDirectory()) {
++        if (getOptions().isFollowLink()) {
++          return true;
++        }
++        if (getOptions().isFollowArgLink() && (getDepth() == 0)) {
++          return true;
++        }
++      }
++    }
++    return false;
++  }
++
++  @Override
++  protected void processPath(PathData item) throws IOException {
++    if (getOptions().isDepthFirst()) {
++      // depth first so leave until post processing
++      return;
++    }
++    applyItem(item);
++  }
++
++  @Override
++  protected void postProcessPath(PathData item) throws IOException {
++    if (!getOptions().isDepthFirst()) {
++      // not depth first so already processed
++      return;
++    }
++    applyItem(item);
++  }
++
++  private void applyItem(PathData item) throws IOException {
++    if (getDepth() >= getOptions().getMinDepth()) {
++      Result result = getRootExpression().apply(item, getDepth());
++      if (Result.STOP.equals(result)) {
++        addStop(item);
++      }
++    }
++  }
++
++  @Override
++  protected void processArguments(LinkedList<PathData> args)
++      throws IOException {
++    Expression expr = getRootExpression();
++    expr.setOptions(getOptions());
++    expr.prepare();
++    super.processArguments(args);
++    expr.finish();
++  }
++
++  /** Gets a named expression from the factory. */
++  private Expression getExpression(String expressionName) {
++    return ExpressionFactory.getExpressionFactory().getExpression(
++        expressionName, getConf());
++  }
++
++  /** Gets an instance of an expression from the factory. */
++  private Expression getExpression(
++      Class<? extends Expression> expressionClass) {
++    return ExpressionFactory.getExpressionFactory().createExpression(
++        expressionClass, getConf());
++  }
++
++  /** Asks the factory whether an expression is recognized. */
++  private boolean isExpression(String expressionName) {
++    return ExpressionFactory.getExpressionFactory()
++        .isExpression(expressionName);
++  }
++}
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/find/FindOptions.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/find/FindOptions.java
+new file mode 100644
+index 0000000..b0f1be5
+--- /dev/null
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/find/FindOptions.java
+@@ -0,0 +1,271 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.apache.hadoop.fs.shell.find;
++
++import java.io.InputStream;
++import java.io.PrintStream;
++import java.util.Date;
++
++import org.apache.hadoop.conf.Configuration;
++import org.apache.hadoop.fs.shell.CommandFactory;
++
++/**
++ * Options to be used by the {@link Find} command and its {@link Expression}s.
++ */
++public class FindOptions {
++  /** Output stream to be used. */
++  private PrintStream out;
++
++  /** Error stream to be used. */
++  private PrintStream err;
++
++  /** Input stream to be used. */
++  private InputStream in;
++
++  /**
++   * Indicates whether the expression should be applied to the directory tree
++   * depth first.
++   */
++  private boolean depthFirst = false;
++
++  /** Indicates whether symbolic links should be followed. */
++  private boolean followLink = false;
++
++  /**
++   * Indicates whether symbolic links specified as command arguments should be
++   * followed.
++   */
++  private boolean followArgLink = false;
++
++  /** Start time of the find process. */
++  private long startTime = new Date().getTime();
++
++  /**
++   * Depth at which to start applying expressions.
++   */
++  private int minDepth = 0;
++
++  /**
++   * Depth at which to stop applying expressions.
++   */
++  private int maxDepth = Integer.MAX_VALUE;
++
++  /** Factory for retrieving command classes. */
++  private CommandFactory commandFactory;
++
++  /** Configuration object. */
++  private Configuration configuration = new Configuration();
++
++  /**
++   * Sets the output stream to be used.
++   *
++   * @param out output stream to be used
++   */
++  public void setOut(PrintStream out) {
++    this.out = out;
++  }
++
++  /**
++   * Returns the output stream to be used.
++   *
++   * @return output stream to be used
++   */
++  public PrintStream getOut() {
++    return this.out;
++  }
++
++  /**
++   * Sets the error stream to be used.
++   *
++   * @param err error stream to be used
++   */
++  public void setErr(PrintStream err) {
++    this.err = err;
++  }
++
++  /**
++   * Returns the error stream to be used.
++   *
++   * @return error stream to be used
++   */
++  public PrintStream getErr() {
++    return this.err;
++  }
++
++  /**
++   * Sets the input stream to be used.
++   *
++   * @param in input stream to be used
++   */
++  public void setIn(InputStream in) {
++    this.in = in;
++  }
++
++  /**
++   * Returns the input stream to be used.
++   *
++   * @return input stream to be used
++   */
++  public InputStream getIn() {
++    return this.in;
++  }
++
++  /**
++   * Sets flag indicating whether the expression should be applied to the
++   * directory tree depth first.
++   *
++   * @param depthFirst true indicates depth first traversal
++   */
++  public void setDepthFirst(boolean depthFirst) {
++    this.depthFirst = depthFirst;
++  }
++
++  /**
++   * Should directory tree be traversed depth first?
++   *
++   * @return true indicate depth first traversal
++   */
++  public boolean isDepthFirst() {
++    return this.depthFirst;
++  }
++
++  /**
++   * Sets flag indicating whether symbolic links should be followed.
++   *
++   * @param followLink true indicates follow links
++   */
++  public void setFollowLink(boolean followLink) {
++    this.followLink = followLink;
++  }
++
++  /**
++   * Should symbolic links be follows?
++   *
++   * @return true indicates links should be followed
++   */
++  public boolean isFollowLink() {
++    return this.followLink;
++  }
++
++  /**
++   * Sets flag indicating whether command line symbolic links should be
++   * followed.
++   *
++   * @param followArgLink true indicates follow links
++   */
++  public void setFollowArgLink(boolean followArgLink) {
++    this.followArgLink = followArgLink;
++  }
++
++  /**
++   * Should command line symbolic links be follows?
++   *
++   * @return true indicates links should be followed
++   */
++  public boolean isFollowArgLink() {
++    return this.followArgLink;
++  }
++
++  /**
++   * Returns the start time of this {@link Find} command.
++   *
++   * @return start time (in milliseconds since epoch)
++   */
++  public long getStartTime() {
++    return this.startTime;
++  }
++
++  /**
++   * Set the start time of this {@link Find} command.
++   *
++   * @param time start time (in milliseconds since epoch)
++   */
++  public void setStartTime(long time) {
++    this.startTime = time;
++  }
++
++  /**
++   * Returns the minimum depth for applying expressions.
++   *
++   * @return min depth
++   */
++  public int getMinDepth() {
++    return this.minDepth;
++  }
++
++  /**
++   * Sets the minimum depth for applying expressions.
++   *
++   * @param minDepth minimum depth
++   */
++  public void setMinDepth(int minDepth) {
++    this.minDepth = minDepth;
++  }
++
++  /**
++   * Returns the maximum depth for applying expressions.
++   *
++   * @return maximum depth
++   */
++  public int getMaxDepth() {
++    return this.maxDepth;
++  }
++
++  /**
++   * Sets the maximum depth for applying expressions.
++   *
++   * @param maxDepth maximum depth
++   */
++  public void setMaxDepth(int maxDepth) {
++    this.maxDepth = maxDepth;
++  }
++
++  /**
++   * Set the command factory.
++   *
++   * @param factory {@link CommandFactory}
++   */
++  public void setCommandFactory(CommandFactory factory) {
++    this.commandFactory = factory;
++  }
++
++  /**
++   * Return the command factory.
++   *
++   * @return {@link CommandFactory}
++   */
++  public CommandFactory getCommandFactory() {
++    return this.commandFactory;
++  }
++
++  /**
++   * Set the {@link Configuration}
++   *
++   * @param configuration {@link Configuration}
++   */
++  public void setConfiguration(Configuration configuration) {
++    this.configuration = configuration;
++  }
++
++  /**
++   * Return the {@link Configuration} return configuration {@link Configuration}
++   */
++  public Configuration getConfiguration() {
++    return this.configuration;
++  }
++}
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/find/Name.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/find/Name.java
+new file mode 100644
+index 0000000..88314c6
+--- /dev/null
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/find/Name.java
+@@ -0,0 +1,100 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.apache.hadoop.fs.shell.find;
++
++import java.io.IOException;
++import java.util.Deque;
++
++import org.apache.hadoop.fs.GlobPattern;
++import org.apache.hadoop.fs.shell.PathData;
++
++/**
++ * Implements the -name expression for the
++ * {@link org.apache.hadoop.fs.shell.find.Find} command.
++ */
++final class Name extends BaseExpression {
++  /** Registers this expression with the specified factory. */
++  public static void registerExpression(ExpressionFactory factory)
++      throws IOException {
++    factory.addClass(Name.class, "-name");
++    factory.addClass(Iname.class, "-iname");
++  }
++
++  private static final String[] USAGE = { "-name pattern", "-iname pattern" };
++  private static final String[] HELP = {
++      "Evaluates as true if the basename of the file matches the",
++      "pattern using standard file system globbing.",
++      "If -iname is used then the match is case insensitive." };
++  private GlobPattern globPattern;
++  private boolean caseSensitive = true;
++
++  /** Creates a case sensitive name expression. */
++  public Name() {
++    this(true);
++  }
++
++  /**
++   * Construct a Name {@link Expression} with a specified case sensitivity.
++   *
++   * @param caseSensitive if true the comparisons are case sensitive.
++   */
++  private Name(boolean caseSensitive) {
++    super();
++    setUsage(USAGE);
++    setHelp(HELP);
++    setCaseSensitive(caseSensitive);
++  }
++
++  private void setCaseSensitive(boolean caseSensitive) {
++    this.caseSensitive = caseSensitive;
++  }
++
++  @Override
++  public void addArguments(Deque<String> args) {
++    addArguments(args, 1);
++  }
++
++  @Override
++  public void prepare() throws IOException {
++    String argPattern = getArgument(1);
++    if (!caseSensitive) {
++      argPattern = argPattern.toLowerCase();
++    }
++    globPattern = new GlobPattern(argPattern);
++  }
++
++  @Override
++  public Result apply(PathData item, int depth) throws IOException {
++    String name = getPath(item).getName();
++    if (!caseSensitive) {
++      name = name.toLowerCase();
++    }
++    if (globPattern.matches(name)) {
++      return Result.PASS;
++    } else {
++      return Result.FAIL;
++    }
++  }
++
++  /** Case insensitive version of the -name expression. */
++  static class Iname extends FilterExpression {
++    public Iname() {
++      super(new Name(false));
++    }
++  }
++}
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/find/Print.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/find/Print.java
+new file mode 100644
+index 0000000..ae99779
+--- /dev/null
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/find/Print.java
+@@ -0,0 +1,76 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.apache.hadoop.fs.shell.find;
++
++import java.io.IOException;
++
++import org.apache.hadoop.fs.shell.PathData;
++
++/**
++ * Implements the -print expression for the
++ * {@link org.apache.hadoop.fs.shell.find.Find} command.
++ */
++final class Print extends BaseExpression {
++  /** Registers this expression with the specified factory. */
++  public static void registerExpression(ExpressionFactory factory)
++      throws IOException {
++    factory.addClass(Print.class, "-print");
++    factory.addClass(Print0.class, "-print0");
++  }
++
++  private static final String[] USAGE = { "-print", "-print0" };
++  private static final String[] HELP = {
++      "Always evaluates to true. Causes the current pathname to be",
++      "written to standard output followed by a newline. If the -print0",
++      "expression is used then an ASCII NULL character is appended rather",
++      "than a newline." };
++
++  private final String suffix;
++
++  public Print() {
++    this("\n");
++  }
++
++  /**
++   * Construct a Print {@link Expression} with the specified suffix.
++   */
++  private Print(String suffix) {
++    super();
++    setUsage(USAGE);
++    setHelp(HELP);
++    this.suffix = suffix;
++  }
++
++  @Override
++  public Result apply(PathData item, int depth) throws IOException {
++    getOptions().getOut().print(item.toString() + suffix);
++    return Result.PASS;
++  }
++
++  @Override
++  public boolean isAction() {
++    return true;
++  }
++
++  /** Implements the -print0 expression. */
++  final static class Print0 extends FilterExpression {
++    public Print0() {
++      super(new Print("\0"));
++    }
++  }
++}
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/find/Result.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/find/Result.java
+new file mode 100644
+index 0000000..2ef9cb4
+--- /dev/null
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/shell/find/Result.java
+@@ -0,0 +1,88 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.apache.hadoop.fs.shell.find;
++
++public final class Result {
++  /** Result indicating {@link Expression} processing should continue. */
++  public static final Result PASS = new Result(true, true);
++  /** Result indicating {@link Expression} processing should stop. */
++  public static final Result FAIL = new Result(false, true);
++  /**
++   * Result indicating {@link Expression} processing should not descend any more
++   * directories.
++   */
++  public static final Result STOP = new Result(true, false);
++  private boolean descend;
++  private boolean success;
++
++  private Result(boolean success, boolean recurse) {
++    this.success = success;
++    this.descend = recurse;
++  }
++
++  /** Should further directories be descended. */
++  public boolean isDescend() {
++    return this.descend;
++  }
++
++  /** Should processing continue. */
++  public boolean isPass() {
++    return this.success;
++  }
++
++  /** Returns the combination of this and another result. */
++  public Result combine(Result other) {
++    return new Result(this.isPass() && other.isPass(), this.isDescend()
++        && other.isDescend());
++  }
++
++  /** Negate this result. */
++  public Result negate() {
++    return new Result(!this.isPass(), this.isDescend());
++  }
++
++  @Override
++  public String toString() {
++    return "success=" + isPass() + "; recurse=" + isDescend();
++  }
++
++  @Override
++  public int hashCode() {
++    final int prime = 31;
++    int result = 1;
++    result = prime * result + (descend ? 1231 : 1237);
++    result = prime * result + (success ? 1231 : 1237);
++    return result;
++  }
++
++  @Override
++  public boolean equals(Object obj) {
++    if (this == obj)
++      return true;
++    if (obj == null)
++      return false;
++    if (getClass() != obj.getClass())
++      return false;
++    Result other = (Result) obj;
++    if (descend != other.descend)
++      return false;
++    if (success != other.success)
++      return false;
++    return true;
++  }
++}
+diff --git a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/shell/find/MockFileSystem.java b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/shell/find/MockFileSystem.java
+new file mode 100644
+index 0000000..44abd23
+--- /dev/null
++++ b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/shell/find/MockFileSystem.java
+@@ -0,0 +1,86 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.apache.hadoop.fs.shell.find;
++
++import static org.mockito.Mockito.mock;
++import static org.mockito.Mockito.reset;
++import static org.mockito.Mockito.when;
++
++import java.io.IOException;
++import java.net.URI;
++
++import org.apache.hadoop.conf.Configuration;
++import org.apache.hadoop.fs.FileStatus;
++import org.apache.hadoop.fs.FileSystem;
++import org.apache.hadoop.fs.FilterFileSystem;
++import org.apache.hadoop.fs.Path;
++
++/**
++ * A mock {@link FileSystem} for use with the {@link Find} unit tests. Usage:
++ * FileSystem mockFs = MockFileSystem.setup(); Methods in the mockFs can then be
++ * mocked out by the test script. The {@link Configuration} can be accessed by
++ * mockFs.getConf(); The following methods are fixed within the class: -
++ * {@link FileSystem#initialize(URI,Configuration)} blank stub -
++ * {@link FileSystem#makeQualified(Path)} returns the passed in {@link Path} -
++ * {@link FileSystem#getWorkingDirectory} returns new Path("/") -
++ * {@link FileSystem#resolvePath(Path)} returns the passed in {@link Path}
++ */
++class MockFileSystem extends FilterFileSystem {
++  private static FileSystem mockFs = null;
++
++  /** Setup and return the underlying {@link FileSystem} mock */
++  static FileSystem setup() throws IOException {
++    if (mockFs == null) {
++      mockFs = mock(FileSystem.class);
++    }
++    reset(mockFs);
++    Configuration conf = new Configuration();
++    conf.set("fs.defaultFS", "mockfs:///");
++    conf.setClass("fs.mockfs.impl", MockFileSystem.class, FileSystem.class);
++    when(mockFs.getConf()).thenReturn(conf);
++    return mockFs;
++  }
++
++  private MockFileSystem() {
++    super(mockFs);
++  }
++
++  @Override
++  public void initialize(URI uri, Configuration conf) {
++  }
++
++  @Override
++  public Path makeQualified(Path path) {
++    return path;
++  }
++
++  @Override
++  public FileStatus[] globStatus(Path pathPattern) throws IOException {
++    return fs.globStatus(pathPattern);
++  }
++
++  @Override
++  public Path getWorkingDirectory() {
++    return new Path("/");
++  }
++
++  @Override
++  public Path resolvePath(final Path p) throws IOException {
++    return p;
++  }
++}
+diff --git a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/shell/find/TestAnd.java b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/shell/find/TestAnd.java
+new file mode 100644
+index 0000000..d82a25e
+--- /dev/null
++++ b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/shell/find/TestAnd.java
+@@ -0,0 +1,263 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package org.apache.hadoop.fs.shell.find;
++
++import static org.junit.Assert.*;
++import static org.mockito.Mockito.*;
++
++import java.io.IOException;
++import java.util.Deque;
++import java.util.LinkedList;
++
++import org.apache.hadoop.fs.shell.PathData;
++import org.junit.Test;
++
++public class TestAnd {
++
++  // test all expressions passing
++  @Test(timeout = 1000)
++  public void testPass() throws IOException {
++    And and = new And();
++
++    PathData pathData = mock(PathData.class);
++
++    Expression first = mock(Expression.class);
++    when(first.apply(pathData, -1)).thenReturn(Result.PASS);
++
++    Expression second = mock(Expression.class);
++    when(second.apply(pathData, -1)).thenReturn(Result.PASS);
++
++    Deque<Expression> children = new LinkedList<Expression>();
++    children.add(second);
++    children.add(first);
++    and.addChildren(children);
++
++    assertEquals(Result.PASS, and.apply(pathData, -1));
++    verify(first).apply(pathData, -1);
++    verify(second).apply(pathData, -1);
++    verifyNoMoreInteractions(first);
++    verifyNoMoreInteractions(second);
++  }
++
++  // test the first expression failing
++  @Test(timeout = 1000)
++  public void testFailFirst() throws IOException {
++    And and = new And();
++
++    PathData pathData = mock(PathData.class);
++
++    Expression first = mock(Expression.class);
++    when(first.apply(pathData, -1)).thenReturn(Result.FAIL);
++
++    Expression second = mock(Expression.class);
++    when(second.apply(pathData, -1)).thenReturn(Result.PASS);
++
++    Deque<Expression> children = new LinkedList<Expression>();
++    children.add(second);
++    children.add(first);
++    and.addChildren(children);
++
++    assertEquals(Result.FAIL, and.apply(pathData, -1));
++    verify(first).apply(pathData, -1);
++    verifyNoMoreInteractions(first);
++    verifyNoMoreInteractions(second);
++  }
++
++  // test the second expression failing
++  @Test(timeout = 1000)
++  public void testFailSecond() throws IOException {
++    And and = new And();
++
++    PathData pathData = mock(PathData.class);
++
++    Expression first = mock(Expression.class);
++    when(first.apply(pathData, -1)).thenReturn(Result.PASS);
++
++    Expression second = mock(Expression.class);
++    when(second.apply(pathData, -1)).thenReturn(Result.FAIL);
++
++    Deque<Expression> children = new LinkedList<Expression>();
++    children.add(second);
++    children.add(first);
++    and.addChildren(children);
++
++    assertEquals(Result.FAIL, and.apply(pathData, -1));
++    verify(first).apply(pathData, -1);
++    verify(second).apply(pathData, -1);
++    verifyNoMoreInteractions(first);
++    verifyNoMoreInteractions(second);
++  }
++
++  // test both expressions failing
++  @Test(timeout = 1000)
++  public void testFailBoth() throws IOException {
++    And and = new And();
++
++    PathData pathData = mock(PathData.class);
++
++    Expression first = mock(Expression.class);
++    when(first.apply(pathData, -1)).thenReturn(Result.FAIL);
++
++    Expression second = mock(Expression.class);
++    when(second.apply(pathData, -1)).thenReturn(Result.FAIL);
++
++    Deque<Expression> children = new LinkedList<Expression>();
++    children.add(second);
++    children.add(first);
++    and.addChildren(children);
++
++    assertEquals(Result.FAIL, and.apply(pathData, -1));
++    verify(first).apply(pathData, -1);
++    verifyNoMoreInteractions(first);
++    verifyNoMoreInteractions(second);
++  }
++
++  // test the first expression stopping
++  @Test(timeout = 1000)
++  public void testStopFirst() throws IOException {
++    And and = new And();
++
++    PathData pathData = mock(PathData.class);
++
++    Expression first = mock(Expression.class);
++    when(first.apply(pathData, -1)).thenReturn(Result.STOP);
++
++    Expression second = mock(Expression.class);
++    when(second.apply(pathData, -1)).thenReturn(Result.PASS);
++
++    Deque<Expression> children = new LinkedList<Expression>();
++    children.add(second);
++    children.add(first);
++    and.addChildren(children);
++
++    assertEquals(Result.STOP, and.apply(pathData, -1));
++    verify(first).apply(pathData, -1);
++    verify(second).apply(pathData, -1);
++    verifyNoMoreInteractions(first);
++    verifyNoMoreInteractions(second);
++  }
++
++  // test the second expression stopping
++  @Test(timeout = 1000)
++  public void testStopSecond() throws IOException {
++    And and = new And();
++
++    PathData pathData = mock(PathData.class);
++
++    Expression first = mock(Expression.class);
++    when(first.apply(pathData, -1)).thenReturn(Result.PASS);
++
++    Expression second = mock(Expression.class);
++    when(second.apply(pathData, -1)).thenReturn(Result.STOP);
++
++    Deque<Expression> children = new LinkedList<Expression>();
++    children.add(second);
++    children.add(first);
++    and.addChildren(children);
++
++    assertEquals(Result.STOP, and.apply(pathData, -1));
++    verify(first).apply(pathData, -1);
++    verify(second).apply(pathData, -1);
++    verifyNoMoreInteractions(first);
++    verifyNoMoreInteractions(second);
++  }
++
++  // test first expression stopping and second failing
++  @Test(timeout = 1000)
++  public void testStopFail() throws IOException {
++    And and = new And();
++
++    PathData pathData = mock(PathData.class);
++
++    Expression first = mock(Expression.class);
++    when(first.apply(pathData, -1)).thenReturn(Result.STOP);
++
++    Expression second = mock(Expression.class);
++    when(second.apply(pathData, -1)).thenReturn(Result.FAIL);
++
++    Deque<Expression> children = new LinkedList<Expression>();
++    children.add(second);
++    children.add(first);
++    and.addChildren(children);
++
++    assertEquals(Result.STOP.combine(Result.FAIL), and.apply(pathData, -1));
++    verify(first).apply(pathData, -1);
++    verify(second).apply(pathData, -1);
++    verifyNoMoreInteractions(first);
++    verifyNoMoreInteractions(second);
++  }
++
++  // test setOptions is called on child
++  @Test(timeout = 1000)
++  public void testSetOptions() throws IOException {
++    And and = new And();
++    Expression first = mock(Expression.class);
++    Expression second = mock(Expression.class);
++
++    Deque<Expression> children = new LinkedList<Expression>();
++    children.add(second);
++    children.add(first);
++    and.addChildren(children);
++
++    FindOptions options = mock(FindOptions.class);
++    and.setOptions(options);
++    verify(first).setOptions(options);
++    verify(second).setOptions(options);
++    verifyNoMoreInteractions(first);
++    verifyNoMoreInteractions(second);
++  }
++
++  // test prepare is called on child
++  @Test(timeout = 1000)
++  public void testPrepare() throws IOException {
++    And and = new And();
++    Expression first = mock(Expression.class);
++    Expression second = mock(Expression.class);
++
++    Deque<Expression> children = new LinkedList<Expression>();
++    children.add(second);
++    children.add(first);
++    and.addChildren(children);
++
++    and.prepare();
++    verify(first).prepare();
++    verify(second).prepare();
++    verifyNoMoreInteractions(first);
++    verifyNoMoreInteractions(second);
++  }
++
++  // test finish is called on child
++  @Test(timeout = 1000)
++  public void testFinish() throws IOException {
++    And and = new And();
++    Expression first = mock(Expression.class);
++    Expression second = mock(Expression.class);
++
++    Deque<Expression> children = new LinkedList<Expression>();
++    children.add(second);
++    children.add(first);
++    and.addChildren(children);
++
++    and.finish();
++    verify(first).finish();
++    verify(second).finish();
++    verifyNoMoreInteractions(first);
++    verifyNoMoreInteractions(second);
++  }
++}
+diff --git a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/shell/find/TestFilterExpression.java b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/shell/find/TestFilterExpression.java
+new file mode 100644
+index 0000000..5986a06
+--- /dev/null
++++ b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/shell/find/TestFilterExpression.java
+@@ -0,0 +1,145 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.apache.hadoop.fs.shell.find;
++
++import static org.junit.Assert.*;
++import static org.mockito.Mockito.*;
++
++import java.io.IOException;
++import java.util.Deque;
++
++import org.apache.hadoop.fs.shell.PathData;
++
++import org.junit.Before;
++import org.junit.Test;
++
++public class TestFilterExpression {
++  private Expression expr;
++  private FilterExpression test;
++
++  @Before
++  public void setup() {
++    expr = mock(Expression.class);
++    test = new FilterExpression(expr) {
++    };
++  }
++
++  // test that the child expression is correctly set
++  @Test(timeout = 1000)
++  public void expression() throws IOException {
++    assertEquals(expr, test.expression);
++  }
++
++  // test that setOptions method is called
++  @Test(timeout = 1000)
++  public void setOptions() throws IOException {
++    FindOptions options = mock(FindOptions.class);
++    test.setOptions(options);
++    verify(expr).setOptions(options);
++    verifyNoMoreInteractions(expr);
++  }
++
++  // test the apply method is called and the result returned
++  @Test(timeout = 1000)
++  public void apply() throws IOException {
++    PathData item = mock(PathData.class);
++    when(expr.apply(item, -1)).thenReturn(Result.PASS).thenReturn(Result.FAIL);
++    assertEquals(Result.PASS, test.apply(item, -1));
++    assertEquals(Result.FAIL, test.apply(item, -1));
++    verify(expr, times(2)).apply(item, -1);
++    verifyNoMoreInteractions(expr);
++  }
++
++  // test that the finish method is called
++  @Test(timeout = 1000)
++  public void finish() throws IOException {
++    test.finish();
++    verify(expr).finish();
++    verifyNoMoreInteractions(expr);
++  }
++
++  // test that the getUsage method is called
++  @Test(timeout = 1000)
++  public void getUsage() {
++    String[] usage = new String[] { "Usage 1", "Usage 2", "Usage 3" };
++    when(expr.getUsage()).thenReturn(usage);
++    assertArrayEquals(usage, test.getUsage());
++    verify(expr).getUsage();
++    verifyNoMoreInteractions(expr);
++  }
++
++  // test that the getHelp method is called
++  @Test(timeout = 1000)
++  public void getHelp() {
++    String[] help = new String[] { "Help 1", "Help 2", "Help 3" };
++    when(expr.getHelp()).thenReturn(help);
++    assertArrayEquals(help, test.getHelp());
++    verify(expr).getHelp();
++    verifyNoMoreInteractions(expr);
++  }
++
++  // test that the isAction method is called
++  @Test(timeout = 1000)
++  public void isAction() {
++    when(expr.isAction()).thenReturn(true).thenReturn(false);
++    assertTrue(test.isAction());
++    assertFalse(test.isAction());
++    verify(expr, times(2)).isAction();
++    verifyNoMoreInteractions(expr);
++  }
++
++  // test that the isOperator method is called
++  @Test(timeout = 1000)
++  public void isOperator() {
++    when(expr.isAction()).thenReturn(true).thenReturn(false);
++    assertTrue(test.isAction());
++    assertFalse(test.isAction());
++    verify(expr, times(2)).isAction();
++    verifyNoMoreInteractions(expr);
++  }
++
++  // test that the getPrecedence method is called
++  @Test(timeout = 1000)
++  public void getPrecedence() {
++    int precedence = 12345;
++    when(expr.getPrecedence()).thenReturn(precedence);
++    assertEquals(precedence, test.getPrecedence());
++    verify(expr).getPrecedence();
++    verifyNoMoreInteractions(expr);
++  }
++
++  // test that the addChildren method is called
++  @Test(timeout = 1000)
++  public void addChildren() {
++    @SuppressWarnings("unchecked")
++    Deque<Expression> expressions = mock(Deque.class);
++    test.addChildren(expressions);
++    verify(expr).addChildren(expressions);
++    verifyNoMoreInteractions(expr);
++  }
++
++  // test that the addArguments method is called
++  @Test(timeout = 1000)
++  public void addArguments() {
++    @SuppressWarnings("unchecked")
++    Deque<String> args = mock(Deque.class);
++    test.addArguments(args);
++    verify(expr).addArguments(args);
++    verifyNoMoreInteractions(expr);
++  }
++}
+diff --git a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/shell/find/TestFind.java b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/shell/find/TestFind.java
+new file mode 100644
+index 0000000..7d79420
+--- /dev/null
++++ b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/shell/find/TestFind.java
+@@ -0,0 +1,900 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.apache.hadoop.fs.shell.find;
++
++import static org.junit.Assert.*;
++import static org.mockito.Mockito.*;
++import static org.mockito.Matchers.*;
++
++import java.io.IOException;
++import java.io.PrintStream;
++import java.util.Arrays;
++import java.util.Collections;
++import java.util.LinkedList;
++
++import org.apache.hadoop.conf.Configuration;
++import org.apache.hadoop.fs.FileStatus;
++import org.apache.hadoop.fs.FileSystem;
++import org.apache.hadoop.fs.Path;
++import org.apache.hadoop.fs.shell.PathData;
++import org.apache.hadoop.fs.shell.find.BaseExpression;
++import org.apache.hadoop.fs.shell.find.Expression;
++import org.apache.hadoop.fs.shell.find.Find;
++import org.apache.hadoop.fs.shell.find.FindOptions;
++import org.apache.hadoop.fs.shell.find.Result;
++import org.junit.Before;
++import org.junit.Test;
++import org.mockito.InOrder;
++
++public class TestFind {
++  private static FileSystem mockFs;
++  private static Configuration conf;
++
++  @Before
++  public void setup() throws IOException {
++    mockFs = MockFileSystem.setup();
++    conf = mockFs.getConf();
++  }
++  
++  // check follow link option is recognized
++  @Test(timeout = 1000)
++  public void processOptionsFollowLink() throws IOException {
++    Find find = new Find();
++    String args = "-L path";
++    find.processOptions(getArgs(args));
++    assertTrue(find.getOptions().isFollowLink());
++    assertFalse(find.getOptions().isFollowArgLink());
++  }
++
++  // check follow arg link option is recognized
++  @Test(timeout = 1000)
++  public void processOptionsFollowArgLink() throws IOException {
++    Find find = new Find();
++    String args = "-H path";
++    find.processOptions(getArgs(args));
++    assertFalse(find.getOptions().isFollowLink());
++    assertTrue(find.getOptions().isFollowArgLink());
++  }
++
++  // check follow arg link option is recognized
++  @Test(timeout = 1000)
++  public void processOptionsFollowLinkFollowArgLink() throws IOException {
++    Find find = new Find();
++    String args = "-L -H path";
++    find.processOptions(getArgs(args));
++    assertTrue(find.getOptions().isFollowLink());
++    
++    // follow link option takes precedence over follow arg link
++    assertFalse(find.getOptions().isFollowArgLink());
++  }
++  
++  // check options and expressions are stripped from args leaving paths
++  @Test(timeout = 1000)
++  public void processOptionsExpression() throws IOException {
++    Find find = new Find();
++    find.setConf(conf);
++
++    String paths = "path1 path2 path3";
++    String args = "-L -H " + paths + " -print -name test";
++    LinkedList<String> argsList = getArgs(args);
++    find.processOptions(argsList);
++    LinkedList<String> pathList = getArgs(paths);
++    assertEquals(pathList, argsList);
++  }
++
++  // check print is used as the default expression
++  @Test(timeout = 1000)
++  public void processOptionsNoExpression() throws IOException {
++    Find find = new Find();
++    find.setConf(conf);
++    String args = "path";
++    String expected = "Print(;)";
++    find.processOptions(getArgs(args));
++    Expression expression = find.getRootExpression();
++    assertEquals(expected, expression.toString());
++  }
++
++  // check unknown options are rejected
++  @Test(timeout = 1000)
++  public void processOptionsUnknown() throws IOException {
++    Find find = new Find();
++    find.setConf(conf);
++    String args = "path -unknown";
++    try {
++      find.processOptions(getArgs(args));
++      fail("Unknown expression not caught");
++    } catch (IOException e) {
++    }
++  }
++
++  // check unknown options are rejected when mixed with known options
++  @Test(timeout = 1000)
++  public void processOptionsKnownUnknown() throws IOException {
++    Find find = new Find();
++    find.setConf(conf);
++    String args = "path -print -unknown -print";
++    try {
++      find.processOptions(getArgs(args));
++      fail("Unknown expression not caught");
++    } catch (IOException e) {
++    }
++  }
++
++  // check no path defaults to current working directory
++  @Test(timeout = 1000)
++  public void processOptionsNoPath() throws IOException {
++    Find find = new Find();
++    find.setConf(conf);
++    String args = "-print";
++    
++    LinkedList<String> argsList = getArgs(args);
++    find.processOptions(argsList);
++    assertEquals(Collections.singletonList(Path.CUR_DIR), argsList);
++  }
++
++  // check -name is handled correctly
++  @Test(timeout = 1000)
++  public void processOptionsName() throws IOException {
++    Find find = new Find();
++    find.setConf(conf);
++    String args = "path -name namemask";
++    String expected = "And(;Name(namemask;),Print(;))";
++    find.processOptions(getArgs(args));
++    Expression expression = find.getRootExpression();
++    assertEquals(expected, expression.toString());
++  }
++
++  // check -iname is handled correctly
++  @Test(timeout = 1000)
++  public void processOptionsIname() throws IOException {
++    Find find = new Find();
++    find.setConf(conf);
++    String args = "path -iname namemask";
++    String expected = "And(;Iname-Name(namemask;),Print(;))";
++    find.processOptions(getArgs(args));
++    Expression expression = find.getRootExpression();
++    assertEquals(expected, expression.toString());
++  }
++
++  // check -print is handled correctly
++  @Test(timeout = 1000)
++  public void processOptionsPrint() throws IOException {
++    Find find = new Find();
++    find.setConf(conf);
++    String args = "path -print";
++    String expected = "Print(;)";
++    find.processOptions(getArgs(args));
++    Expression expression = find.getRootExpression();
++    assertEquals(expected, expression.toString());
++  }
++
++  // check -print0 is handled correctly
++  @Test(timeout = 1000)
++  public void processOptionsPrint0() throws IOException {
++    Find find = new Find();
++    find.setConf(conf);
++    String args = "path -print0";
++    String expected = "Print0-Print(;)";
++    find.processOptions(getArgs(args));
++    Expression expression = find.getRootExpression();
++    assertEquals(expected, expression.toString());
++  }
++
++  // check an implicit and is handled correctly
++  @Test(timeout = 1000)
++  public void processOptionsNoop() throws IOException {
++    Find find = new Find();
++    find.setConf(conf);
++
++    String args = "path -name one -name two -print";
++    String expected = "And(;And(;Name(one;),Name(two;)),Print(;))";
++    find.processOptions(getArgs(args));
++    Expression expression = find.getRootExpression();
++    assertEquals(expected, expression.toString());
++  }
++
++  // check -a is handled correctly
++  @Test(timeout = 1000)
++  public void processOptionsA() throws IOException {
++    Find find = new Find();
++    find.setConf(conf);
++
++    String args = "path -name one -a -name two -a -print";
++    String expected = "And(;And(;Name(one;),Name(two;)),Print(;))";
++    find.processOptions(getArgs(args));
++    Expression expression = find.getRootExpression();
++    assertEquals(expected, expression.toString());
++  }
++
++  // check -and is handled correctly
++  @Test(timeout = 1000)
++  public void processOptionsAnd() throws IOException {
++    Find find = new Find();
++    find.setConf(conf);
++
++    String args = "path -name one -and -name two -and -print";
++    String expected = "And(;And(;Name(one;),Name(two;)),Print(;))";
++    find.processOptions(getArgs(args));
++    Expression expression = find.getRootExpression();
++    assertEquals(expected, expression.toString());
++  }
++
++  // check expressions are called in the correct order
++  @Test(timeout = 1000)
++  public void processArguments() throws IOException {
++    LinkedList<PathData> items = createDirectories();
++
++    Find find = new Find();
++    find.setConf(conf);
++    PrintStream out = mock(PrintStream.class);
++    find.getOptions().setOut(out);
++    PrintStream err = mock(PrintStream.class);
++    find.getOptions().setErr(err);
++    Expression expr = mock(Expression.class);
++    when(expr.apply((PathData) any(), anyInt())).thenReturn(Result.PASS);
++    FileStatusChecker fsCheck = mock(FileStatusChecker.class);
++    Expression test = new TestExpression(expr, fsCheck);
++    find.setRootExpression(test);
++    find.processArguments(items);
++
++    InOrder inOrder = inOrder(expr);
++    inOrder.verify(expr).setOptions(find.getOptions());
++    inOrder.verify(expr).prepare();
++    inOrder.verify(expr).apply(item1, 0);
++    inOrder.verify(expr).apply(item1a, 1);
++    inOrder.verify(expr).apply(item1aa, 2);
++    inOrder.verify(expr).apply(item1b, 1);
++    inOrder.verify(expr).apply(item2, 0);
++    inOrder.verify(expr).apply(item3, 0);
++    inOrder.verify(expr).apply(item4, 0);
++    inOrder.verify(expr).apply(item5, 0);
++    inOrder.verify(expr).apply(item5a, 1);
++    inOrder.verify(expr).apply(item5b, 1);
++    inOrder.verify(expr).apply(item5c, 1);
++    inOrder.verify(expr).apply(item5ca, 2);
++    inOrder.verify(expr).apply(item5d, 1);
++    inOrder.verify(expr).apply(item5e, 1);
++    inOrder.verify(expr).finish();
++    verifyNoMoreInteractions(expr);
++
++    InOrder inOrderFsCheck = inOrder(fsCheck);
++    inOrderFsCheck.verify(fsCheck).check(item1.stat);
++    inOrderFsCheck.verify(fsCheck).check(item1a.stat);
++    inOrderFsCheck.verify(fsCheck).check(item1aa.stat);
++    inOrderFsCheck.verify(fsCheck).check(item1b.stat);
++    inOrderFsCheck.verify(fsCheck).check(item2.stat);
++    inOrderFsCheck.verify(fsCheck).check(item3.stat);
++    inOrderFsCheck.verify(fsCheck).check(item4.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5a.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5b.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5c.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5ca.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5d.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5e.stat);
++    verifyNoMoreInteractions(fsCheck);
++
++    verifyNoMoreInteractions(out);
++    verifyNoMoreInteractions(err);
++  }
++
++  // check that directories are descended correctly when -depth is specified
++  @Test(timeout = 1000)
++  public void processArgumentsDepthFirst() throws IOException {
++    LinkedList<PathData> items = createDirectories();
++
++    Find find = new Find();
++    find.getOptions().setDepthFirst(true);
++    find.setConf(conf);
++    PrintStream out = mock(PrintStream.class);
++    find.getOptions().setOut(out);
++    PrintStream err = mock(PrintStream.class);
++    find.getOptions().setErr(err);
++    Expression expr = mock(Expression.class);
++    when(expr.apply((PathData) any(), anyInt())).thenReturn(Result.PASS);
++    FileStatusChecker fsCheck = mock(FileStatusChecker.class);
++    Expression test = new TestExpression(expr, fsCheck);
++    find.setRootExpression(test);
++    find.processArguments(items);
++
++    InOrder inOrder = inOrder(expr);
++    inOrder.verify(expr).setOptions(find.getOptions());
++    inOrder.verify(expr).prepare();
++    inOrder.verify(expr).apply(item1aa, 2);
++    inOrder.verify(expr).apply(item1a, 1);
++    inOrder.verify(expr).apply(item1b, 1);
++    inOrder.verify(expr).apply(item1, 0);
++    inOrder.verify(expr).apply(item2, 0);
++    inOrder.verify(expr).apply(item3, 0);
++    inOrder.verify(expr).apply(item4, 0);
++    inOrder.verify(expr).apply(item5a, 1);
++    inOrder.verify(expr).apply(item5b, 1);
++    inOrder.verify(expr).apply(item5ca, 2);
++    inOrder.verify(expr).apply(item5c, 1);
++    inOrder.verify(expr).apply(item5d, 1);
++    inOrder.verify(expr).apply(item5e, 1);
++    inOrder.verify(expr).apply(item5, 0);
++    inOrder.verify(expr).finish();
++    verifyNoMoreInteractions(expr);
++
++    InOrder inOrderFsCheck = inOrder(fsCheck);
++    inOrderFsCheck.verify(fsCheck).check(item1aa.stat);
++    inOrderFsCheck.verify(fsCheck).check(item1a.stat);
++    inOrderFsCheck.verify(fsCheck).check(item1b.stat);
++    inOrderFsCheck.verify(fsCheck).check(item1.stat);
++    inOrderFsCheck.verify(fsCheck).check(item2.stat);
++    inOrderFsCheck.verify(fsCheck).check(item3.stat);
++    inOrderFsCheck.verify(fsCheck).check(item4.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5a.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5b.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5ca.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5c.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5d.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5e.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5.stat);
++    verifyNoMoreInteractions(fsCheck);
++
++    verifyNoMoreInteractions(out);
++    verifyNoMoreInteractions(err);
++  }
++
++  // check symlinks given as path arguments are processed correctly with the
++  // follow arg option set
++  @Test(timeout = 1000)
++  public void processArgumentsOptionFollowArg() throws IOException {
++    LinkedList<PathData> items = createDirectories();
++
++    Find find = new Find();
++    find.getOptions().setFollowArgLink(true);
++    find.setConf(conf);
++    PrintStream out = mock(PrintStream.class);
++    find.getOptions().setOut(out);
++    PrintStream err = mock(PrintStream.class);
++    find.getOptions().setErr(err);
++    Expression expr = mock(Expression.class);
++    when(expr.apply((PathData) any(), anyInt())).thenReturn(Result.PASS);
++    FileStatusChecker fsCheck = mock(FileStatusChecker.class);
++    Expression test = new TestExpression(expr, fsCheck);
++    find.setRootExpression(test);
++    find.processArguments(items);
++
++    InOrder inOrder = inOrder(expr);
++    inOrder.verify(expr).setOptions(find.getOptions());
++    inOrder.verify(expr).prepare();
++    inOrder.verify(expr).apply(item1, 0);
++    inOrder.verify(expr).apply(item1a, 1);
++    inOrder.verify(expr).apply(item1aa, 2);
++    inOrder.verify(expr).apply(item1b, 1);
++    inOrder.verify(expr).apply(item2, 0);
++    inOrder.verify(expr).apply(item3, 0);
++    inOrder.verify(expr).apply(item4, 0);
++    inOrder.verify(expr).apply(item5, 0);
++    inOrder.verify(expr).apply(item5a, 1);
++    inOrder.verify(expr).apply(item5b, 1);
++    inOrder.verify(expr).apply(item5c, 1);
++    inOrder.verify(expr).apply(item5ca, 2);
++    inOrder.verify(expr).apply(item5d, 1);
++    inOrder.verify(expr).apply(item5e, 1);
++    inOrder.verify(expr).finish();
++    verifyNoMoreInteractions(expr);
++
++    InOrder inOrderFsCheck = inOrder(fsCheck);
++    inOrderFsCheck.verify(fsCheck).check(item1.stat);
++    inOrderFsCheck.verify(fsCheck).check(item1a.stat);
++    inOrderFsCheck.verify(fsCheck).check(item1aa.stat);
++    inOrderFsCheck.verify(fsCheck).check(item1b.stat);
++    inOrderFsCheck.verify(fsCheck).check(item2.stat);
++    inOrderFsCheck.verify(fsCheck, times(2)).check(item3.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5a.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5b.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5c.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5ca.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5d.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5e.stat);
++    verifyNoMoreInteractions(fsCheck);
++
++    verifyNoMoreInteractions(out);
++    verifyNoMoreInteractions(err);
++  }
++
++  // check symlinks given as path arguments are processed correctly with the
++  // follow option
++  @Test(timeout = 1000)
++  public void processArgumentsOptionFollow() throws IOException {
++    LinkedList<PathData> items = createDirectories();
++
++    Find find = new Find();
++    find.getOptions().setFollowLink(true);
++    find.setConf(conf);
++    PrintStream out = mock(PrintStream.class);
++    find.getOptions().setOut(out);
++    PrintStream err = mock(PrintStream.class);
++    find.getOptions().setErr(err);
++    Expression expr = mock(Expression.class);
++    when(expr.apply((PathData) any(), anyInt())).thenReturn(Result.PASS);
++    FileStatusChecker fsCheck = mock(FileStatusChecker.class);
++    Expression test = new TestExpression(expr, fsCheck);
++    find.setRootExpression(test);
++    find.processArguments(items);
++
++    InOrder inOrder = inOrder(expr);
++    inOrder.verify(expr).setOptions(find.getOptions());
++    inOrder.verify(expr).prepare();
++    inOrder.verify(expr).apply(item1, 0);
++    inOrder.verify(expr).apply(item1a, 1);
++    inOrder.verify(expr).apply(item1aa, 2);
++    inOrder.verify(expr).apply(item1b, 1);
++    inOrder.verify(expr).apply(item2, 0);
++    inOrder.verify(expr).apply(item3, 0);
++    inOrder.verify(expr).apply(item4, 0);
++    inOrder.verify(expr).apply(item5, 0);
++    inOrder.verify(expr).apply(item5a, 1);
++    inOrder.verify(expr).apply(item5b, 1); // triggers infinite loop message
++    inOrder.verify(expr).apply(item5c, 1);
++    inOrder.verify(expr).apply(item5ca, 2);
++    inOrder.verify(expr).apply(item5d, 1);
++    inOrder.verify(expr).apply(item5ca, 2); // following item5d symlink
++    inOrder.verify(expr).apply(item5e, 1);
++    inOrder.verify(expr).finish();
++    verifyNoMoreInteractions(expr);
++
++    InOrder inOrderFsCheck = inOrder(fsCheck);
++    inOrderFsCheck.verify(fsCheck).check(item1.stat);
++    inOrderFsCheck.verify(fsCheck).check(item1a.stat);
++    inOrderFsCheck.verify(fsCheck).check(item1aa.stat);
++    inOrderFsCheck.verify(fsCheck).check(item1b.stat);
++    inOrderFsCheck.verify(fsCheck).check(item2.stat);
++    inOrderFsCheck.verify(fsCheck, times(2)).check(item3.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5.stat);
++    inOrderFsCheck.verify(fsCheck).check(item1b.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5c.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5ca.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5c.stat);
++    inOrderFsCheck.verify(fsCheck, times(2)).check(item5ca.stat);
++    verifyNoMoreInteractions(fsCheck);
++
++    verifyNoMoreInteractions(out);
++    verify(err).println(
++        "Infinite loop ignored: " + item5b.toString() + " -> "
++            + item5.toString());
++    verifyNoMoreInteractions(err);
++  }
++
++  // check minimum depth is handledfollowLink
++  @Test(timeout = 1000)
++  public void processArgumentsMinDepth() throws IOException {
++    LinkedList<PathData> items = createDirectories();
++
++    Find find = new Find();
++    find.getOptions().setMinDepth(1);
++    find.setConf(conf);
++    PrintStream out = mock(PrintStream.class);
++    find.getOptions().setOut(out);
++    PrintStream err = mock(PrintStream.class);
++    find.getOptions().setErr(err);
++    Expression expr = mock(Expression.class);
++    when(expr.apply((PathData) any(), anyInt())).thenReturn(Result.PASS);
++    FileStatusChecker fsCheck = mock(FileStatusChecker.class);
++    Expression test = new TestExpression(expr, fsCheck);
++    find.setRootExpression(test);
++    find.processArguments(items);
++
++    InOrder inOrder = inOrder(expr);
++    inOrder.verify(expr).setOptions(find.getOptions());
++    inOrder.verify(expr).prepare();
++    inOrder.verify(expr).apply(item1a, 1);
++    inOrder.verify(expr).apply(item1aa, 2);
++    inOrder.verify(expr).apply(item1b, 1);
++    inOrder.verify(expr).apply(item5a, 1);
++    inOrder.verify(expr).apply(item5b, 1);
++    inOrder.verify(expr).apply(item5c, 1);
++    inOrder.verify(expr).apply(item5ca, 2);
++    inOrder.verify(expr).apply(item5d, 1);
++    inOrder.verify(expr).apply(item5e, 1);
++    inOrder.verify(expr).finish();
++    verifyNoMoreInteractions(expr);
++
++    InOrder inOrderFsCheck = inOrder(fsCheck);
++    inOrderFsCheck.verify(fsCheck).check(item1a.stat);
++    inOrderFsCheck.verify(fsCheck).check(item1aa.stat);
++    inOrderFsCheck.verify(fsCheck).check(item1b.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5a.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5b.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5c.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5ca.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5d.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5e.stat);
++    verifyNoMoreInteractions(fsCheck);
++
++    verifyNoMoreInteractions(out);
++    verifyNoMoreInteractions(err);
++  }
++
++  // check maximum depth is handled
++  @Test(timeout = 1000)
++  public void processArgumentsMaxDepth() throws IOException {
++    LinkedList<PathData> items = createDirectories();
++
++    Find find = new Find();
++    find.getOptions().setMaxDepth(1);
++    find.setConf(conf);
++    PrintStream out = mock(PrintStream.class);
++    find.getOptions().setOut(out);
++    PrintStream err = mock(PrintStream.class);
++    find.getOptions().setErr(err);
++    Expression expr = mock(Expression.class);
++    when(expr.apply((PathData) any(), anyInt())).thenReturn(Result.PASS);
++    FileStatusChecker fsCheck = mock(FileStatusChecker.class);
++    Expression test = new TestExpression(expr, fsCheck);
++    find.setRootExpression(test);
++    find.processArguments(items);
++
++    InOrder inOrder = inOrder(expr);
++    inOrder.verify(expr).setOptions(find.getOptions());
++    inOrder.verify(expr).prepare();
++    inOrder.verify(expr).apply(item1, 0);
++    inOrder.verify(expr).apply(item1a, 1);
++    inOrder.verify(expr).apply(item1b, 1);
++    inOrder.verify(expr).apply(item2, 0);
++    inOrder.verify(expr).apply(item3, 0);
++    inOrder.verify(expr).apply(item4, 0);
++    inOrder.verify(expr).apply(item5, 0);
++    inOrder.verify(expr).apply(item5a, 1);
++    inOrder.verify(expr).apply(item5b, 1);
++    inOrder.verify(expr).apply(item5c, 1);
++    inOrder.verify(expr).apply(item5d, 1);
++    inOrder.verify(expr).apply(item5e, 1);
++    inOrder.verify(expr).finish();
++    verifyNoMoreInteractions(expr);
++
++    InOrder inOrderFsCheck = inOrder(fsCheck);
++    inOrderFsCheck.verify(fsCheck).check(item1.stat);
++    inOrderFsCheck.verify(fsCheck).check(item1a.stat);
++    inOrderFsCheck.verify(fsCheck).check(item1b.stat);
++    inOrderFsCheck.verify(fsCheck).check(item2.stat);
++    inOrderFsCheck.verify(fsCheck).check(item3.stat);
++    inOrderFsCheck.verify(fsCheck).check(item4.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5a.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5b.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5c.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5d.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5e.stat);
++    verifyNoMoreInteractions(fsCheck);
++
++    verifyNoMoreInteractions(out);
++    verifyNoMoreInteractions(err);
++  }
++
++  // check min depth is handled when -depth is specified
++  @Test(timeout = 1000)
++  public void processArgumentsDepthFirstMinDepth() throws IOException {
++    LinkedList<PathData> items = createDirectories();
++
++    Find find = new Find();
++    find.getOptions().setDepthFirst(true);
++    find.getOptions().setMinDepth(1);
++    find.setConf(conf);
++    PrintStream out = mock(PrintStream.class);
++    find.getOptions().setOut(out);
++    PrintStream err = mock(PrintStream.class);
++    find.getOptions().setErr(err);
++    Expression expr = mock(Expression.class);
++    when(expr.apply((PathData) any(), anyInt())).thenReturn(Result.PASS);
++    FileStatusChecker fsCheck = mock(FileStatusChecker.class);
++    Expression test = new TestExpression(expr, fsCheck);
++    find.setRootExpression(test);
++    find.processArguments(items);
++
++    InOrder inOrder = inOrder(expr);
++    inOrder.verify(expr).setOptions(find.getOptions());
++    inOrder.verify(expr).prepare();
++    inOrder.verify(expr).apply(item1aa, 2);
++    inOrder.verify(expr).apply(item1a, 1);
++    inOrder.verify(expr).apply(item1b, 1);
++    inOrder.verify(expr).apply(item5a, 1);
++    inOrder.verify(expr).apply(item5b, 1);
++    inOrder.verify(expr).apply(item5ca, 2);
++    inOrder.verify(expr).apply(item5c, 1);
++    inOrder.verify(expr).apply(item5d, 1);
++    inOrder.verify(expr).apply(item5e, 1);
++    inOrder.verify(expr).finish();
++    verifyNoMoreInteractions(expr);
++
++    InOrder inOrderFsCheck = inOrder(fsCheck);
++    inOrderFsCheck.verify(fsCheck).check(item1aa.stat);
++    inOrderFsCheck.verify(fsCheck).check(item1a.stat);
++    inOrderFsCheck.verify(fsCheck).check(item1b.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5a.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5b.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5ca.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5c.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5d.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5e.stat);
++    verifyNoMoreInteractions(fsCheck);
++
++    verifyNoMoreInteractions(out);
++    verifyNoMoreInteractions(err);
++  }
++
++  // check max depth is handled when -depth is specified
++  @Test(timeout = 1000)
++  public void processArgumentsDepthFirstMaxDepth() throws IOException {
++    LinkedList<PathData> items = createDirectories();
++
++    Find find = new Find();
++    find.getOptions().setDepthFirst(true);
++    find.getOptions().setMaxDepth(1);
++    find.setConf(conf);
++    PrintStream out = mock(PrintStream.class);
++    find.getOptions().setOut(out);
++    PrintStream err = mock(PrintStream.class);
++    find.getOptions().setErr(err);
++    Expression expr = mock(Expression.class);
++    when(expr.apply((PathData) any(), anyInt())).thenReturn(Result.PASS);
++    FileStatusChecker fsCheck = mock(FileStatusChecker.class);
++    Expression test = new TestExpression(expr, fsCheck);
++    find.setRootExpression(test);
++    find.processArguments(items);
++
++    InOrder inOrder = inOrder(expr);
++    inOrder.verify(expr).setOptions(find.getOptions());
++    inOrder.verify(expr).prepare();
++    inOrder.verify(expr).apply(item1a, 1);
++    inOrder.verify(expr).apply(item1b, 1);
++    inOrder.verify(expr).apply(item1, 0);
++    inOrder.verify(expr).apply(item2, 0);
++    inOrder.verify(expr).apply(item3, 0);
++    inOrder.verify(expr).apply(item4, 0);
++    inOrder.verify(expr).apply(item5a, 1);
++    inOrder.verify(expr).apply(item5b, 1);
++    inOrder.verify(expr).apply(item5c, 1);
++    inOrder.verify(expr).apply(item5d, 1);
++    inOrder.verify(expr).apply(item5e, 1);
++    inOrder.verify(expr).apply(item5, 0);
++    inOrder.verify(expr).finish();
++    verifyNoMoreInteractions(expr);
++
++    InOrder inOrderFsCheck = inOrder(fsCheck);
++    inOrderFsCheck.verify(fsCheck).check(item1a.stat);
++    inOrderFsCheck.verify(fsCheck).check(item1b.stat);
++    inOrderFsCheck.verify(fsCheck).check(item1.stat);
++    inOrderFsCheck.verify(fsCheck).check(item2.stat);
++    inOrderFsCheck.verify(fsCheck).check(item3.stat);
++    inOrderFsCheck.verify(fsCheck).check(item4.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5a.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5b.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5c.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5d.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5e.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5.stat);
++    verifyNoMoreInteractions(fsCheck);
++
++    verifyNoMoreInteractions(out);
++    verifyNoMoreInteractions(err);
++  }
++
++  // check expressions are called in the correct order
++  @Test(timeout = 1000)
++  public void processArgumentsNoDescend() throws IOException {
++    LinkedList<PathData> items = createDirectories();
++
++    Find find = new Find();
++    find.setConf(conf);
++    PrintStream out = mock(PrintStream.class);
++    find.getOptions().setOut(out);
++    PrintStream err = mock(PrintStream.class);
++    find.getOptions().setErr(err);
++    Expression expr = mock(Expression.class);
++    when(expr.apply((PathData) any(), anyInt())).thenReturn(Result.PASS);
++    when(expr.apply(eq(item1a), anyInt())).thenReturn(Result.STOP);
++    FileStatusChecker fsCheck = mock(FileStatusChecker.class);
++    Expression test = new TestExpression(expr, fsCheck);
++    find.setRootExpression(test);
++    find.processArguments(items);
++
++    InOrder inOrder = inOrder(expr);
++    inOrder.verify(expr).setOptions(find.getOptions());
++    inOrder.verify(expr).prepare();
++    inOrder.verify(expr).apply(item1, 0);
++    inOrder.verify(expr).apply(item1a, 1);
++    inOrder.verify(expr).apply(item1b, 1);
++    inOrder.verify(expr).apply(item2, 0);
++    inOrder.verify(expr).apply(item3, 0);
++    inOrder.verify(expr).apply(item4, 0);
++    inOrder.verify(expr).apply(item5, 0);
++    inOrder.verify(expr).apply(item5a, 1);
++    inOrder.verify(expr).apply(item5b, 1);
++    inOrder.verify(expr).apply(item5c, 1);
++    inOrder.verify(expr).apply(item5ca, 2);
++    inOrder.verify(expr).apply(item5d, 1);
++    inOrder.verify(expr).apply(item5e, 1);
++    inOrder.verify(expr).finish();
++    verifyNoMoreInteractions(expr);
++
++    InOrder inOrderFsCheck = inOrder(fsCheck);
++    inOrderFsCheck.verify(fsCheck).check(item1.stat);
++    inOrderFsCheck.verify(fsCheck).check(item1a.stat);
++    inOrderFsCheck.verify(fsCheck).check(item1b.stat);
++    inOrderFsCheck.verify(fsCheck).check(item2.stat);
++    inOrderFsCheck.verify(fsCheck).check(item3.stat);
++    inOrderFsCheck.verify(fsCheck).check(item4.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5a.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5b.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5c.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5ca.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5d.stat);
++    inOrderFsCheck.verify(fsCheck).check(item5e.stat);
++    verifyNoMoreInteractions(fsCheck);
++
++    verifyNoMoreInteractions(out);
++    verifyNoMoreInteractions(err);
++  }
++
++  private interface FileStatusChecker {
++    public void check(FileStatus fileStatus);
++  }
++
++  private class TestExpression extends BaseExpression implements Expression {
++    private Expression expr;
++    private FileStatusChecker checker;
++    public TestExpression(Expression expr, FileStatusChecker checker) {
++      this.expr = expr;
++      this.checker = checker;
++    }
++    @Override
++    public Result apply(PathData item, int depth) throws IOException {
++      FileStatus fileStatus = getFileStatus(item, depth);
++      checker.check(fileStatus);
++      return expr.apply(item, depth);
++    }
++    @Override
++    public void setOptions(FindOptions options) throws IOException {
++      super.setOptions(options);
++      expr.setOptions(options);
++    }
++    @Override
++    public void prepare() throws IOException {
++      expr.prepare();
++    }
++    @Override
++    public void finish() throws IOException {
++      expr.finish();
++    }
++  }
++
++  // creates a directory structure for traversal
++  // item1 (directory)
++  // \- item1a (directory)
++  //    \- item1aa (file)
++  // \- item1b (file)
++  // item2 (directory)
++  // item3 (file)
++  // item4 (link) -> item3
++  // item5 (directory)
++  // \- item5a (link) -> item1b
++  // \- item5b (link) -> item5 (infinite loop)
++  // \- item5c (directory)
++  //    \- item5ca (file)
++  // \- item5d (link) -> item5c
++  // \- item5e (link) -> item5c/item5ca
++  private PathData item1 = null;
++  private PathData item1a = null;
++  private PathData item1aa = null;
++  private PathData item1b = null;
++  private PathData item2 = null;
++  private PathData item3 = null;
++  private PathData item4 = null;
++  private PathData item5 = null;
++  private PathData item5a = null;
++  private PathData item5b = null;
++  private PathData item5c = null;
++  private PathData item5ca = null;
++  private PathData item5d = null;
++  private PathData item5e = null;
++
++  private LinkedList<PathData> createDirectories() throws IOException {
++    item1 = createPathData("item1");
++    item1a = createPathData("item1/item1a");
++    item1aa = createPathData("item1/item1a/item1aa");
++    item1b = createPathData("item1/item1b");
++    item2 = createPathData("item2");
++    item3 = createPathData("item3");
++    item4 = createPathData("item4");
++    item5 = createPathData("item5");
++    item5a = createPathData("item5/item5a");
++    item5b = createPathData("item5/item5b");
++    item5c = createPathData("item5/item5c");
++    item5ca = createPathData("item5/item5c/item5ca");
++    item5d = createPathData("item5/item5d");
++    item5e = createPathData("item5/item5e");
++
++    LinkedList<PathData> args = new LinkedList<PathData>();
++
++    when(item1.stat.isDirectory()).thenReturn(true);
++    when(item1a.stat.isDirectory()).thenReturn(true);
++    when(item1aa.stat.isDirectory()).thenReturn(false);
++    when(item1b.stat.isDirectory()).thenReturn(false);
++    when(item2.stat.isDirectory()).thenReturn(true);
++    when(item3.stat.isDirectory()).thenReturn(false);
++    when(item4.stat.isDirectory()).thenReturn(false);
++    when(item5.stat.isDirectory()).thenReturn(true);
++    when(item5a.stat.isDirectory()).thenReturn(false);
++    when(item5b.stat.isDirectory()).thenReturn(false);
++    when(item5c.stat.isDirectory()).thenReturn(true);
++    when(item5ca.stat.isDirectory()).thenReturn(false);
++    when(item5d.stat.isDirectory()).thenReturn(false);
++    when(item5e.stat.isDirectory()).thenReturn(false);
++
++    when(mockFs.listStatus(eq(item1.path))).thenReturn(
++        new FileStatus[] { item1a.stat, item1b.stat });
++    when(mockFs.listStatus(eq(item1a.path))).thenReturn(
++        new FileStatus[] { item1aa.stat });
++    when(mockFs.listStatus(eq(item2.path))).thenReturn(new FileStatus[0]);
++    when(mockFs.listStatus(eq(item5.path))).thenReturn(
++        new FileStatus[] { item5a.stat, item5b.stat, item5c.stat, item5d.stat,
++            item5e.stat });
++    when(mockFs.listStatus(eq(item5c.path))).thenReturn(
++        new FileStatus[] { item5ca.stat });
++
++    when(item1.stat.isSymlink()).thenReturn(false);
++    when(item1a.stat.isSymlink()).thenReturn(false);
++    when(item1aa.stat.isSymlink()).thenReturn(false);
++    when(item1b.stat.isSymlink()).thenReturn(false);
++    when(item2.stat.isSymlink()).thenReturn(false);
++    when(item3.stat.isSymlink()).thenReturn(false);
++    when(item4.stat.isSymlink()).thenReturn(true);
++    when(item5.stat.isSymlink()).thenReturn(false);
++    when(item5a.stat.isSymlink()).thenReturn(true);
++    when(item5b.stat.isSymlink()).thenReturn(true);
++    when(item5d.stat.isSymlink()).thenReturn(true);
++    when(item5e.stat.isSymlink()).thenReturn(true);
++
++    when(item4.stat.getSymlink()).thenReturn(item3.path);
++    when(item5a.stat.getSymlink()).thenReturn(item1b.path);
++    when(item5b.stat.getSymlink()).thenReturn(item5.path);
++    when(item5d.stat.getSymlink()).thenReturn(item5c.path);
++    when(item5e.stat.getSymlink()).thenReturn(item5ca.path);
++
++    args.add(item1);
++    args.add(item2);
++    args.add(item3);
++    args.add(item4);
++    args.add(item5);
++
++    return args;
++  }
++
++  private PathData createPathData(String name) throws IOException {
++    Path path = new Path(name);
++    FileStatus fstat = mock(FileStatus.class);
++    when(fstat.getPath()).thenReturn(path);
++    when(fstat.toString()).thenReturn("fileStatus:" + name);
++
++    when(mockFs.getFileStatus(eq(path))).thenReturn(fstat);
++    PathData item = new PathData(path.toString(), conf);
++    return item;
++  }
++
++  private LinkedList<String> getArgs(String cmd) {
++    return new LinkedList<String>(Arrays.asList(cmd.split(" ")));
++  }
++}
+diff --git a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/shell/find/TestHelper.java b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/shell/find/TestHelper.java
+new file mode 100644
+index 0000000..d4866b5
+--- /dev/null
++++ b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/shell/find/TestHelper.java
+@@ -0,0 +1,35 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.apache.hadoop.fs.shell.find;
++
++import java.util.Arrays;
++import java.util.Collections;
++import java.util.LinkedList;
++
++/** Helper methods for the find expression unit tests. */
++class TestHelper {
++  /** Adds an argument string to an expression */
++  static void addArgument(Expression expr, String arg) {
++    expr.addArguments(new LinkedList<String>(Collections.singletonList(arg)));
++  }
++
++  /** Converts a command string into a list of arguments. */
++  static LinkedList<String> getArgs(String cmd) {
++    return new LinkedList<String>(Arrays.asList(cmd.split(" ")));
++  }
++}
+diff --git a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/shell/find/TestIname.java b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/shell/find/TestIname.java
+new file mode 100644
+index 0000000..6e42fce
+--- /dev/null
++++ b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/shell/find/TestIname.java
+@@ -0,0 +1,93 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.apache.hadoop.fs.shell.find;
++
++import static org.junit.Assert.*;
++import static org.apache.hadoop.fs.shell.find.TestHelper.*;
++
++import java.io.IOException;
++
++import org.apache.hadoop.fs.FileSystem;
++import org.apache.hadoop.fs.shell.PathData;
++import org.junit.Before;
++import org.junit.Test;
++
++public class TestIname {
++  private FileSystem mockFs;
++  private Name.Iname name;
++
++  @Before
++  public void resetMock() throws IOException {
++    mockFs = MockFileSystem.setup();
++  }
++
++  private void setup(String arg) throws IOException {
++    name = new Name.Iname();
++    addArgument(name, arg);
++    name.setOptions(new FindOptions());
++    name.prepare();
++  }
++
++  // test a matching name (same case)
++  @Test(timeout = 1000)
++  public void applyMatch() throws IOException {
++    setup("name");
++    PathData item = new PathData("/directory/path/name", mockFs.getConf());
++    assertEquals(Result.PASS, name.apply(item, -1));
++  }
++
++  // test a non-matching name
++  @Test(timeout = 1000)
++  public void applyNotMatch() throws IOException {
++    setup("name");
++    PathData item = new PathData("/directory/path/notname", mockFs.getConf());
++    assertEquals(Result.FAIL, name.apply(item, -1));
++  }
++
++  // test a matching name (different case)
++  @Test(timeout = 1000)
++  public void applyMixedCase() throws IOException {
++    setup("name");
++    PathData item = new PathData("/directory/path/NaMe", mockFs.getConf());
++    assertEquals(Result.PASS, name.apply(item, -1));
++  }
++
++  // test a matching glob pattern (same case)
++  @Test(timeout = 1000)
++  public void applyGlob() throws IOException {
++    setup("n*e");
++    PathData item = new PathData("/directory/path/name", mockFs.getConf());
++    assertEquals(Result.PASS, name.apply(item, -1));
++  }
++
++  // test a matching glob pattern (different case)
++  @Test(timeout = 1000)
++  public void applyGlobMixedCase() throws IOException {
++    setup("n*e");
++    PathData item = new PathData("/directory/path/NaMe", mockFs.getConf());
++    assertEquals(Result.PASS, name.apply(item, -1));
++  }
++
++  // test a non-matching glob pattern
++  @Test(timeout = 1000)
++  public void applyGlobNotMatch() throws IOException {
++    setup("n*e");
++    PathData item = new PathData("/directory/path/notmatch", mockFs.getConf());
++    assertEquals(Result.FAIL, name.apply(item, -1));
++  }
++}
+diff --git a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/shell/find/TestName.java b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/shell/find/TestName.java
+new file mode 100644
+index 0000000..2c77fe1
+--- /dev/null
++++ b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/shell/find/TestName.java
+@@ -0,0 +1,93 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.apache.hadoop.fs.shell.find;
++
++import static org.junit.Assert.*;
++import static org.apache.hadoop.fs.shell.find.TestHelper.*;
++
++import java.io.IOException;
++
++import org.apache.hadoop.fs.FileSystem;
++import org.apache.hadoop.fs.shell.PathData;
++import org.junit.Before;
++import org.junit.Test;
++
++public class TestName {
++  private FileSystem mockFs;
++  private Name name;
++
++  @Before
++  public void resetMock() throws IOException {
++    mockFs = MockFileSystem.setup();
++  }
++
++  private void setup(String arg) throws IOException {
++    name = new Name();
++    addArgument(name, arg);
++    name.setOptions(new FindOptions());
++    name.prepare();
++  }
++
++  // test a matching name
++  @Test(timeout = 1000)
++  public void applyMatch() throws IOException {
++    setup("name");
++    PathData item = new PathData("/directory/path/name", mockFs.getConf());
++    assertEquals(Result.PASS, name.apply(item, -1));
++  }
++
++  // test a non-matching name
++  @Test(timeout = 1000)
++  public void applyNotMatch() throws IOException {
++    setup("name");
++    PathData item = new PathData("/directory/path/notname", mockFs.getConf());
++    assertEquals(Result.FAIL, name.apply(item, -1));
++  }
++
++  // test a different case name
++  @Test(timeout = 1000)
++  public void applyMixedCase() throws IOException {
++    setup("name");
++    PathData item = new PathData("/directory/path/NaMe", mockFs.getConf());
++    assertEquals(Result.FAIL, name.apply(item, -1));
++  }
++
++  // test a matching glob pattern
++  @Test(timeout = 1000)
++  public void applyGlob() throws IOException {
++    setup("n*e");
++    PathData item = new PathData("/directory/path/name", mockFs.getConf());
++    assertEquals(Result.PASS, name.apply(item, -1));
++  }
++
++  // test a glob pattern with different case
++  @Test(timeout = 1000)
++  public void applyGlobMixedCase() throws IOException {
++    setup("n*e");
++    PathData item = new PathData("/directory/path/NaMe", mockFs.getConf());
++    assertEquals(Result.FAIL, name.apply(item, -1));
++  }
++
++  // test a non-matching glob pattern
++  @Test(timeout = 1000)
++  public void applyGlobNotMatch() throws IOException {
++    setup("n*e");
++    PathData item = new PathData("/directory/path/notmatch", mockFs.getConf());
++    assertEquals(Result.FAIL, name.apply(item, -1));
++  }
++}
+diff --git a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/shell/find/TestPrint.java b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/shell/find/TestPrint.java
+new file mode 100644
+index 0000000..2d27665
+--- /dev/null
++++ b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/shell/find/TestPrint.java
+@@ -0,0 +1,56 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.apache.hadoop.fs.shell.find;
++
++import static org.junit.Assert.*;
++import static org.mockito.Mockito.*;
++
++import java.io.IOException;
++
++import org.apache.hadoop.fs.shell.PathData;
++import org.junit.Test;
++
++import java.io.PrintStream;
++
++import org.apache.hadoop.fs.FileSystem;
++import org.junit.Before;
++
++public class TestPrint {
++  private FileSystem mockFs;
++
++  @Before
++  public void resetMock() throws IOException {
++    mockFs = MockFileSystem.setup();
++  }
++
++  // test the full path is printed to stdout
++  @Test(timeout = 1000)
++  public void testPrint() throws IOException {
++    Print print = new Print();
++    PrintStream out = mock(PrintStream.class);
++    FindOptions options = new FindOptions();
++    options.setOut(out);
++    print.setOptions(options);
++
++    String filename = "/one/two/test";
++    PathData item = new PathData(filename, mockFs.getConf());
++    assertEquals(Result.PASS, print.apply(item, -1));
++    verify(out).print(filename + '\n');
++    verifyNoMoreInteractions(out);
++  }
++}
+diff --git a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/shell/find/TestPrint0.java b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/shell/find/TestPrint0.java
+new file mode 100644
+index 0000000..3b89438
+--- /dev/null
++++ b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/shell/find/TestPrint0.java
+@@ -0,0 +1,56 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.apache.hadoop.fs.shell.find;
++
++import static org.junit.Assert.*;
++import static org.mockito.Mockito.*;
++
++import java.io.IOException;
++
++import org.apache.hadoop.fs.shell.PathData;
++import org.junit.Test;
++
++import java.io.PrintStream;
++
++import org.apache.hadoop.fs.FileSystem;
++import org.junit.Before;
++
++public class TestPrint0 {
++  private FileSystem mockFs;
++
++  @Before
++  public void resetMock() throws IOException {
++    mockFs = MockFileSystem.setup();
++  }
++
++  // test the full path is printed to stdout with a '\0'
++  @Test(timeout = 1000)
++  public void testPrint() throws IOException {
++    Print.Print0 print = new Print.Print0();
++    PrintStream out = mock(PrintStream.class);
++    FindOptions options = new FindOptions();
++    options.setOut(out);
++    print.setOptions(options);
++
++    String filename = "/one/two/test";
++    PathData item = new PathData(filename, mockFs.getConf());
++    assertEquals(Result.PASS, print.apply(item, -1));
++    verify(out).print(filename + '\0');
++    verifyNoMoreInteractions(out);
++  }
++}
+diff --git a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/shell/find/TestResult.java b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/shell/find/TestResult.java
+new file mode 100644
+index 0000000..1139220
+--- /dev/null
++++ b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/shell/find/TestResult.java
+@@ -0,0 +1,172 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.apache.hadoop.fs.shell.find;
++
++import static org.junit.Assert.*;
++
++import org.junit.Test;
++
++public class TestResult {
++
++  // test the PASS value
++  @Test(timeout = 1000)
++  public void testPass() {
++    Result result = Result.PASS;
++    assertTrue(result.isPass());
++    assertTrue(result.isDescend());
++  }
++
++  // test the FAIL value
++  @Test(timeout = 1000)
++  public void testFail() {
++    Result result = Result.FAIL;
++    assertFalse(result.isPass());
++    assertTrue(result.isDescend());
++  }
++
++  // test the STOP value
++  @Test(timeout = 1000)
++  public void testStop() {
++    Result result = Result.STOP;
++    assertTrue(result.isPass());
++    assertFalse(result.isDescend());
++  }
++
++  // test combine method with two PASSes
++  @Test(timeout = 1000)
++  public void combinePassPass() {
++    Result result = Result.PASS.combine(Result.PASS);
++    assertTrue(result.isPass());
++    assertTrue(result.isDescend());
++  }
++
++  // test the combine method with a PASS and a FAIL
++  @Test(timeout = 1000)
++  public void combinePassFail() {
++    Result result = Result.PASS.combine(Result.FAIL);
++    assertFalse(result.isPass());
++    assertTrue(result.isDescend());
++  }
++
++  // test the combine method with a FAIL and a PASS
++  @Test(timeout = 1000)
++  public void combineFailPass() {
++    Result result = Result.FAIL.combine(Result.PASS);
++    assertFalse(result.isPass());
++    assertTrue(result.isDescend());
++  }
++
++  // test the combine method with two FAILs
++  @Test(timeout = 1000)
++  public void combineFailFail() {
++    Result result = Result.FAIL.combine(Result.FAIL);
++    assertFalse(result.isPass());
++    assertTrue(result.isDescend());
++  }
++
++  // test the combine method with a PASS and STOP
++  @Test(timeout = 1000)
++  public void combinePassStop() {
++    Result result = Result.PASS.combine(Result.STOP);
++    assertTrue(result.isPass());
++    assertFalse(result.isDescend());
++  }
++
++  // test the combine method with a STOP and FAIL
++  @Test(timeout = 1000)
++  public void combineStopFail() {
++    Result result = Result.STOP.combine(Result.FAIL);
++    assertFalse(result.isPass());
++    assertFalse(result.isDescend());
++  }
++
++  // test the combine method with a STOP and a PASS
++  @Test(timeout = 1000)
++  public void combineStopPass() {
++    Result result = Result.STOP.combine(Result.PASS);
++    assertTrue(result.isPass());
++    assertFalse(result.isDescend());
++  }
++
++  // test the combine method with a FAIL and a STOP
++  @Test(timeout = 1000)
++  public void combineFailStop() {
++    Result result = Result.FAIL.combine(Result.STOP);
++    assertFalse(result.isPass());
++    assertFalse(result.isDescend());
++  }
++
++  // test the negation of PASS
++  @Test(timeout = 1000)
++  public void negatePass() {
++    Result result = Result.PASS.negate();
++    assertFalse(result.isPass());
++    assertTrue(result.isDescend());
++  }
++
++  // test the negation of FAIL
++  @Test(timeout = 1000)
++  public void negateFail() {
++    Result result = Result.FAIL.negate();
++    assertTrue(result.isPass());
++    assertTrue(result.isDescend());
++  }
++
++  // test the negation of STOP
++  @Test(timeout = 1000)
++  public void negateStop() {
++    Result result = Result.STOP.negate();
++    assertFalse(result.isPass());
++    assertFalse(result.isDescend());
++  }
++
++  // test equals with two PASSes
++  @Test(timeout = 1000)
++  public void equalsPass() {
++    Result one = Result.PASS;
++    Result two = Result.PASS.combine(Result.PASS);
++    assertEquals(one, two);
++  }
++
++  // test equals with two FAILs
++  @Test(timeout = 1000)
++  public void equalsFail() {
++    Result one = Result.FAIL;
++    Result two = Result.FAIL.combine(Result.FAIL);
++    assertEquals(one, two);
++  }
++
++  // test equals with two STOPS
++  @Test(timeout = 1000)
++  public void equalsStop() {
++    Result one = Result.STOP;
++    Result two = Result.STOP.combine(Result.STOP);
++    assertEquals(one, two);
++  }
++
++  // test all combinations of not equals
++  @Test(timeout = 1000)
++  public void notEquals() {
++    assertFalse(Result.PASS.equals(Result.FAIL));
++    assertFalse(Result.PASS.equals(Result.STOP));
++    assertFalse(Result.FAIL.equals(Result.PASS));
++    assertFalse(Result.FAIL.equals(Result.STOP));
++    assertFalse(Result.STOP.equals(Result.PASS));
++    assertFalse(Result.STOP.equals(Result.FAIL));
++  }
++}
+-- 
+1.7.9.5
+

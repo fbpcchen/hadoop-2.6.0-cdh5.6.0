@@ -1,0 +1,80 @@
+From 2a0fc953fa08845dba1acecf1d2bff5cbf7a3330 Mon Sep 17 00:00:00 2001
+From: Andrew Wang <andrew.wang@cloudera.com>
+Date: Wed, 8 Apr 2015 21:43:42 -0700
+Subject: [PATCH 0690/1023] HDFS-7979. Initialize block report IDs with a
+ random number.
+
+(cherry picked from commit b1e059089d6a5b2b7006d7d384c6df81ed268bd9)
+(cherry picked from commit 351fac25a994de42ec1b1218513326884a1dde43)
+---
+ .../hdfs/server/datanode/BPServiceActor.java       |   16 +++++++++-------
+ .../hdfs/server/protocol/BlockReportContext.java   |    3 +++
+ 2 files changed, 12 insertions(+), 7 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BPServiceActor.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BPServiceActor.java
+index 6d6cf7d..42994aa 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BPServiceActor.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BPServiceActor.java
+@@ -118,6 +118,7 @@
+   private volatile boolean shouldServiceRun = true;
+   private final DataNode dn;
+   private final DNConf dnConf;
++  private long prevBlockReportId;
+ 
+   private DatanodeRegistration bpRegistration;
+   final LinkedList<BPServiceActorAction> bpThreadQueue 
+@@ -128,6 +129,7 @@
+     this.dn = bpos.getDataNode();
+     this.nnAddr = nnAddr;
+     this.dnConf = dn.getDnConf();
++    prevBlockReportId = DFSUtil.getRandom().nextLong();
+   }
+ 
+   boolean isAlive() {
+@@ -432,15 +434,15 @@ boolean hasPendingIBR() {
+     return sendImmediateIBR;
+   }
+ 
+-  private long prevBlockReportId = 0;
+-
+   private long generateUniqueBlockReportId() {
+-    long id = System.nanoTime();
+-    if (id <= prevBlockReportId) {
+-      id = prevBlockReportId + 1;
++    // Initialize the block report ID the first time through.
++    // Note that 0 is used on the NN to indicate "uninitialized", so we should
++    // not send a 0 value ourselves.
++    prevBlockReportId++;
++    while (prevBlockReportId == 0) {
++      prevBlockReportId = DFSUtil.getRandom().nextLong();
+     }
+-    prevBlockReportId = id;
+-    return id;
++    return prevBlockReportId;
+   }
+ 
+   /**
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/protocol/BlockReportContext.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/protocol/BlockReportContext.java
+index a084a81..d0b0282 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/protocol/BlockReportContext.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/protocol/BlockReportContext.java
+@@ -18,6 +18,8 @@
+ 
+ package org.apache.hadoop.hdfs.server.protocol;
+ 
++import org.apache.hadoop.classification.InterfaceAudience;
++
+ /**
+  * The context of the block report.
+  *
+@@ -27,6 +29,7 @@
+  * of RPCs which this block report is split into, and the index into that
+  * total for the current RPC.
+  */
++@InterfaceAudience.Private
+ public class BlockReportContext {
+   private final int totalRpcs;
+   private final int curRpc;
+-- 
+1.7.9.5
+

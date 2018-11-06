@@ -1,0 +1,135 @@
+From 84f9f43ec099412e8bf82bcc80be16da13a413c4 Mon Sep 17 00:00:00 2001
+From: cnauroth <cnauroth@apache.org>
+Date: Tue, 29 Dec 2015 10:56:59 -0800
+Subject: [PATCH 1011/1023] HDFS-7553. fix the TestDFSUpgradeWithHA due to
+ BindException. Contributed by Xiao Chen.
+
+(cherry picked from commit 1f8162b74eddd849c7949ac64acf729c208b8af9)
+
+Change-Id: I240241814964a180bdb7eb9ea36060a5b1ec3387
+(cherry picked from commit 316e3457deacdac00787954828e74b1410249123)
+---
+ .../hadoop/hdfs/server/namenode/NameNode.java      |   16 ++++++++++++
+ .../hdfs/server/namenode/NameNodeHttpServer.java   |    9 +++++++
+ .../org/apache/hadoop/hdfs/MiniDFSCluster.java     |   26 ++++++++++++--------
+ .../hadoop/hdfs/server/namenode/TestStartup.java   |    2 ++
+ 4 files changed, 43 insertions(+), 10 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNode.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNode.java
+index 36c3214..ad52eba 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNode.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNode.java
+@@ -975,6 +975,22 @@ public InetSocketAddress getHttpsAddress() {
+   }
+ 
+   /**
++   * @return NameNodeHttpServer, used by unit tests to ensure a full shutdown,
++   * so that no bind exception is thrown during restart.
++   */
++  @VisibleForTesting
++  public void joinHttpServer() {
++    if (httpServer != null) {
++      try {
++        httpServer.join();
++      } catch (InterruptedException e) {
++        LOG.info("Caught InterruptedException joining NameNodeHttpServer", e);
++        Thread.currentThread().interrupt();
++      }
++    }
++  }
++
++  /**
+    * Verify that configured directories exist, then
+    * Interactively confirm that formatting is desired 
+    * for each existing directory and format them.
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNodeHttpServer.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNodeHttpServer.java
+index 5efcd1c..bde345e 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNodeHttpServer.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNodeHttpServer.java
+@@ -194,6 +194,15 @@ void start() throws IOException {
+     return params;
+   }
+ 
++  /**
++   * Joins the httpserver.
++   */
++  public void join() throws InterruptedException {
++    if (httpServer != null) {
++      httpServer.join();
++    }
++  }
++
+   void stop() throws Exception {
+     if (httpServer != null) {
+       httpServer.stop();
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/MiniDFSCluster.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/MiniDFSCluster.java
+index 3c85b1d..45025c1 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/MiniDFSCluster.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/MiniDFSCluster.java
+@@ -1751,12 +1751,7 @@ public void shutdown(boolean deleteDfsDir) {
+     shutdownDataNodes();
+     for (NameNodeInfo nnInfo : nameNodes) {
+       if (nnInfo == null) continue;
+-      NameNode nameNode = nnInfo.nameNode;
+-      if (nameNode != null) {
+-        nameNode.stop();
+-        nameNode.join();
+-        nameNode = null;
+-      }
++      stopAndJoinNameNode(nnInfo.nameNode);
+     }
+     if (deleteDfsDir) {
+         base_dir.delete();
+@@ -1793,14 +1788,25 @@ public synchronized void shutdownNameNodes() {
+   public synchronized void shutdownNameNode(int nnIndex) {
+     NameNode nn = nameNodes[nnIndex].nameNode;
+     if (nn != null) {
+-      LOG.info("Shutting down the namenode");
+-      nn.stop();
+-      nn.join();
++      stopAndJoinNameNode(nn);
+       Configuration conf = nameNodes[nnIndex].conf;
+       nameNodes[nnIndex] = new NameNodeInfo(null, null, null, null, conf);
+     }
+   }
+-  
++
++  /**
++   * Fully stop the NameNode by stop and join.
++   */
++  private void stopAndJoinNameNode(NameNode nn) {
++    if (nn == null) {
++      return;
++    }
++    LOG.info("Shutting down the namenode");
++    nn.stop();
++    nn.join();
++    nn.joinHttpServer();
++  }
++
+   /**
+    * Restart all namenodes.
+    */
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestStartup.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestStartup.java
+index 08fde3e..ef1754f 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestStartup.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestStartup.java
+@@ -443,6 +443,7 @@ public void testCompression() throws IOException {
+     nnRpc.saveNamespace();
+     namenode.stop();
+     namenode.join();
++    namenode.joinHttpServer();
+ 
+     // compress image using default codec
+     LOG.info("Read an uncomressed image and store it compressed using default codec.");
+@@ -473,6 +474,7 @@ private void checkNameSpace(Configuration conf) throws IOException {
+     nnRpc.saveNamespace();
+     namenode.stop();
+     namenode.join();
++    namenode.joinHttpServer();
+   }
+   
+   @Test
+-- 
+1.7.9.5
+

@@ -1,0 +1,458 @@
+From cb830e7cbc4ea9153c876bae2cc08ab561f943e7 Mon Sep 17 00:00:00 2001
+From: Lei Xu <lei@apache.org>
+Date: Tue, 20 Oct 2015 10:08:02 -0700
+Subject: [PATCH 0921/1023] HDFS-9251. Refactor TestWriteToReplica and
+ TestFsDatasetImpl to avoid explicitly creating
+ Files in the tests code. (lei)
+
+(cherry picked from commit 71e533a153cbe547c99d2bc18c4cd8b7da9b00b7)
+(cherry picked from commit 7a8ed154ac52cd0b3d8c12a7e64262b3011c8e8a)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/TestWriteToReplica.java
+
+Change-Id: Ia9b02c96e3a4b9213f11273273355f6a2f0793ba
+---
+ .../hdfs/server/datanode/FsDatasetTestUtils.java   |   55 ++++++++++
+ .../fsdataset/impl/FsDatasetImplTestUtils.java     |  109 ++++++++++++++++++++
+ .../datanode/fsdataset/impl/TestFsDatasetImpl.java |   24 ++---
+ .../fsdataset/impl/TestWriteToReplica.java         |   99 +++++++-----------
+ 4 files changed, 210 insertions(+), 77 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/FsDatasetTestUtils.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/FsDatasetTestUtils.java
+index e7bc514..252b285 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/FsDatasetTestUtils.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/FsDatasetTestUtils.java
+@@ -24,6 +24,7 @@
+ import org.apache.hadoop.hdfs.DFSConfigKeys;
+ import org.apache.hadoop.hdfs.protocol.ExtendedBlock;
+ import org.apache.hadoop.hdfs.server.datanode.fsdataset.impl.FsDatasetFactory;
++import org.apache.hadoop.hdfs.server.datanode.fsdataset.FsVolumeSpi;
+ import org.apache.hadoop.util.ReflectionUtils;
+ 
+ import java.io.FileNotFoundException;
+@@ -137,4 +138,58 @@ public boolean isSimulated() {
+    */
+   MaterializedReplica getMaterializedReplica(ExtendedBlock block)
+           throws ReplicaNotFoundException;
++
++  /**
++   * Create a finalized replica and add it into the FsDataset.
++   */
++  Replica createFinalizedReplica(ExtendedBlock block) throws IOException;
++
++  /**
++   * Create a finalized replica on a particular volume, and add it into
++   * the FsDataset.
++   */
++  Replica createFinalizedReplica(FsVolumeSpi volume, ExtendedBlock block)
++      throws IOException;
++
++  /**
++   * Create a {@link ReplicaInPipeline} and add it into the FsDataset.
++   */
++  Replica createReplicaInPipeline(ExtendedBlock block) throws IOException;
++
++  /**
++   * Create a {@link ReplicaInPipeline} and add it into the FsDataset.
++   */
++  Replica createReplicaInPipeline(FsVolumeSpi volume, ExtendedBlock block)
++      throws IOException;
++
++  /**
++   * Create a {@link ReplicaBeingWritten} and add it into the FsDataset.
++   */
++  Replica createRBW(ExtendedBlock block) throws IOException;
++
++  /**
++   * Create a {@link ReplicaBeingWritten} on the particular volume, and add it
++   * into the FsDataset.
++   */
++  Replica createRBW(FsVolumeSpi volume, ExtendedBlock block) throws IOException;
++
++  /**
++   * Create a {@link ReplicaWaitingToBeRecovered} object and add it into the
++   * FsDataset.
++   */
++  Replica createReplicaWaitingToBeRecovered(ExtendedBlock block)
++      throws IOException;
++
++  /**
++   * Create a {@link ReplicaWaitingToBeRecovered} on the particular volume,
++   * and add it into the FsDataset.
++   */
++  Replica createReplicaWaitingToBeRecovered(
++      FsVolumeSpi volume, ExtendedBlock block) throws IOException;
++
++  /**
++   * Create a {@link ReplicaUnderRecovery} object and add it into the FsDataset.
++   */
++  Replica createReplicaUnderRecovery(ExtendedBlock block, long recoveryId)
++      throws IOException;
+ }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetImplTestUtils.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetImplTestUtils.java
+index 8c8e4b6..3058b54 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetImplTestUtils.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetImplTestUtils.java
+@@ -23,10 +23,20 @@
+ import org.apache.commons.logging.LogFactory;
+ import org.apache.hadoop.classification.InterfaceAudience;
+ import org.apache.hadoop.classification.InterfaceStability;
++import org.apache.hadoop.hdfs.protocol.Block;
+ import org.apache.hadoop.hdfs.protocol.ExtendedBlock;
+ import org.apache.hadoop.hdfs.server.datanode.DataNode;
++import org.apache.hadoop.hdfs.server.datanode.FinalizedReplica;
+ import org.apache.hadoop.hdfs.server.datanode.FsDatasetTestUtils;
++import org.apache.hadoop.hdfs.server.datanode.Replica;
++import org.apache.hadoop.hdfs.server.datanode.ReplicaBeingWritten;
++import org.apache.hadoop.hdfs.server.datanode.ReplicaInPipeline;
++import org.apache.hadoop.hdfs.server.datanode.ReplicaInfo;
+ import org.apache.hadoop.hdfs.server.datanode.ReplicaNotFoundException;
++import org.apache.hadoop.hdfs.server.datanode.ReplicaUnderRecovery;
++import org.apache.hadoop.hdfs.server.datanode.ReplicaWaitingToBeRecovered;
++import org.apache.hadoop.hdfs.server.datanode.fsdataset.FsDatasetSpi.FsVolumeReferences;
++import org.apache.hadoop.hdfs.server.datanode.fsdataset.FsVolumeSpi;
+ 
+ import java.io.File;
+ import java.io.FileNotFoundException;
+@@ -176,4 +186,103 @@ public MaterializedReplica getMaterializedReplica(ExtendedBlock block)
+         blockFile, block.getGenerationStamp());
+     return new FsDatasetImplMaterializedReplica(blockFile, metaFile);
+   }
++
++  @Override
++  public Replica createFinalizedReplica(ExtendedBlock block)
++      throws IOException {
++    try (FsVolumeReferences volumes = dataset.getFsVolumeReferences()) {
++      return createFinalizedReplica(volumes.get(0), block);
++    }
++  }
++
++  @Override
++  public Replica createFinalizedReplica(FsVolumeSpi volume, ExtendedBlock block)
++      throws IOException {
++    FsVolumeImpl vol = (FsVolumeImpl) volume;
++    ReplicaInfo info = new FinalizedReplica(block.getLocalBlock(), vol,
++        vol.getCurrentDir().getParentFile());
++    dataset.volumeMap.add(block.getBlockPoolId(), info);
++    info.getBlockFile().createNewFile();
++    info.getMetaFile().createNewFile();
++    return info;
++  }
++
++  @Override
++  public Replica createReplicaInPipeline(ExtendedBlock block)
++      throws IOException {
++    try (FsVolumeReferences volumes = dataset.getFsVolumeReferences()) {
++      return createReplicaInPipeline(volumes.get(0), block);
++    }
++  }
++
++  @Override
++  public Replica createReplicaInPipeline(
++      FsVolumeSpi volume, ExtendedBlock block) throws IOException {
++    FsVolumeImpl vol = (FsVolumeImpl) volume;
++    ReplicaInPipeline rip = new ReplicaInPipeline(
++        block.getBlockId(), block.getGenerationStamp(), volume,
++        vol.createTmpFile(
++            block.getBlockPoolId(), block.getLocalBlock()).getParentFile(),
++        0);
++    dataset.volumeMap.add(block.getBlockPoolId(), rip);
++    return rip;
++  }
++
++
++  @Override
++  public Replica createRBW(ExtendedBlock eb) throws IOException {
++    try (FsVolumeReferences volumes = dataset.getFsVolumeReferences()) {
++      return createRBW(volumes.get(0), eb);
++    }
++  }
++
++  @Override
++  public Replica createRBW(FsVolumeSpi volume, ExtendedBlock eb)
++      throws IOException {
++    FsVolumeImpl vol = (FsVolumeImpl) volume;
++    final String bpid = eb.getBlockPoolId();
++    final Block block = eb.getLocalBlock();
++    ReplicaBeingWritten rbw = new ReplicaBeingWritten(
++        eb.getLocalBlock(), volume,
++        vol.createRbwFile(bpid, block).getParentFile(), null);
++    rbw.getBlockFile().createNewFile();
++    rbw.getMetaFile().createNewFile();
++    dataset.volumeMap.add(bpid, rbw);
++    return rbw;
++  }
++
++  @Override
++  public Replica createReplicaWaitingToBeRecovered(ExtendedBlock eb)
++      throws IOException {
++    try (FsVolumeReferences volumes = dataset.getFsVolumeReferences()) {
++      return createReplicaInPipeline(volumes.get(0), eb);
++    }
++  }
++
++  @Override
++  public Replica createReplicaWaitingToBeRecovered(
++      FsVolumeSpi volume, ExtendedBlock eb) throws IOException {
++    FsVolumeImpl vol = (FsVolumeImpl) volume;
++    final String bpid = eb.getBlockPoolId();
++    final Block block = eb.getLocalBlock();
++    ReplicaWaitingToBeRecovered rwbr =
++        new ReplicaWaitingToBeRecovered(eb.getLocalBlock(), volume,
++            vol.createRbwFile(bpid, block).getParentFile());
++    dataset.volumeMap.add(bpid, rwbr);
++    return rwbr;
++  }
++
++  @Override
++  public Replica createReplicaUnderRecovery(
++      ExtendedBlock block, long recoveryId) throws IOException {
++    try (FsVolumeReferences volumes = dataset.getFsVolumeReferences()) {
++      FsVolumeImpl volume = (FsVolumeImpl) volumes.get(0);
++      ReplicaUnderRecovery rur = new ReplicaUnderRecovery(new FinalizedReplica(
++          block.getLocalBlock(), volume, volume.getCurrentDir().getParentFile()),
++          recoveryId
++      );
++      dataset.volumeMap.add(block.getBlockPoolId(), rur);
++      return rur;
++    }
++  }
+ }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/TestFsDatasetImpl.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/TestFsDatasetImpl.java
+index 4712966..4fb7d56 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/TestFsDatasetImpl.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/TestFsDatasetImpl.java
+@@ -393,12 +393,14 @@ public void testDuplicateReplicaResolution() throws IOException {
+   
+   @Test
+   public void testDeletingBlocks() throws IOException {
+-    MiniDFSCluster cluster = new MiniDFSCluster.Builder(new HdfsConfiguration()).build();
++    HdfsConfiguration conf = new HdfsConfiguration();
++    MiniDFSCluster cluster = new MiniDFSCluster.Builder(conf).build();
+     try {
+       cluster.waitActive();
+       DataNode dn = cluster.getDataNodes().get(0);
+       
+-      FsDatasetImpl ds = (FsDatasetImpl) DataNodeTestUtils.getFSDataset(dn);
++      FsDatasetSpi<?> ds = DataNodeTestUtils.getFSDataset(dn);
++      ds.addBlockPool(BLOCKPOOL, conf);
+       FsVolumeImpl vol;
+       try (FsDatasetSpi.FsVolumeReferences volumes = ds.getFsVolumeReferences()) {
+         vol = (FsVolumeImpl)volumes.get(0);
+@@ -406,15 +408,11 @@ public void testDeletingBlocks() throws IOException {
+ 
+       ExtendedBlock eb;
+       ReplicaInfo info;
+-      List<Block> blockList = new ArrayList<Block>();
++      List<Block> blockList = new ArrayList<>();
+       for (int i = 1; i <= 63; i++) {
+         eb = new ExtendedBlock(BLOCKPOOL, i, 1, 1000 + i);
+-        info = new FinalizedReplica(
+-            eb.getLocalBlock(), vol, vol.getCurrentDir().getParentFile());
+-        ds.volumeMap.add(BLOCKPOOL, info);
+-        info.getBlockFile().createNewFile();
+-        info.getMetaFile().createNewFile();
+-        blockList.add(info);
++        cluster.getFsDatasetTestUtils(0).createFinalizedReplica(eb);
++        blockList.add(eb.getLocalBlock());
+       }
+       ds.invalidate(BLOCKPOOL, blockList.toArray(new Block[0]));
+       try {
+@@ -426,12 +424,8 @@ public void testDeletingBlocks() throws IOException {
+ 
+       blockList.clear();
+       eb = new ExtendedBlock(BLOCKPOOL, 64, 1, 1064);
+-      info = new FinalizedReplica(
+-          eb.getLocalBlock(), vol, vol.getCurrentDir().getParentFile());
+-      ds.volumeMap.add(BLOCKPOOL, info);
+-      info.getBlockFile().createNewFile();
+-      info.getMetaFile().createNewFile();
+-      blockList.add(info);
++      cluster.getFsDatasetTestUtils(0).createFinalizedReplica(eb);
++      blockList.add(eb.getLocalBlock());
+       ds.invalidate(BLOCKPOOL, blockList.toArray(new Block[0]));
+       try {
+         Thread.sleep(1000);
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/TestWriteToReplica.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/TestWriteToReplica.java
+index 3d79ad0..c835b2d 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/TestWriteToReplica.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/TestWriteToReplica.java
+@@ -25,16 +25,13 @@
+ import org.apache.hadoop.hdfs.protocol.ExtendedBlock;
+ import org.apache.hadoop.hdfs.server.datanode.DataNode;
+ import org.apache.hadoop.hdfs.server.datanode.DataNodeTestUtils;
+-import org.apache.hadoop.hdfs.server.datanode.FinalizedReplica;
++import org.apache.hadoop.hdfs.server.datanode.FsDatasetTestUtils;
+ import org.apache.hadoop.hdfs.server.datanode.ReplicaAlreadyExistsException;
+-import org.apache.hadoop.hdfs.server.datanode.ReplicaBeingWritten;
+-import org.apache.hadoop.hdfs.server.datanode.ReplicaInPipeline;
+ import org.apache.hadoop.hdfs.server.datanode.ReplicaInPipelineInterface;
+ import org.apache.hadoop.hdfs.server.datanode.ReplicaInfo;
+ import org.apache.hadoop.hdfs.server.datanode.ReplicaNotFoundException;
+-import org.apache.hadoop.hdfs.server.datanode.ReplicaUnderRecovery;
+-import org.apache.hadoop.hdfs.server.datanode.ReplicaWaitingToBeRecovered;
+ import org.apache.hadoop.hdfs.server.datanode.fsdataset.FsDatasetSpi;
++import org.apache.hadoop.hdfs.server.datanode.fsdataset.FsVolumeSpi;
+ import org.apache.hadoop.util.DiskChecker.DiskOutOfSpaceException;
+ import org.junit.Assert;
+ import org.junit.Test;
+@@ -57,12 +54,12 @@ public void testClose() throws Exception {
+     try {
+       cluster.waitActive();
+       DataNode dn = cluster.getDataNodes().get(0);
+-      FsDatasetImpl dataSet = (FsDatasetImpl)DataNodeTestUtils.getFSDataset(dn);
++      FsDatasetSpi<?> dataSet = DataNodeTestUtils.getFSDataset(dn);
+ 
+       // set up replicasMap
+       String bpid = cluster.getNamesystem().getBlockPoolId();
+       
+-      ExtendedBlock[] blocks = setup(bpid, dataSet);
++      ExtendedBlock[] blocks = setup(bpid, cluster.getFsDatasetTestUtils(dn));
+ 
+       // test close
+       testClose(dataSet, blocks);
+@@ -78,11 +75,11 @@ public void testAppend() throws Exception {
+     try {
+       cluster.waitActive();
+       DataNode dn = cluster.getDataNodes().get(0);
+-      FsDatasetImpl dataSet = (FsDatasetImpl)DataNodeTestUtils.getFSDataset(dn);
++      FsDatasetSpi<?> dataSet = DataNodeTestUtils.getFSDataset(dn);
+ 
+       // set up replicasMap
+       String bpid = cluster.getNamesystem().getBlockPoolId();
+-      ExtendedBlock[] blocks = setup(bpid, dataSet);
++      ExtendedBlock[] blocks = setup(bpid, cluster.getFsDatasetTestUtils(dn));
+ 
+       // test append
+       testAppend(bpid, dataSet, blocks);
+@@ -102,7 +99,7 @@ public void testWriteToRbw() throws Exception {
+ 
+       // set up replicasMap
+       String bpid = cluster.getNamesystem().getBlockPoolId();
+-      ExtendedBlock[] blocks = setup(bpid, dataSet);
++      ExtendedBlock[] blocks = setup(bpid, cluster.getFsDatasetTestUtils(dn));
+ 
+       // test writeToRbw
+       testWriteToRbw(dataSet, blocks);
+@@ -122,7 +119,7 @@ public void testWriteToTemporary() throws Exception {
+ 
+       // set up replicasMap
+       String bpid = cluster.getNamesystem().getBlockPoolId();
+-      ExtendedBlock[] blocks = setup(bpid, dataSet);
++      ExtendedBlock[] blocks = setup(bpid, cluster.getFsDatasetTestUtils(dn));
+ 
+       // test writeToTemporary
+       testWriteToTemporary(dataSet, blocks);
+@@ -136,11 +133,12 @@ public void testWriteToTemporary() throws Exception {
+    * on which to run the tests.
+    * 
+    * @param bpid Block pool ID to generate blocks for
+-   * @param dataSet Namespace in which to insert blocks
++   * @param testUtils FsDatasetTestUtils provides white box access to FsDataset.
+    * @return Contrived blocks for further testing.
+    * @throws IOException
+    */
+-  private ExtendedBlock[] setup(String bpid, FsDatasetImpl dataSet) throws IOException {
++  private ExtendedBlock[] setup(String bpid, FsDatasetTestUtils testUtils)
++      throws IOException {
+     // setup replicas map
+     
+     ExtendedBlock[] blocks = new ExtendedBlock[] {
+@@ -148,59 +146,36 @@ public void testWriteToTemporary() throws Exception {
+         new ExtendedBlock(bpid, 3, 1, 2003), new ExtendedBlock(bpid, 4, 1, 2004),
+         new ExtendedBlock(bpid, 5, 1, 2005), new ExtendedBlock(bpid, 6, 1, 2006)
+     };
+-    
+-    ReplicaMap replicasMap = dataSet.volumeMap;
+-    try (FsDatasetSpi.FsVolumeReferences references =
+-        dataSet.getFsVolumeReferences()) {
+-      FsVolumeImpl vol = (FsVolumeImpl) references.get(0);
+-      ReplicaInfo replicaInfo = new FinalizedReplica(
+-          blocks[FINALIZED].getLocalBlock(), vol,
+-          vol.getCurrentDir().getParentFile());
+-      replicasMap.add(bpid, replicaInfo);
+-      replicaInfo.getBlockFile().createNewFile();
+-      replicaInfo.getMetaFile().createNewFile();
+-
+-      replicasMap.add(bpid, new ReplicaInPipeline(
+-          blocks[TEMPORARY].getBlockId(),
+-          blocks[TEMPORARY].getGenerationStamp(), vol,
+-          vol.createTmpFile(bpid, blocks[TEMPORARY].getLocalBlock())
+-              .getParentFile(), 0));
+-
+-      replicaInfo = new ReplicaBeingWritten(blocks[RBW].getLocalBlock(), vol,
+-          vol.createRbwFile(bpid, blocks[RBW].getLocalBlock()).getParentFile(),
+-          null);
+-      replicasMap.add(bpid, replicaInfo);
+-      replicaInfo.getBlockFile().createNewFile();
+-      replicaInfo.getMetaFile().createNewFile();
+-
+-      replicasMap.add(bpid, new ReplicaWaitingToBeRecovered(
+-          blocks[RWR].getLocalBlock(), vol, vol.createRbwFile(bpid,
+-          blocks[RWR].getLocalBlock()).getParentFile()));
+-      replicasMap
+-          .add(bpid, new ReplicaUnderRecovery(new FinalizedReplica(blocks[RUR]
+-              .getLocalBlock(), vol, vol.getCurrentDir().getParentFile()),
+-              2007));
+-    }
++
++    testUtils.createFinalizedReplica(blocks[FINALIZED]);
++    testUtils.createReplicaInPipeline(blocks[TEMPORARY]);
++    testUtils.createRBW(blocks[RBW]);
++    testUtils.createReplicaWaitingToBeRecovered(blocks[RWR]);
++    testUtils.createReplicaUnderRecovery(blocks[RUR], 2007);
++
+     return blocks;
+   }
+   
+-  private void testAppend(String bpid, FsDatasetImpl dataSet, ExtendedBlock[] blocks) throws IOException {
++  private void testAppend(String bpid, FsDatasetSpi<?> dataSet,
++                          ExtendedBlock[] blocks) throws IOException {
+     long newGS = blocks[FINALIZED].getGenerationStamp()+1;
+-    final FsVolumeImpl v = (FsVolumeImpl)dataSet.volumeMap.get(
+-        bpid, blocks[FINALIZED].getLocalBlock()).getVolume();
+-    long available = v.getCapacity()-v.getDfsUsed();
+-    long expectedLen = blocks[FINALIZED].getNumBytes();
+-    try {
+-      v.decDfsUsed(bpid, -available);
+-      blocks[FINALIZED].setNumBytes(expectedLen+100);
+-      dataSet.append(blocks[FINALIZED], newGS, expectedLen);
+-      Assert.fail("Should not have space to append to an RWR replica" + blocks[RWR]);
+-    } catch (DiskOutOfSpaceException e) {
+-      Assert.assertTrue(e.getMessage().startsWith(
+-          "Insufficient space for appending to "));
++    final FsVolumeSpi v = dataSet.getVolume(blocks[FINALIZED]);
++    if (v instanceof FsVolumeImpl) {
++      FsVolumeImpl fvi = (FsVolumeImpl) v;
++      long available = fvi.getCapacity() - fvi.getDfsUsed();
++      long expectedLen = blocks[FINALIZED].getNumBytes();
++      try {
++        fvi.decDfsUsed(bpid, -available);
++        blocks[FINALIZED].setNumBytes(expectedLen + 100);
++        dataSet.append(blocks[FINALIZED], newGS, expectedLen);
++        Assert.fail("Should not have space to append to an RWR replica" + blocks[RWR]);
++      } catch (DiskOutOfSpaceException e) {
++        Assert.assertTrue(e.getMessage().startsWith(
++            "Insufficient space for appending to "));
++      }
++      fvi.decDfsUsed(bpid, available);
++      blocks[FINALIZED].setNumBytes(expectedLen);
+     }
+-    v.decDfsUsed(bpid, available);
+-    blocks[FINALIZED].setNumBytes(expectedLen);
+ 
+     newGS = blocks[RBW].getGenerationStamp()+1;
+     dataSet.append(blocks[FINALIZED], newGS, 
+@@ -304,7 +279,7 @@ private void testAppend(String bpid, FsDatasetImpl dataSet, ExtendedBlock[] bloc
+     }
+   }
+ 
+-  private void testClose(FsDatasetImpl dataSet, ExtendedBlock [] blocks) throws IOException {
++  private void testClose(FsDatasetSpi<?> dataSet, ExtendedBlock [] blocks) throws IOException {
+     long newGS = blocks[FINALIZED].getGenerationStamp()+1;
+     dataSet.recoverClose(blocks[FINALIZED], newGS, 
+         blocks[FINALIZED].getNumBytes());  // successful
+-- 
+1.7.9.5
+

@@ -1,0 +1,35 @@
+From dc147e0af80ff48c6ee6856918f49a89be719e16 Mon Sep 17 00:00:00 2001
+From: Xiaoyu Yao <xyao@apache.org>
+Date: Fri, 14 Aug 2015 12:33:43 -0700
+Subject: [PATCH 0800/1023] HDFS-8565. Typo in dfshealth.html -
+ Decomissioning. (nijel via xyao)
+
+(cherry picked from commit 1569228ec9090823186f062257fdf1beb5ee1781)
+(cherry picked from commit 17256e2ae81d0b40493901fc89ca0d987788f69b)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt
+
+Change-Id: I6feacb337ed01bd4420f6f2b1f341d6605dce51c
+(cherry picked from commit d7ae680d09b0b96ef3f0507c82c7f1ae736cabb0)
+(cherry picked from commit 08b8a18e6b03c6c35ed6da28b238c5c204a41f9f)
+---
+ .../src/main/webapps/hdfs/dfshealth.html           |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/webapps/hdfs/dfshealth.html b/hadoop-hdfs-project/hadoop-hdfs/src/main/webapps/hdfs/dfshealth.html
+index 007d6e8..79df028 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/webapps/hdfs/dfshealth.html
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/webapps/hdfs/dfshealth.html
+@@ -305,7 +305,7 @@
+ </table>
+ </small>
+ 
+-<div class="page-header"><h1><small>Decomissioning</small></h1></div>
++<div class="page-header"><h1><small>Decommissioning</small></h1></div>
+ <small>
+ <table class="table">
+   <thead>
+-- 
+1.7.9.5
+

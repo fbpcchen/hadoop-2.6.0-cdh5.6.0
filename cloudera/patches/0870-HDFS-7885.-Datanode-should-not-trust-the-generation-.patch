@@ -1,0 +1,131 @@
+From 92608df42750838be6b54c0f33c1ac1ec0a835e3 Mon Sep 17 00:00:00 2001
+From: Jing Zhao <jing9@apache.org>
+Date: Fri, 6 Mar 2015 10:55:56 -0800
+Subject: [PATCH 0870/1023] HDFS-7885. Datanode should not trust the
+ generation stamp provided by client. Contributed
+ by Tsz Wo Nicholas Sze.
+
+(cherry picked from commit 24db0812be64e83a48ade01fc1eaaeaedad4dec0)
+(cherry picked from commit 994dadb9ba0a3b87b6548e6e0801eadd26554d55)
+(cherry picked from commit 0bc5c6495a7feb4365af0ce5fe48fc87b7e1749f)
+(cherry picked from commit b25491dc45be92cc3ec157d998a2632387c3952f)
+
+Change-Id: I3d5c342eb0eddf821f89444e4b3975385b0e64fa
+---
+ .../datanode/fsdataset/impl/FsDatasetImpl.java     |   15 +++++
+ .../hadoop/hdfs/TestBlockReaderLocalLegacy.java    |   63 ++++++++++++++++++++
+ 2 files changed, 78 insertions(+)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetImpl.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetImpl.java
+index 3e7a6ac..05c7d1f 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetImpl.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetImpl.java
+@@ -2493,6 +2493,21 @@ public synchronized void deleteBlockPool(String bpid, boolean force)
+   @Override // FsDatasetSpi
+   public BlockLocalPathInfo getBlockLocalPathInfo(ExtendedBlock block)
+       throws IOException {
++    synchronized(this) {
++      final Replica replica = volumeMap.get(block.getBlockPoolId(),
++          block.getBlockId());
++      if (replica == null) {
++        throw new ReplicaNotFoundException(block);
++      }
++      if (replica.getGenerationStamp() < block.getGenerationStamp()) {
++        throw new IOException(
++            "Replica generation stamp < block generation stamp, block="
++            + block + ", replica=" + replica);
++      } else if (replica.getGenerationStamp() > block.getGenerationStamp()) {
++        block.setGenerationStamp(replica.getGenerationStamp());
++      }
++    }
++
+     File datafile = getBlockFile(block);
+     File metafile = FsDatasetUtil.getMetaFile(datafile, block.getGenerationStamp());
+     BlockLocalPathInfo info = new BlockLocalPathInfo(block,
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestBlockReaderLocalLegacy.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestBlockReaderLocalLegacy.java
+index cb50539..1c4134f 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestBlockReaderLocalLegacy.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestBlockReaderLocalLegacy.java
+@@ -30,11 +30,16 @@
+ import org.apache.hadoop.fs.FSDataOutputStream;
+ import org.apache.hadoop.fs.FileSystem;
+ import org.apache.hadoop.fs.Path;
++import org.apache.hadoop.hdfs.protocol.BlockLocalPathInfo;
++import org.apache.hadoop.hdfs.protocol.ClientDatanodeProtocol;
+ import org.apache.hadoop.hdfs.protocol.ExtendedBlock;
++import org.apache.hadoop.hdfs.protocol.LocatedBlock;
++import org.apache.hadoop.hdfs.security.token.block.BlockTokenIdentifier;
+ import org.apache.hadoop.io.IOUtils;
+ import org.apache.hadoop.net.unix.DomainSocket;
+ import org.apache.hadoop.net.unix.TemporarySocketDirectory;
+ import org.apache.hadoop.security.UserGroupInformation;
++import org.apache.hadoop.security.token.Token;
+ import org.junit.Assert;
+ import org.junit.Assume;
+ import org.junit.BeforeClass;
+@@ -153,4 +158,62 @@ public void testBothOldAndNewShortCircuitConfigured() throws Exception {
+     Arrays.equals(orig, buf);
+     cluster.shutdown();
+   }
++
++  @Test(timeout=20000)
++  public void testBlockReaderLocalLegacyWithAppend() throws Exception {
++    final short REPL_FACTOR = 1;
++    final HdfsConfiguration conf = getConfiguration(null);
++    conf.setBoolean(DFSConfigKeys.DFS_CLIENT_USE_LEGACY_BLOCKREADERLOCAL, true);
++
++    final MiniDFSCluster cluster =
++        new MiniDFSCluster.Builder(conf).numDataNodes(1).build();
++    cluster.waitActive();
++
++    final DistributedFileSystem dfs = cluster.getFileSystem();
++    final Path path = new Path("/testBlockReaderLocalLegacy");
++    DFSTestUtil.createFile(dfs, path, 10, REPL_FACTOR, 0);
++    DFSTestUtil.waitReplication(dfs, path, REPL_FACTOR);
++
++    final ClientDatanodeProtocol proxy;
++    final Token<BlockTokenIdentifier> token;
++    final ExtendedBlock originalBlock;
++    final long originalGS;
++    {
++      final LocatedBlock lb = cluster.getNameNode().getRpcServer()
++          .getBlockLocations(path.toString(), 0, 1).get(0);
++      proxy = DFSUtil.createClientDatanodeProtocolProxy(
++          lb.getLocations()[0], conf, 60000, false);
++      token = lb.getBlockToken();
++
++      // get block and generation stamp
++      final ExtendedBlock blk = new ExtendedBlock(lb.getBlock());
++      originalBlock = new ExtendedBlock(blk);
++      originalGS = originalBlock.getGenerationStamp();
++
++      // test getBlockLocalPathInfo
++      final BlockLocalPathInfo info = proxy.getBlockLocalPathInfo(blk, token);
++      Assert.assertEquals(originalGS, info.getBlock().getGenerationStamp());
++    }
++
++    { // append one byte
++      FSDataOutputStream out = dfs.append(path);
++      out.write(1);
++      out.close();
++    }
++
++    {
++      // get new generation stamp
++      final LocatedBlock lb = cluster.getNameNode().getRpcServer()
++          .getBlockLocations(path.toString(), 0, 1).get(0);
++      final long newGS = lb.getBlock().getGenerationStamp();
++      Assert.assertTrue(newGS > originalGS);
++
++      // getBlockLocalPathInfo using the original block.
++      Assert.assertEquals(originalGS, originalBlock.getGenerationStamp());
++      final BlockLocalPathInfo info = proxy.getBlockLocalPathInfo(
++          originalBlock, token);
++      Assert.assertEquals(newGS, info.getBlock().getGenerationStamp());
++    }
++    cluster.shutdown();
++  }
+ }
+-- 
+1.7.9.5
+

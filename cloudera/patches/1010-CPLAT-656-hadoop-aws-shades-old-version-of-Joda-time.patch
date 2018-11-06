@@ -1,0 +1,39 @@
+From e04db2f74238488bc7e384b07ecca2e71a328d48 Mon Sep 17 00:00:00 2001
+From: Aaron Fabbri <fabbri@cloudera.com>
+Date: Mon, 7 Dec 2015 14:13:02 -0800
+Subject: [PATCH 1010/1023] CPLAT-656 hadoop-aws shades old version of
+ Joda-time, breaking S3A
+
+The cdh parent pom hard-codes an old version of joda-time, which was overriding
+the correct version required by the updated version of the aws-java-sdk-s3.
+
+Fix is to explicly specify the joda-time dependency with the version the current
+aws-java-sdk-s3 expects.
+
+This patch also fixes CDH-31245.
+
+Change-Id: I2a7c90daaeaa99c726c2124624c171b9c9bf4a28
+(cherry picked from commit a0bcb7a09ab664210e00393a32075b36bb5f1dd7)
+---
+ hadoop-tools/hadoop-aws/pom.xml |    6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/hadoop-tools/hadoop-aws/pom.xml b/hadoop-tools/hadoop-aws/pom.xml
+index 44fbc6b..cca8892 100644
+--- a/hadoop-tools/hadoop-aws/pom.xml
++++ b/hadoop-tools/hadoop-aws/pom.xml
+@@ -177,5 +177,11 @@
+       <scope>test</scope>
+     </dependency>
+ 
++    <dependency>
++      <groupId>joda-time</groupId>
++      <artifactId>joda-time</artifactId>
++      <version>2.8.1</version>
++    </dependency>
++
+   </dependencies>
+ </project>
+-- 
+1.7.9.5
+

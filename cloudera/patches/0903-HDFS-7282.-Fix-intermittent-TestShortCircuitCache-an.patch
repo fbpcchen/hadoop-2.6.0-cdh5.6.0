@@ -1,0 +1,61 @@
+From 0a787e0b7e55d0a95d9834c964f2e7d03779000f Mon Sep 17 00:00:00 2001
+From: Colin Patrick Mccabe <cmccabe@cloudera.com>
+Date: Mon, 27 Oct 2014 17:44:07 -0700
+Subject: [PATCH 0903/1023] HDFS-7282. Fix intermittent TestShortCircuitCache
+ and TestBlockReaderFactory failures resulting
+ from TemporarySocketDirectory GC (Jinghui Wang
+ via Colin P. McCabe)
+
+(cherry picked from commit 518a7f4af3d8deeecabfa0629b16521ce09de459)
+(cherry picked from commit 296c4064fcb4ec6a07b461ad3393ebb5bbe9e9e5)
+
+Change-Id: Ic326b5de5a26e7733a4b7104904d082579027224
+(cherry picked from commit 8d6054aa9a41aab5e8a22d1666f31f12f2486f8e)
+---
+ .../apache/hadoop/hdfs/TestBlockReaderFactory.java |    3 +++
+ .../hdfs/shortcircuit/TestShortCircuitCache.java   |    1 +
+ 2 files changed, 4 insertions(+)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestBlockReaderFactory.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestBlockReaderFactory.java
+index a7dcbc1..5c330cd 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestBlockReaderFactory.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestBlockReaderFactory.java
+@@ -343,6 +343,7 @@ public void visit(HashMap<DatanodeInfo, PerDatanodeVisitorInfo> info)
+       }
+     });
+     cluster.shutdown();
++    sockDir.close();
+   }
+  
+   /**
+@@ -378,6 +379,7 @@ public void testShortCircuitReadFromClientWithoutShm() throws Exception {
+         fs.dfs.getClientContext().getShortCircuitCache();
+     Assert.assertEquals(null, cache.getDfsClientShmManager());
+     cluster.shutdown();
++    sockDir.close();
+   }
+   
+   /**
+@@ -411,6 +413,7 @@ public void testShortCircuitCacheShutdown() throws Exception {
+     Assert.assertTrue(cache.getDfsClientShmManager().
+         getDomainSocketWatcher().isClosed());
+     cluster.shutdown();
++    sockDir.close();
+   }
+ 
+   /**
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/shortcircuit/TestShortCircuitCache.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/shortcircuit/TestShortCircuitCache.java
+index 0558301..216279b 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/shortcircuit/TestShortCircuitCache.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/shortcircuit/TestShortCircuitCache.java
+@@ -529,6 +529,7 @@ public void visit(int numOutstandingMmaps,
+       }
+     });
+     cluster.shutdown();
++    sockDir.close();
+   }
+ 
+   /**
+-- 
+1.7.9.5
+

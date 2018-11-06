@@ -1,0 +1,810 @@
+From 9dc321ea5046dde3f1ed1c50772b9bd525e8a27e Mon Sep 17 00:00:00 2001
+From: Zhihai Xu <zxu@cloudera.com>
+Date: Tue, 22 Sep 2015 14:41:55 -0700
+Subject: [PATCH 0940/1023] CLOUDERA-BUILD. merge MAPREDUCE-6481,
+ MAPREDUCE-5948 and MAPREDUCE-5918 to MR1.
+
+Change-Id: I18c79380a8aaab4419e744c2233a94ad2b87e205
+(cherry picked from commit 179d35ae262514c7d4ab0df7d3d614434d0c6c8e)
+(cherry picked from commit 71e42d90326bc5946b55cbc365b9e1fc37b01dba)
+---
+ .../org/apache/hadoop/mapred/LineRecordReader.java |    5 +-
+ .../mapreduce/lib/input/LineRecordReader.java      |    4 +-
+ .../lib/input/UncompressedSplitLineReader.java     |  100 ++++++++
+ .../apache/hadoop/mapred/TestLineRecordReader.java |  246 +++++++++++++++++-
+ .../mapreduce/lib/input/TestLineRecordReader.java  |  267 +++++++++++++++++++-
+ 5 files changed, 610 insertions(+), 12 deletions(-)
+ create mode 100644 hadoop-mapreduce1-project/src/mapred/org/apache/hadoop/mapreduce/lib/input/UncompressedSplitLineReader.java
+
+diff --git a/hadoop-mapreduce1-project/src/mapred/org/apache/hadoop/mapred/LineRecordReader.java b/hadoop-mapreduce1-project/src/mapred/org/apache/hadoop/mapred/LineRecordReader.java
+index 769c2b3..9071d2b 100644
+--- a/hadoop-mapreduce1-project/src/mapred/org/apache/hadoop/mapred/LineRecordReader.java
++++ b/hadoop-mapreduce1-project/src/mapred/org/apache/hadoop/mapred/LineRecordReader.java
+@@ -36,6 +36,7 @@
+ import org.apache.hadoop.io.compress.SplittableCompressionCodec;
+ import org.apache.hadoop.mapreduce.lib.input.CompressedSplitLineReader;
+ import org.apache.hadoop.mapreduce.lib.input.SplitLineReader;
++import org.apache.hadoop.mapreduce.lib.input.UncompressedSplitLineReader;
+ import org.apache.commons.logging.LogFactory;
+ import org.apache.commons.logging.Log;
+ 
+@@ -120,7 +121,8 @@ public LineRecordReader(Configuration job, FileSplit split,
+       }
+     } else {
+       fileIn.seek(start);
+-      in = new SplitLineReader(fileIn, job, recordDelimiter);
++      in = new UncompressedSplitLineReader(
++          fileIn, job, recordDelimiter, split.getLength());
+       filePosition = fileIn;
+     }
+     // If this is not the first split, we always throw away first record
+@@ -285,6 +287,7 @@ public synchronized void close() throws IOException {
+     } finally {
+       if (decompressor != null) {
+         CodecPool.returnDecompressor(decompressor);
++        decompressor = null;
+       }
+     }
+   }
+diff --git a/hadoop-mapreduce1-project/src/mapred/org/apache/hadoop/mapreduce/lib/input/LineRecordReader.java b/hadoop-mapreduce1-project/src/mapred/org/apache/hadoop/mapreduce/lib/input/LineRecordReader.java
+index e5424c7..61606ab 100644
+--- a/hadoop-mapreduce1-project/src/mapred/org/apache/hadoop/mapreduce/lib/input/LineRecordReader.java
++++ b/hadoop-mapreduce1-project/src/mapred/org/apache/hadoop/mapreduce/lib/input/LineRecordReader.java
+@@ -100,7 +100,8 @@ public void initialize(InputSplit genericSplit,
+       }
+     } else {
+       fileIn.seek(start);
+-      in = new SplitLineReader(fileIn, job, this.recordDelimiterBytes);
++      in = new UncompressedSplitLineReader(
++          fileIn, job, this.recordDelimiterBytes, split.getLength());
+       filePosition = fileIn;
+     }
+     // If this is not the first split, we always throw away first record
+@@ -235,6 +236,7 @@ public synchronized void close() throws IOException {
+     } finally {
+       if (decompressor != null) {
+         CodecPool.returnDecompressor(decompressor);
++        decompressor = null;
+       }
+     }
+   }
+diff --git a/hadoop-mapreduce1-project/src/mapred/org/apache/hadoop/mapreduce/lib/input/UncompressedSplitLineReader.java b/hadoop-mapreduce1-project/src/mapred/org/apache/hadoop/mapreduce/lib/input/UncompressedSplitLineReader.java
+new file mode 100644
+index 0000000..38491b0
+--- /dev/null
++++ b/hadoop-mapreduce1-project/src/mapred/org/apache/hadoop/mapreduce/lib/input/UncompressedSplitLineReader.java
+@@ -0,0 +1,100 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package org.apache.hadoop.mapreduce.lib.input;
++
++import java.io.IOException;
++import java.io.InputStream;
++
++import org.apache.hadoop.classification.InterfaceAudience;
++import org.apache.hadoop.classification.InterfaceStability;
++import org.apache.hadoop.conf.Configuration;
++import org.apache.hadoop.fs.FSDataInputStream;
++import org.apache.hadoop.io.Text;
++
++/**
++ * SplitLineReader for uncompressed files.
++ * This class can split the file correctly even if the delimiter is multi-bytes.
++ */
++@InterfaceAudience.Private
++@InterfaceStability.Unstable
++public class UncompressedSplitLineReader extends SplitLineReader {
++  private boolean needAdditionalRecord = false;
++  private long splitLength;
++  /** Total bytes read from the input stream. */
++  private long totalBytesRead = 0;
++  private boolean finished = false;
++  private boolean usingCRLF;
++
++  public UncompressedSplitLineReader(FSDataInputStream in, Configuration conf,
++      byte[] recordDelimiterBytes, long splitLength) throws IOException {
++    super(in, conf, recordDelimiterBytes);
++    this.splitLength = splitLength;
++    usingCRLF = (recordDelimiterBytes == null);
++  }
++
++  @Override
++  protected int fillBuffer(InputStream in, byte[] buffer, boolean inDelimiter)
++      throws IOException {
++    int maxBytesToRead = buffer.length;
++    if (totalBytesRead < splitLength) {
++      maxBytesToRead = Math.min(maxBytesToRead,
++                                (int)(splitLength - totalBytesRead));
++    }
++    int bytesRead = in.read(buffer, 0, maxBytesToRead);
++
++    // If the split ended in the middle of a record delimiter then we need
++    // to read one additional record, as the consumer of the next split will
++    // not recognize the partial delimiter as a record.
++    // However if using the default delimiter and the next character is a
++    // linefeed then next split will treat it as a delimiter all by itself
++    // and the additional record read should not be performed.
++    if (totalBytesRead == splitLength && inDelimiter && bytesRead > 0) {
++      if (usingCRLF) {
++        needAdditionalRecord = (buffer[0] != '\n');
++      } else {
++        needAdditionalRecord = true;
++      }
++    }
++    if (bytesRead > 0) {
++      totalBytesRead += bytesRead;
++    }
++    return bytesRead;
++  }
++
++  @Override
++  public int readLine(Text str, int maxLineLength, int maxBytesToConsume)
++      throws IOException {
++    int bytesRead = 0;
++    if (!finished) {
++      // only allow at most one more record to be read after the stream
++      // reports the split ended
++      if (totalBytesRead > splitLength) {
++        finished = true;
++      }
++
++      bytesRead = super.readLine(str, maxLineLength, maxBytesToConsume);
++    }
++    return bytesRead;
++  }
++
++  @Override
++  public boolean needAdditionalRecordAfterSplit() {
++    return !finished && needAdditionalRecord;
++  }
++}
+diff --git a/hadoop-mapreduce1-project/src/test/org/apache/hadoop/mapred/TestLineRecordReader.java b/hadoop-mapreduce1-project/src/test/org/apache/hadoop/mapred/TestLineRecordReader.java
+index d19d619..214a963 100644
+--- a/hadoop-mapreduce1-project/src/test/org/apache/hadoop/mapred/TestLineRecordReader.java
++++ b/hadoop-mapreduce1-project/src/test/org/apache/hadoop/mapred/TestLineRecordReader.java
+@@ -23,9 +23,12 @@
+ import java.io.OutputStreamWriter;
+ import java.io.Reader;
+ import java.io.Writer;
++import java.util.HashSet;
++import java.util.Set;
+ 
+ import junit.framework.TestCase;
+ 
++import org.apache.commons.io.Charsets;
+ import org.apache.commons.logging.LogFactory;
+ import org.apache.commons.logging.Log;
+ import org.apache.hadoop.conf.Configuration;
+@@ -33,6 +36,9 @@
+ import org.apache.hadoop.fs.Path;
+ import org.apache.hadoop.io.LongWritable;
+ import org.apache.hadoop.io.Text;
++import org.apache.hadoop.io.compress.BZip2Codec;
++import org.apache.hadoop.io.compress.CodecPool;
++import org.apache.hadoop.io.compress.Decompressor;
+ import org.apache.hadoop.mapred.Mapper;
+ import org.apache.hadoop.mapred.Reducer;
+ import org.apache.hadoop.mapred.lib.IdentityMapper;
+@@ -197,13 +203,28 @@ private void testSplitRecords(String testFileName, long firstSplitLength)
+     long testFileSize = testFile.length();
+     Path testFilePath = new Path(testFile.getAbsolutePath());
+     Configuration conf = new Configuration();
++    testSplitRecordsForFile(conf, firstSplitLength,
++        testFileSize, testFilePath);
++  }
++
++  private void testSplitRecordsForFile(Configuration conf,
++      long firstSplitLength, long testFileSize, Path testFilePath)
++      throws IOException {
+     conf.setInt("mapred.linerecordreader.maxlength", Integer.MAX_VALUE);
+-    assertTrue("unexpected test data at " + testFile,
++    assertTrue("unexpected test data at " + testFilePath,
+         testFileSize > firstSplitLength);
++
++    String delimiter = conf.get("textinputformat.record.delimiter");
++    byte[] recordDelimiterBytes = null;
++    if (null != delimiter) {
++      recordDelimiterBytes = delimiter.getBytes(Charsets.UTF_8);
++    }
++
+     // read the data without splitting to count the records
+     FileSplit split = new FileSplit(testFilePath, 0, testFileSize,
+         (String[])null);
+-    LineRecordReader reader = new LineRecordReader(conf, split);
++    LineRecordReader reader = new LineRecordReader(conf, split,
++        recordDelimiterBytes);
+     LongWritable key = new LongWritable();
+     Text value = new Text();
+     int numRecordsNoSplits = 0;
+@@ -213,7 +234,7 @@ private void testSplitRecords(String testFileName, long firstSplitLength)
+     reader.close();
+     // count the records in the first split
+     split = new FileSplit(testFilePath, 0, firstSplitLength, (String[])null);
+-    reader = new LineRecordReader(conf, split);
++    reader = new LineRecordReader(conf, split, recordDelimiterBytes);
+     int numRecordsFirstSplit = 0;
+     while (reader.next(key,  value)) {
+       ++numRecordsFirstSplit;
+@@ -222,13 +243,13 @@ private void testSplitRecords(String testFileName, long firstSplitLength)
+     // count the records in the second split
+     split = new FileSplit(testFilePath, firstSplitLength,
+         testFileSize - firstSplitLength, (String[])null);
+-    reader = new LineRecordReader(conf, split);
++    reader = new LineRecordReader(conf, split, recordDelimiterBytes);
+     int numRecordsRemainingSplits = 0;
+     while (reader.next(key,  value)) {
+       ++numRecordsRemainingSplits;
+     }
+     reader.close();
+-    assertEquals("Unexpected number of records in bzip2 compressed split",
++    assertEquals("Unexpected number of records in split",
+         numRecordsNoSplits, numRecordsFirstSplit + numRecordsRemainingSplits);
+   }
+ 
+@@ -268,4 +289,219 @@ public void testBzip2SplitStartAtBlockMarker() throws IOException {
+     //Start next split 10 bytes from behind the end marker.
+     testSplitRecords("blockEndingInCR.txt.bz2", 136494);
+   }
++
++  @Test
++  public void testMultipleClose() throws IOException {
++    Path localCachePath = new Path(System.getProperty("test.cache.data"));
++    Path txtPath = new Path(localCachePath,
++        new Path("blockEndingInCR.txt.bz2"));
++    File testFile = new File(txtPath.toString());
++    Path testFilePath = new Path(testFile.getAbsolutePath());
++    long testFileSize = testFile.length();
++    Configuration conf = new Configuration();
++    conf.setInt("mapred.linerecordreader.maxlength", Integer.MAX_VALUE);
++    FileSplit split = new FileSplit(testFilePath, 0, testFileSize,
++        (String[])null);
++
++    LineRecordReader reader = new LineRecordReader(conf, split);
++    LongWritable key = new LongWritable();
++    Text value = new Text();
++    //noinspection StatementWithEmptyBody
++    while (reader.next(key, value)) ;
++    reader.close();
++    reader.close();
++
++    BZip2Codec codec = new BZip2Codec();
++    codec.setConf(conf);
++    Set<Decompressor> decompressors = new HashSet<Decompressor>();
++    for (int i = 0; i < 10; ++i) {
++      decompressors.add(CodecPool.getDecompressor(codec));
++    }
++    assertEquals(10, decompressors.size());
++  }
++
++  /**
++   * Writes the input test file
++   *
++   * @param conf
++   * @return Path of the file created
++   * @throws IOException
++   */
++  private Path createInputFile(Configuration conf, String data)
++      throws IOException {
++    FileSystem localFs = FileSystem.getLocal(conf);
++    Path file = new Path(inputDir, "test.txt");
++    Writer writer = new OutputStreamWriter(localFs.create(file));
++    try {
++      writer.write(data);
++    } finally {
++      writer.close();
++    }
++    return file;
++  }
++
++  @Test
++  public void testUncompressedInput() throws Exception {
++    Configuration conf = new Configuration();
++    String inputData = "abc+++def+++ghi+++"
++        + "jkl+++mno+++pqr+++stu+++vw +++xyz";
++    Path inputFile = createInputFile(conf, inputData);
++    conf.set("textinputformat.record.delimiter", "+++");
++    for (int bufferSize = 1; bufferSize <= inputData.length(); bufferSize++) {
++      for (int splitSize = 1; splitSize < inputData.length(); splitSize++) {
++        conf.setInt("io.file.buffer.size", bufferSize);
++        testSplitRecordsForFile(conf, splitSize, inputData.length(),
++            inputFile);
++      }
++    }
++  }
++
++  @Test
++  public void testUncompressedInputContainingCRLF() throws Exception {
++    Configuration conf = new Configuration();
++    String inputData = "a\r\nb\rc\nd\r\n";
++    Path inputFile = createInputFile(conf, inputData);
++    for (int bufferSize = 1; bufferSize <= inputData.length(); bufferSize++) {
++      for (int splitSize = 1; splitSize < inputData.length(); splitSize++) {
++        conf.setInt("io.file.buffer.size", bufferSize);
++        testSplitRecordsForFile(conf, splitSize, inputData.length(),
++            inputFile);
++      }
++    }
++  }
++
++  @Test
++  public void testUncompressedInputCustomDelimiterPosValue()
++      throws Exception {
++    Configuration conf = new Configuration();
++    String inputData = "1234567890ab12ab345";
++    Path inputFile = createInputFile(conf, inputData);
++    conf.setInt("io.file.buffer.size", 10);
++    conf.setInt("mapred.linerecordreader.maxlength", Integer.MAX_VALUE);
++    String delimiter = "ab";
++    byte[] recordDelimiterBytes = delimiter.getBytes(Charsets.UTF_8);
++    FileSplit split = new FileSplit(inputFile, 0, 15, (String[])null);
++    LineRecordReader reader = new LineRecordReader(conf, split,
++        recordDelimiterBytes);
++    LongWritable key = new LongWritable();
++    Text value = new Text();
++    reader.next(key, value);
++    // Get first record:"1234567890"
++    assertEquals(10, value.getLength());
++    // Position should be 12 right after "1234567890ab"
++    assertEquals(12, reader.getPos());
++    reader.next(key, value);
++    // Get second record:"12"
++    assertEquals(2, value.getLength());
++    // Position should be 16 right after "1234567890ab12ab"
++    assertEquals(16, reader.getPos());
++    reader.next(key, value);
++    // Get third record:"345"
++    assertEquals(3, value.getLength());
++    // Position should be 19 right after "1234567890ab12ab345"
++    assertEquals(19, reader.getPos());
++    assertFalse(reader.next(key, value));
++    assertEquals(19, reader.getPos());
++
++    split = new FileSplit(inputFile, 15, 4, (String[])null);
++    reader = new LineRecordReader(conf, split, recordDelimiterBytes);
++    // No record is in the second split because the second split dropped
++    // the first record, which was already reported by the first split.
++    // The position should be 19 right after "1234567890ab12ab345"
++    assertEquals(19, reader.getPos());
++    assertFalse(reader.next(key, value));
++    assertEquals(19, reader.getPos());
++
++    inputData = "123456789aab";
++    inputFile = createInputFile(conf, inputData);
++    split = new FileSplit(inputFile, 0, 12, (String[])null);
++    reader = new LineRecordReader(conf, split, recordDelimiterBytes);
++    reader.next(key, value);
++    // Get first record:"123456789a"
++    assertEquals(10, value.getLength());
++    // Position should be 12 right after "123456789aab"
++    assertEquals(12, reader.getPos());
++    assertFalse(reader.next(key, value));
++    assertEquals(12, reader.getPos());
++
++    inputData = "123456789a";
++    inputFile = createInputFile(conf, inputData);
++    split = new FileSplit(inputFile, 0, 10, (String[])null);
++    reader = new LineRecordReader(conf, split, recordDelimiterBytes);
++    reader.next(key, value);
++    // Get first record:"123456789a"
++    assertEquals(10, value.getLength());
++    // Position should be 10 right after "123456789a"
++    assertEquals(10, reader.getPos());
++    assertFalse(reader.next(key, value));
++    assertEquals(10, reader.getPos());
++
++    inputData = "123456789ab";
++    inputFile = createInputFile(conf, inputData);
++    split = new FileSplit(inputFile, 0, 11, (String[])null);
++    reader = new LineRecordReader(conf, split, recordDelimiterBytes);
++    reader.next(key, value);
++    // Get first record:"123456789"
++    assertEquals(9, value.getLength());
++    // Position should be 11 right after "123456789ab"
++    assertEquals(11, reader.getPos());
++    assertFalse(reader.next(key, value));
++    assertEquals(11, reader.getPos());
++  }
++
++  @Test
++  public void testUncompressedInputDefaultDelimiterPosValue()
++      throws Exception {
++    Configuration conf = new Configuration();
++    String inputData = "1234567890\r\n12\r\n345";
++    Path inputFile = createInputFile(conf, inputData);
++    conf.setInt("io.file.buffer.size", 10);
++    conf.setInt("mapred.linerecordreader.maxlength", Integer.MAX_VALUE);
++    FileSplit split = new FileSplit(inputFile, 0, 15, (String[])null);
++    LineRecordReader reader = new LineRecordReader(conf, split,
++        null);
++    LongWritable key = new LongWritable();
++    Text value = new Text();
++    reader.next(key, value);
++    // Get first record:"1234567890"
++    assertEquals(10, value.getLength());
++    // Position should be 12 right after "1234567890\r\n"
++    assertEquals(12, reader.getPos());
++    reader.next(key, value);
++    // Get second record:"12"
++    assertEquals(2, value.getLength());
++    // Position should be 16 right after "1234567890\r\n12\r\n"
++    assertEquals(16, reader.getPos());
++    assertFalse(reader.next(key, value));
++
++    split = new FileSplit(inputFile, 15, 4, (String[])null);
++    reader = new LineRecordReader(conf, split, null);
++    // The second split dropped the first record "\n"
++    // The position should be 16 right after "1234567890\r\n12\r\n"
++    assertEquals(16, reader.getPos());
++    reader.next(key, value);
++    // Get third record:"345"
++    assertEquals(3, value.getLength());
++    // Position should be 19 right after "1234567890\r\n12\r\n345"
++    assertEquals(19, reader.getPos());
++    assertFalse(reader.next(key, value));
++    assertEquals(19, reader.getPos());
++
++    inputData = "123456789\r\r\n";
++    inputFile = createInputFile(conf, inputData);
++    split = new FileSplit(inputFile, 0, 12, (String[])null);
++    reader = new LineRecordReader(conf, split, null);
++    reader.next(key, value);
++    // Get first record:"123456789"
++    assertEquals(9, value.getLength());
++    // Position should be 10 right after "123456789\r"
++    assertEquals(10, reader.getPos());
++    reader.next(key, value);
++    // Get second record:""
++    assertEquals(0, value.getLength());
++    // Position should be 12 right after "123456789\r\r\n"
++    assertEquals(12, reader.getPos());
++    assertFalse(reader.next(key, value));
++    assertEquals(12, reader.getPos());
++  }
+ }
+\ No newline at end of file
+diff --git a/hadoop-mapreduce1-project/src/test/org/apache/hadoop/mapreduce/lib/input/TestLineRecordReader.java b/hadoop-mapreduce1-project/src/test/org/apache/hadoop/mapreduce/lib/input/TestLineRecordReader.java
+index 95992fd..aa38280 100644
+--- a/hadoop-mapreduce1-project/src/test/org/apache/hadoop/mapreduce/lib/input/TestLineRecordReader.java
++++ b/hadoop-mapreduce1-project/src/test/org/apache/hadoop/mapreduce/lib/input/TestLineRecordReader.java
+@@ -24,14 +24,22 @@
+ import java.io.OutputStreamWriter;
+ import java.io.Reader;
+ import java.io.Writer;
++import java.util.HashSet;
++import java.util.Set;
+ 
+ import junit.framework.TestCase;
+ 
++import org.apache.commons.io.Charsets;
+ import org.apache.commons.logging.LogFactory;
+ import org.apache.commons.logging.Log;
+ import org.apache.hadoop.conf.Configuration;
+ import org.apache.hadoop.fs.FileSystem;
+ import org.apache.hadoop.fs.Path;
++import org.apache.hadoop.io.LongWritable;
++import org.apache.hadoop.io.Text;
++import org.apache.hadoop.io.compress.BZip2Codec;
++import org.apache.hadoop.io.compress.CodecPool;
++import org.apache.hadoop.io.compress.Decompressor;
+ import org.apache.hadoop.mapreduce.Job;
+ import org.apache.hadoop.mapreduce.Mapper;
+ import org.apache.hadoop.mapreduce.Reducer;
+@@ -59,16 +67,28 @@ private void testSplitRecords(String testFileName, long firstSplitLength)
+     long testFileSize = testFile.length();
+     Path testFilePath = new Path(testFile.getAbsolutePath());
+     Configuration conf = new Configuration();
++    testSplitRecordsForFile(conf, firstSplitLength,
++        testFileSize, testFilePath);
++  }
++
++  private void testSplitRecordsForFile(Configuration conf,
++      long firstSplitLength, long testFileSize, Path testFilePath)
++      throws IOException {
+     conf.setInt("mapred.linerecordreader.maxlength", Integer.MAX_VALUE);
+-    assertTrue("unexpected test data at " + testFile,
++    assertTrue("unexpected test data at " + testFilePath,
+         testFileSize > firstSplitLength);
+ 
++    String delimiter = conf.get("textinputformat.record.delimiter");
++    byte[] recordDelimiterBytes = null;
++    if (null != delimiter) {
++      recordDelimiterBytes = delimiter.getBytes(Charsets.UTF_8);
++    }
+     TaskAttemptContext context = new TaskAttemptContextImpl(conf, new TaskAttemptID());
+ 
+     // read the data without splitting to count the records
+     FileSplit split = new FileSplit(testFilePath, 0, testFileSize,
+         (String[])null);
+-    LineRecordReader reader = new LineRecordReader();
++    LineRecordReader reader = new LineRecordReader(recordDelimiterBytes);
+     reader.initialize(split, context);
+     int numRecordsNoSplits = 0;
+     while (reader.nextKeyValue()) {
+@@ -78,7 +98,7 @@ private void testSplitRecords(String testFileName, long firstSplitLength)
+ 
+     // count the records in the first split
+     split = new FileSplit(testFilePath, 0, firstSplitLength, (String[])null);
+-    reader = new LineRecordReader();
++    reader = new LineRecordReader(recordDelimiterBytes);
+     reader.initialize(split, context);
+     int numRecordsFirstSplit = 0;
+     while (reader.nextKeyValue()) {
+@@ -89,7 +109,7 @@ private void testSplitRecords(String testFileName, long firstSplitLength)
+     // count the records in the second split
+     split = new FileSplit(testFilePath, firstSplitLength,
+         testFileSize - firstSplitLength, (String[])null);
+-    reader = new LineRecordReader();
++    reader = new LineRecordReader(recordDelimiterBytes);
+     reader.initialize(split, context);
+     int numRecordsRemainingSplits = 0;
+     while (reader.nextKeyValue()) {
+@@ -97,7 +117,7 @@ private void testSplitRecords(String testFileName, long firstSplitLength)
+     }
+     reader.close();
+ 
+-    assertEquals("Unexpected number of records in bzip2 compressed split",
++    assertEquals("Unexpected number of records in split",
+         numRecordsNoSplits, numRecordsFirstSplit + numRecordsRemainingSplits);
+   }
+ 
+@@ -279,4 +299,241 @@ public void testStripBOM() throws IOException {
+ 
+     assertTrue("BOM is not skipped", skipBOM);
+   }
++
++  @Test
++  public void testMultipleClose() throws IOException {
++    Path localCachePath = new Path(System.getProperty("test.cache.data"));
++    Path txtPath = new Path(localCachePath,
++        new Path("blockEndingInCR.txt.bz2"));
++    File testFile = new File(txtPath.toString());
++    Path testFilePath = new Path(testFile.getAbsolutePath());
++    long testFileSize = testFile.length();
++    Configuration conf = new Configuration();
++    conf.setInt("mapred.linerecordreader.maxlength", Integer.MAX_VALUE);
++    TaskAttemptContext context =
++        new TaskAttemptContextImpl(conf, new TaskAttemptID());
++    FileSplit split = new FileSplit(testFilePath, 0, testFileSize,
++        (String[])null);
++
++    LineRecordReader reader = new LineRecordReader();
++    reader.initialize(split, context);
++    //noinspection StatementWithEmptyBody
++    while (reader.nextKeyValue()) ;
++    reader.close();
++    reader.close();
++
++    BZip2Codec codec = new BZip2Codec();
++    codec.setConf(conf);
++    Set<Decompressor> decompressors = new HashSet<Decompressor>();
++    for (int i = 0; i < 10; ++i) {
++      decompressors.add(CodecPool.getDecompressor(codec));
++    }
++    assertEquals(10, decompressors.size());
++  }
++
++  /**
++   * Writes the input test file
++   *
++   * @param conf
++   * @return Path of the file created
++   * @throws IOException
++   */
++  private Path createInputFile(Configuration conf, String data)
++      throws IOException {
++    FileSystem localFs = FileSystem.getLocal(conf);
++    Path file = new Path(inputDir, "test.txt");
++    Writer writer = new OutputStreamWriter(localFs.create(file));
++    try {
++      writer.write(data);
++    } finally {
++      writer.close();
++    }
++    return file;
++  }
++
++  @Test
++  public void testUncompressedInput() throws Exception {
++    Configuration conf = new Configuration();
++    String inputData = "abc+++def+++ghi+++"
++        + "jkl+++mno+++pqr+++stu+++vw +++xyz";
++    Path inputFile = createInputFile(conf, inputData);
++    conf.set("textinputformat.record.delimiter", "+++");
++    for (int bufferSize = 1; bufferSize <= inputData.length(); bufferSize++) {
++      for (int splitSize = 1; splitSize < inputData.length(); splitSize++) {
++        conf.setInt("io.file.buffer.size", bufferSize);
++        testSplitRecordsForFile(conf, splitSize, inputData.length(),
++            inputFile);
++      }
++    }
++  }
++
++  @Test
++  public void testUncompressedInputContainingCRLF() throws Exception {
++    Configuration conf = new Configuration();
++    String inputData = "a\r\nb\rc\nd\r\n";
++    Path inputFile = createInputFile(conf, inputData);
++    for (int bufferSize = 1; bufferSize <= inputData.length(); bufferSize++) {
++      for (int splitSize = 1; splitSize < inputData.length(); splitSize++) {
++        conf.setInt("io.file.buffer.size", bufferSize);
++        testSplitRecordsForFile(conf, splitSize, inputData.length(),
++            inputFile);
++      }
++    }
++  }
++
++  @Test
++  public void testUncompressedInputCustomDelimiterPosValue()
++      throws Exception {
++    Configuration conf = new Configuration();
++    String inputData = "1234567890ab12ab345";
++    Path inputFile = createInputFile(conf, inputData);
++    conf.setInt("io.file.buffer.size", 10);
++    conf.setInt("mapred.linerecordreader.maxlength", Integer.MAX_VALUE);
++    String delimiter = "ab";
++    byte[] recordDelimiterBytes = delimiter.getBytes(Charsets.UTF_8);
++    FileSplit split = new FileSplit(inputFile, 0, 15, (String[])null);
++    TaskAttemptContext context = new TaskAttemptContextImpl(conf,
++        new TaskAttemptID());
++    LineRecordReader reader = new LineRecordReader(recordDelimiterBytes);
++    reader.initialize(split, context);
++    LongWritable key;
++    Text value;
++    reader.nextKeyValue();
++    key = reader.getCurrentKey();
++    value = reader.getCurrentValue();
++    // Get first record:"1234567890"
++    assertEquals(10, value.getLength());
++    assertEquals(0, key.get());
++    reader.nextKeyValue();
++    // Get second record:"12"
++    assertEquals(2, value.getLength());
++    // Key should be 12 right after "1234567890ab"
++    assertEquals(12, key.get());
++    reader.nextKeyValue();
++    // Get third record:"345"
++    assertEquals(3, value.getLength());
++    // Key should be 16 right after "1234567890ab12ab"
++    assertEquals(16, key.get());
++    assertFalse(reader.nextKeyValue());
++    // Key should be 19 right after "1234567890ab12ab345"
++    assertEquals(19, key.get());
++
++    split = new FileSplit(inputFile, 15, 4, (String[])null);
++    reader = new LineRecordReader(recordDelimiterBytes);
++    reader.initialize(split, context);
++    // No record is in the second split because the second split dropped
++    // the first record, which was already reported by the first split.
++    assertFalse(reader.nextKeyValue());
++
++    inputData = "123456789aab";
++    inputFile = createInputFile(conf, inputData);
++    split = new FileSplit(inputFile, 0, 12, (String[])null);
++    reader = new LineRecordReader(recordDelimiterBytes);
++    reader.initialize(split, context);
++    reader.nextKeyValue();
++    key = reader.getCurrentKey();
++    value = reader.getCurrentValue();
++    // Get first record:"123456789a"
++    assertEquals(10, value.getLength());
++    assertEquals(0, key.get());
++    assertFalse(reader.nextKeyValue());
++    // Key should be 12 right after "123456789aab"
++    assertEquals(12, key.get());
++
++    inputData = "123456789a";
++    inputFile = createInputFile(conf, inputData);
++    split = new FileSplit(inputFile, 0, 10, (String[])null);
++    reader = new LineRecordReader(recordDelimiterBytes);
++    reader.initialize(split, context);
++    reader.nextKeyValue();
++    key = reader.getCurrentKey();
++    value = reader.getCurrentValue();
++    // Get first record:"123456789a"
++    assertEquals(10, value.getLength());
++    assertEquals(0, key.get());
++    assertFalse(reader.nextKeyValue());
++    // Key should be 10 right after "123456789a"
++    assertEquals(10, key.get());
++
++    inputData = "123456789ab";
++    inputFile = createInputFile(conf, inputData);
++    split = new FileSplit(inputFile, 0, 11, (String[])null);
++    reader = new LineRecordReader(recordDelimiterBytes);
++    reader.initialize(split, context);
++    reader.nextKeyValue();
++    key = reader.getCurrentKey();
++    value = reader.getCurrentValue();
++    // Get first record:"123456789"
++    assertEquals(9, value.getLength());
++    assertEquals(0, key.get());
++    assertFalse(reader.nextKeyValue());
++    // Key should be 11 right after "123456789ab"
++    assertEquals(11, key.get());
++  }
++
++  @Test
++  public void testUncompressedInputDefaultDelimiterPosValue()
++      throws Exception {
++    Configuration conf = new Configuration();
++    String inputData = "1234567890\r\n12\r\n345";
++    Path inputFile = createInputFile(conf, inputData);
++    conf.setInt("io.file.buffer.size", 10);
++    conf.setInt("mapred.linerecordreader.maxlength", Integer.MAX_VALUE);
++    FileSplit split = new FileSplit(inputFile, 0, 15, (String[])null);
++    TaskAttemptContext context = new TaskAttemptContextImpl(conf,
++        new TaskAttemptID());
++    LineRecordReader reader = new LineRecordReader(null);
++    reader.initialize(split, context);
++    LongWritable key;
++    Text value;
++    reader.nextKeyValue();
++    key = reader.getCurrentKey();
++    value = reader.getCurrentValue();
++    // Get first record:"1234567890"
++    assertEquals(10, value.getLength());
++    assertEquals(0, key.get());
++    reader.nextKeyValue();
++    // Get second record:"12"
++    assertEquals(2, value.getLength());
++    // Key should be 12 right after "1234567890\r\n"
++    assertEquals(12, key.get());
++    assertFalse(reader.nextKeyValue());
++    // Key should be 16 right after "1234567890\r\n12\r\n"
++    assertEquals(16, key.get());
++
++    split = new FileSplit(inputFile, 15, 4, (String[])null);
++    reader = new LineRecordReader(null);
++    reader.initialize(split, context);
++    // The second split dropped the first record "\n"
++    reader.nextKeyValue();
++    key = reader.getCurrentKey();
++    value = reader.getCurrentValue();
++    // Get third record:"345"
++    assertEquals(3, value.getLength());
++    // Key should be 16 right after "1234567890\r\n12\r\n"
++    assertEquals(16, key.get());
++    assertFalse(reader.nextKeyValue());
++    // Key should be 19 right after "1234567890\r\n12\r\n345"
++    assertEquals(19, key.get());
++
++    inputData = "123456789\r\r\n";
++    inputFile = createInputFile(conf, inputData);
++    split = new FileSplit(inputFile, 0, 12, (String[])null);
++    reader = new LineRecordReader(null);
++    reader.initialize(split, context);
++    reader.nextKeyValue();
++    key = reader.getCurrentKey();
++    value = reader.getCurrentValue();
++    // Get first record:"123456789"
++    assertEquals(9, value.getLength());
++    assertEquals(0, key.get());
++    reader.nextKeyValue();
++    // Get second record:""
++    assertEquals(0, value.getLength());
++    // Key should be 10 right after "123456789\r"
++    assertEquals(10, key.get());
++    assertFalse(reader.nextKeyValue());
++    // Key should be 12 right after "123456789\r\r\n"
++    assertEquals(12, key.get());
++  }
+ }
+-- 
+1.7.9.5
+

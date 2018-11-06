@@ -1,0 +1,109 @@
+From 1b62e7974f33f237eeb3b2e67eea47377e9f58ef Mon Sep 17 00:00:00 2001
+From: "Colin P. McCabe" <cmccabe@cloudera.com>
+Date: Fri, 4 Dec 2015 12:15:53 -0800
+Subject: [PATCH 0992/1023] HDFS-9267. TestDiskError should get stored
+ replicas through FsDatasetTestUtils. (Lei (Eddy)
+ Xu via Colin P. McCabe)
+
+(cherry picked from commit e02bbeb8862ee5bca572a0252e8ff3a3699eff5a)
+(cherry picked from commit 3beedc177ddba7a78a5de0aa21cf5bf2775072a0)
+
+Change-Id: I6e289636f0f6f301303900a831c3f03bfa2d0265
+(cherry picked from commit 4bf5c5371c93b30360128056ae7a0e960a5fe29f)
+---
+ .../hdfs/server/datanode/FsDatasetTestUtils.java   |    6 ++++-
+ .../hadoop/hdfs/server/datanode/TestDiskError.java |    9 +++-----
+ .../fsdataset/impl/FsDatasetImplTestUtils.java     |   23 ++++++++++++++++++++
+ 3 files changed, 31 insertions(+), 7 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/FsDatasetTestUtils.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/FsDatasetTestUtils.java
+index fd47705..e89e1f2 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/FsDatasetTestUtils.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/FsDatasetTestUtils.java
+@@ -29,6 +29,7 @@
+ 
+ import java.io.FileNotFoundException;
+ import java.io.IOException;
++import java.util.Iterator;
+ 
+ /**
+  * Provide block access for FsDataset white box tests.
+@@ -251,4 +252,7 @@ Replica createReplicaUnderRecovery(ExtendedBlock block, long recoveryId)
+    */
+   void changeStoredGenerationStamp(ExtendedBlock block, long newGenStamp)
+       throws IOException;
+-}
++
++  /** Get all stored replicas in the specified block pool. */
++  Iterator<Replica> getStoredReplicas(String bpid) throws IOException;
++}
+\ No newline at end of file
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestDiskError.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestDiskError.java
+index 89201c6..e9ae9a5 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestDiskError.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestDiskError.java
+@@ -140,7 +140,8 @@ public void testReplicationError() throws Exception {
+     cluster.waitActive();
+     final int sndNode = 1;
+     DataNode datanode = cluster.getDataNodes().get(sndNode);
+-    
++    FsDatasetTestUtils utils = cluster.getFsDatasetTestUtils(datanode);
++
+     // replicate the block to the second datanode
+     InetSocketAddress target = datanode.getXferAddress();
+     Socket s = new Socket(target.getAddress(), target.getPort());
+@@ -161,11 +162,7 @@ public void testReplicationError() throws Exception {
+ 
+     // the temporary block & meta files should be deleted
+     String bpid = cluster.getNamesystem().getBlockPoolId();
+-    File storageDir = cluster.getInstanceStorageDir(sndNode, 0);
+-    File dir1 = MiniDFSCluster.getRbwDir(storageDir, bpid);
+-    storageDir = cluster.getInstanceStorageDir(sndNode, 1);
+-    File dir2 = MiniDFSCluster.getRbwDir(storageDir, bpid);
+-    while (dir1.listFiles().length != 0 || dir2.listFiles().length != 0) {
++    while (utils.getStoredReplicas(bpid).hasNext()) {
+       Thread.sleep(100);
+     }
+ 
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetImplTestUtils.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetImplTestUtils.java
+index 320ae9f..f67eeb8 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetImplTestUtils.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetImplTestUtils.java
+@@ -47,6 +47,9 @@
+ import java.io.IOException;
+ import java.io.RandomAccessFile;
+ import java.nio.channels.FileChannel;
++import java.util.ArrayList;
++import java.util.Iterator;
++import java.util.List;
+ import java.nio.file.Files;
+ import java.nio.file.StandardCopyOption;
+ import java.util.Random;
+@@ -377,4 +380,24 @@ public void changeStoredGenerationStamp(
+     Files.move(metaFile.toPath(), newMetaFile.toPath(),
+         StandardCopyOption.ATOMIC_MOVE);
+   }
++
++  @Override
++  public Iterator<Replica> getStoredReplicas(String bpid) throws IOException {
++    // Reload replicas from the disk.
++    ReplicaMap replicaMap = new ReplicaMap(dataset);
++    try (FsVolumeReferences refs = dataset.getFsVolumeReferences()) {
++      for (FsVolumeSpi vol : refs) {
++        FsVolumeImpl volume = (FsVolumeImpl) vol;
++        volume.getVolumeMap(bpid, replicaMap, dataset.ramDiskReplicaTracker);
++      }
++    }
++
++    // Cast ReplicaInfo to Replica, because ReplicaInfo assumes a file-based
++    // FsVolumeSpi implementation.
++    List<Replica> ret = new ArrayList<>();
++    if (replicaMap.replicas(bpid) != null) {
++      ret.addAll(replicaMap.replicas(bpid));
++    }
++    return ret.iterator();
++  }
+ }
+-- 
+1.7.9.5
+

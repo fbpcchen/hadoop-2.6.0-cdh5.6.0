@@ -1,0 +1,122 @@
+From c90d4be327e7e6fabc41bf55fa600645d570db80 Mon Sep 17 00:00:00 2001
+From: Jian He <jianhe@apache.org>
+Date: Wed, 5 Aug 2015 16:12:45 -0700
+Subject: [PATCH 0847/1023] HADOOP-11932. MetricsSinkAdapter may hang  when
+ being stopped. Contributed by Brahma Reddy
+ Battula (cherry picked from commit
+ f59612edd74d1bef2b60870c24c1f67c56b2b3cb)
+
+(cherry picked from commit 5950c1f6f8ac6f514f8d2e8bfbd1f71747b097de)
+(cherry picked from commit d8ddfea491a7ccf5c074eb339f06015186c0d2b0)
+
+Change-Id: I5c50922efe47ed5f5c0dd5cecee63f7e645b8ecd
+(cherry picked from commit 2da1cb4118883f3792c76a6db2b88f26ce971404)
+---
+ .../hadoop/metrics2/impl/MetricsSinkAdapter.java   |    6 +-
+ .../metrics2/impl/TestMetricsSystemImpl.java       |   60 ++++++++++++++++++++
+ 2 files changed, 63 insertions(+), 3 deletions(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/metrics2/impl/MetricsSinkAdapter.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/metrics2/impl/MetricsSinkAdapter.java
+index de39a13..da24b8e 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/metrics2/impl/MetricsSinkAdapter.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/metrics2/impl/MetricsSinkAdapter.java
+@@ -198,15 +198,15 @@ void start() {
+   void stop() {
+     stopping = true;
+     sinkThread.interrupt();
++    if (sink instanceof Closeable) {
++      IOUtils.cleanup(LOG, (Closeable)sink);
++    }
+     try {
+       sinkThread.join();
+     }
+     catch (InterruptedException e) {
+       LOG.warn("Stop interrupted", e);
+     }
+-    if (sink instanceof Closeable) {
+-      IOUtils.cleanup(LOG, (Closeable)sink);
+-    }
+   }
+ 
+   String name() {
+diff --git a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/metrics2/impl/TestMetricsSystemImpl.java b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/metrics2/impl/TestMetricsSystemImpl.java
+index d59e80b..b5ebb93 100644
+--- a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/metrics2/impl/TestMetricsSystemImpl.java
++++ b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/metrics2/impl/TestMetricsSystemImpl.java
+@@ -18,6 +18,8 @@
+ 
+ package org.apache.hadoop.metrics2.impl;
+ 
++import java.io.Closeable;
++import java.io.IOException;
+ import java.util.*;
+ import java.util.concurrent.*;
+ import java.util.concurrent.atomic.*;
+@@ -434,6 +436,64 @@ private void checkMetricsRecords(List<MetricsRecord> recs) {
+                new MetricGaugeInt(MsInfo.NumActiveSinks, 3)));
+   }
+ 
++  /**
++   * Class to verify HADOOP-11932. Instead of reading from HTTP, going in loop
++   * until closed.
++   */
++  private static class TestClosableSink implements MetricsSink, Closeable {
++
++    boolean closed = false;
++    CountDownLatch collectingLatch;
++
++    public TestClosableSink(CountDownLatch collectingLatch) {
++      this.collectingLatch = collectingLatch;
++    }
++
++    @Override
++    public void init(SubsetConfiguration conf) {
++    }
++
++    @Override
++    public void close() throws IOException {
++      closed = true;
++    }
++
++    @Override
++    public void putMetrics(MetricsRecord record) {
++      while (!closed) {
++        collectingLatch.countDown();
++      }
++    }
++
++    @Override
++    public void flush() {
++    }
++  }
++
++  /**
++   * HADOOP-11932
++   */
++  @Test(timeout = 5000)
++  public void testHangOnSinkRead() throws Exception {
++    new ConfigBuilder().add("*.period", 8)
++        .add("test.sink.test.class", TestSink.class.getName())
++        .save(TestMetricsConfig.getTestFilename("hadoop-metrics2-test"));
++    MetricsSystemImpl ms = new MetricsSystemImpl("Test");
++    ms.start();
++    try {
++      CountDownLatch collectingLatch = new CountDownLatch(1);
++      MetricsSink sink = new TestClosableSink(collectingLatch);
++      ms.registerSink("closeableSink",
++          "The sink will be used to test closeability", sink);
++      // trigger metric collection first time
++      ms.onTimerEvent();
++      // Make sure that sink is collecting metrics
++      assertTrue(collectingLatch.await(1, TimeUnit.SECONDS));
++    } finally {
++      ms.stop();
++    }
++  }
++
+   @Metrics(context="test")
+   private static class TestSource {
+     @Metric("C1 desc") MutableCounterLong c1;
+-- 
+1.7.9.5
+

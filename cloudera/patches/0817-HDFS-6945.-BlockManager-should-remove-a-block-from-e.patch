@@ -1,0 +1,93 @@
+From e820519087531ed7ce9976235d440c25fa844e85 Mon Sep 17 00:00:00 2001
+From: Akira Ajisaka <aajisaka@apache.org>
+Date: Wed, 1 Apr 2015 09:07:28 +0900
+Subject: [PATCH 0817/1023] HDFS-6945. BlockManager should remove a block from
+ excessReplicateMap and decrement ExcessBlocks
+ metric when the block is removed. (aajisaka)
+
+(cherry picked from commit 18a91fe4df0448d9f7de91602646ecf5a51c52e4)
+(cherry picked from commit b85bbca74565b18dfa6689c9545d07bff5d31f83)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt
+
+Change-Id: I28832068c3f2139b76d61aa0e27e73a43cc8fd57
+(cherry picked from commit 668c1b44b02d52ad10557337cb151ee67e83c068)
+(cherry picked from commit 0d970e4982b3079d2046a0bff5d9759e14fb7eb1)
+---
+ .../hdfs/server/blockmanagement/BlockManager.java  |   22 ++++++++++++++++++--
+ .../namenode/metrics/TestNameNodeMetrics.java      |    9 ++++++--
+ 2 files changed, 27 insertions(+), 4 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlockManager.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlockManager.java
+index 787ebbb..85fd8f0 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlockManager.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlockManager.java
+@@ -3457,8 +3457,7 @@ public void removeBlock(Block block) {
+     // file already removes them from the block map below.
+     block.setNumBytes(BlockCommand.NO_ACK);
+     addToInvalidates(block);
+-    corruptReplicas.removeFromCorruptReplicasMap(block);
+-    blocksMap.removeBlock(block);
++    removeBlockFromMap(block);
+     // Remove the block from pendingReplications and neededReplications
+     pendingReplications.remove(block);
+     neededReplications.remove(block, UnderReplicatedBlocks.LEVEL);
+@@ -3633,11 +3632,30 @@ public int numCorruptReplicas(Block block) {
+   }
+ 
+   public void removeBlockFromMap(Block block) {
++    removeFromExcessReplicateMap(block);
+     blocksMap.removeBlock(block);
+     // If block is removed from blocksMap remove it from corruptReplicasMap
+     corruptReplicas.removeFromCorruptReplicasMap(block);
+   }
+ 
++  /**
++   * If a block is removed from blocksMap, remove it from excessReplicateMap.
++   */
++  private void removeFromExcessReplicateMap(Block block) {
++    for (DatanodeStorageInfo info : blocksMap.getStorages(block)) {
++      String uuid = info.getDatanodeDescriptor().getDatanodeUuid();
++      LightWeightLinkedSet<Block> excessReplicas = excessReplicateMap.get(uuid);
++      if (excessReplicas != null) {
++        if (excessReplicas.remove(block)) {
++          excessBlocksCount.decrementAndGet();
++          if (excessReplicas.isEmpty()) {
++            excessReplicateMap.remove(uuid);
++          }
++        }
++      }
++    }
++  }
++
+   public int getCapacity() {
+     return blocksMap.getCapacity();
+   }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/metrics/TestNameNodeMetrics.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/metrics/TestNameNodeMetrics.java
+index 4e11af5..a1b04ac 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/metrics/TestNameNodeMetrics.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/metrics/TestNameNodeMetrics.java
+@@ -270,12 +270,17 @@ public void testCorruptBlock() throws Exception {
+   public void testExcessBlocks() throws Exception {
+     Path file = getTestPath("testExcessBlocks");
+     createFile(file, 100, (short)2);
+-    long totalBlocks = 1;
+     NameNodeAdapter.setReplication(namesystem, file.toString(), (short)1);
+     updateMetrics();
+     MetricsRecordBuilder rb = getMetrics(NS_METRICS);
+-    assertGauge("ExcessBlocks", totalBlocks, rb);
++    assertGauge("ExcessBlocks", 1L, rb);
++
++    // verify ExcessBlocks metric is decremented and
++    // excessReplicateMap is cleared after deleting a file
+     fs.delete(file, true);
++    rb = getMetrics(NS_METRICS);
++    assertGauge("ExcessBlocks", 0L, rb);
++    assertTrue(bm.excessReplicateMap.isEmpty());
+   }
+   
+   /** Test to ensure metrics reflects missing blocks */
+-- 
+1.7.9.5
+

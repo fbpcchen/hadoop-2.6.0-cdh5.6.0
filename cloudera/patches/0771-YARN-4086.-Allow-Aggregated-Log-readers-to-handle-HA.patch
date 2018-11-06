@@ -1,0 +1,413 @@
+From 4da1ec9d906b0c4d9a02c64d91e9f76885e21aff Mon Sep 17 00:00:00 2001
+From: Robert Kanter <rkanter@apache.org>
+Date: Wed, 9 Sep 2015 18:03:04 -0700
+Subject: [PATCH 0771/1023] YARN-4086. Allow Aggregated Log readers to handle
+ HAR files (rkanter)
+
+(cherry picked from commit 6dd6ca442aba8612c3780399a42bb473e4483021)
+(cherry picked from commit ea64a9b2776119faf1258d0661e052929b2d64d6)
+
+Conflicts:
+	hadoop-yarn-project/CHANGES.txt
+	hadoop-yarn-project/hadoop-yarn/hadoop-yarn-client/pom.xml
+	hadoop-yarn-project/hadoop-yarn/hadoop-yarn-client/src/test/java/org/apache/hadoop/yarn/client/cli/TestLogsCLI.java
+
+Change-Id: Ic3038c36206fbe5e4d654a3975b6832d6ae906ca
+---
+ .../hadoop-yarn/hadoop-yarn-client/pom.xml         |   18 ++++++
+ .../apache/hadoop/yarn/client/cli/TestLogsCLI.java |   51 ++++++++++++++++
+ .../application_1440536969523_0001.har/_index      |    3 +
+ .../_masterindex                                   |    2 +
+ .../application_1440536969523_0001.har/part-0      |  Bin 0 -> 795 bytes
+ .../hadoop-yarn/hadoop-yarn-common/pom.xml         |    4 ++
+ .../hadoop/yarn/logaggregation/LogCLIHelpers.java  |   16 ++++-
+ .../yarn/webapp/log/AggregatedLogsBlock.java       |    7 +++
+ .../logaggregation/TestAggregatedLogsBlock.java    |   63 +++++++++++++++++++-
+ .../application_1440536969523_0001.har/_index      |    3 +
+ .../_masterindex                                   |    2 +
+ .../application_1440536969523_0001.har/part-0      |  Bin 0 -> 795 bytes
+ 12 files changed, 165 insertions(+), 4 deletions(-)
+ create mode 100644 hadoop-yarn-project/hadoop-yarn/hadoop-yarn-client/src/test/resources/application_1440536969523_0001.har/_SUCCESS
+ create mode 100644 hadoop-yarn-project/hadoop-yarn/hadoop-yarn-client/src/test/resources/application_1440536969523_0001.har/_index
+ create mode 100644 hadoop-yarn-project/hadoop-yarn/hadoop-yarn-client/src/test/resources/application_1440536969523_0001.har/_masterindex
+ create mode 100644 hadoop-yarn-project/hadoop-yarn/hadoop-yarn-client/src/test/resources/application_1440536969523_0001.har/part-0
+ create mode 100644 hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/test/resources/application_1440536969523_0001.har/_SUCCESS
+ create mode 100644 hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/test/resources/application_1440536969523_0001.har/_index
+ create mode 100644 hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/test/resources/application_1440536969523_0001.har/_masterindex
+ create mode 100644 hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/test/resources/application_1440536969523_0001.har/part-0
+
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-client/pom.xml b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-client/pom.xml
+index 20676e1..c3c3cb7 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-client/pom.xml
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-client/pom.xml
+@@ -149,4 +149,22 @@
+     </dependency>
+ 
+   </dependencies>
++
++  <build>
++    <plugins>
++      <plugin>
++        <groupId>org.apache.rat</groupId>
++        <artifactId>apache-rat-plugin</artifactId>
++        <configuration>
++          <excludes>
++            <exclude>src/test/resources/application_1440536969523_0001.har/_index</exclude>
++            <exclude>src/test/resources/application_1440536969523_0001.har/part-0</exclude>
++            <exclude>src/test/resources/application_1440536969523_0001.har/_masterindex</exclude>
++            <exclude>src/test/resources/application_1440536969523_0001.har/_SUCCESS</exclude>
++          </excludes>
++        </configuration>
++      </plugin>
++    </plugins>
++  </build>
++
+ </project>
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-client/src/test/java/org/apache/hadoop/yarn/client/cli/TestLogsCLI.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-client/src/test/java/org/apache/hadoop/yarn/client/cli/TestLogsCLI.java
+index ef9439d..82b807c 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-client/src/test/java/org/apache/hadoop/yarn/client/cli/TestLogsCLI.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-client/src/test/java/org/apache/hadoop/yarn/client/cli/TestLogsCLI.java
+@@ -18,6 +18,7 @@
+ 
+ package org.apache.hadoop.yarn.client.cli;
+ 
++import static org.junit.Assert.assertNotNull;
+ import static org.junit.Assert.assertTrue;
+ import static org.mockito.Matchers.any;
+ import static org.mockito.Mockito.doReturn;
+@@ -32,6 +33,8 @@
+ import java.io.PrintStream;
+ import java.io.PrintWriter;
+ import java.io.Writer;
++import java.net.URL;
++import java.util.ArrayList;
+ import java.util.Arrays;
+ import java.util.HashMap;
+ import java.util.HashSet;
+@@ -262,6 +265,54 @@ public void testFetchApplictionLogs() throws Exception {
+     fs.delete(new Path(rootLogDir), true);
+   }
+ 
++  @Test (timeout = 15000)
++  public void testFetchApplictionLogsHar() throws Exception {
++    String remoteLogRootDir = "target/logs/";
++    Configuration configuration = new Configuration();
++    configuration.setBoolean(YarnConfiguration.LOG_AGGREGATION_ENABLED, true);
++    configuration
++        .set(YarnConfiguration.NM_REMOTE_APP_LOG_DIR, remoteLogRootDir);
++    configuration.setBoolean(YarnConfiguration.YARN_ACL_ENABLE, true);
++    configuration.set(YarnConfiguration.YARN_ADMIN_ACL, "admin");
++    FileSystem fs = FileSystem.get(configuration);
++    UserGroupInformation ugi = UserGroupInformation.getCurrentUser();
++    URL harUrl = ClassLoader.getSystemClassLoader()
++        .getResource("application_1440536969523_0001.har");
++    assertNotNull(harUrl);
++    Path path =
++        new Path(remoteLogRootDir + ugi.getShortUserName()
++            + "/logs/application_1440536969523_0001");
++    if (fs.exists(path)) {
++      fs.delete(path, true);
++    }
++    assertTrue(fs.mkdirs(path));
++    Path harPath = new Path(path, "application_1440536969523_0001.har");
++    fs.copyFromLocalFile(false, new Path(harUrl.toURI()), harPath);
++    assertTrue(fs.exists(harPath));
++
++    YarnClient mockYarnClient =
++        createMockYarnClient(YarnApplicationState.FINISHED);
++    LogsCLI cli = new LogsCLIForTest(mockYarnClient);
++    cli.setConf(configuration);
++    int exitCode = cli.run(new String[]{"-applicationId",
++        "application_1440536969523_0001"});
++    assertTrue(exitCode == 0);
++    String out = sysOutStream.toString();
++    assertTrue(
++        out.contains("container_1440536969523_0001_01_000001 on host1_1111"));
++    assertTrue(out.contains("Hello stderr"));
++    assertTrue(out.contains("Hello stdout"));
++    assertTrue(out.contains("Hello syslog"));
++    assertTrue(
++        out.contains("container_1440536969523_0001_01_000002 on host2_2222"));
++    assertTrue(out.contains("Goodbye stderr"));
++    assertTrue(out.contains("Goodbye stdout"));
++    assertTrue(out.contains("Goodbye syslog"));
++    sysOutStream.reset();
++
++    fs.delete(new Path(remoteLogRootDir), true);
++  }
++
+   private static void createContainerLogInLocalDir(Path appLogsDir,
+       ContainerId containerId, FileSystem fs) throws Exception {
+     Path containerLogsDir = new Path(appLogsDir, containerId.toString());
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-client/src/test/resources/application_1440536969523_0001.har/_SUCCESS b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-client/src/test/resources/application_1440536969523_0001.har/_SUCCESS
+new file mode 100644
+index 0000000..e69de29
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-client/src/test/resources/application_1440536969523_0001.har/_index b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-client/src/test/resources/application_1440536969523_0001.har/_index
+new file mode 100644
+index 0000000..92ee728
+--- /dev/null
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-client/src/test/resources/application_1440536969523_0001.har/_index
+@@ -0,0 +1,3 @@
++%2F dir 1440540845855+504+rkanter+supergroup 0 0 host1_1111 host2_2222 
++%2Fhost1_1111 file part-0 0 394 1440540845834+420+rkanter+supergroup 
++%2Fhost2_2222 file part-0 394 400 1440540845854+420+rkanter+supergroup 
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-client/src/test/resources/application_1440536969523_0001.har/_masterindex b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-client/src/test/resources/application_1440536969523_0001.har/_masterindex
+new file mode 100644
+index 0000000..086d2b8
+--- /dev/null
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-client/src/test/resources/application_1440536969523_0001.har/_masterindex
+@@ -0,0 +1,2 @@
++3 
++0 1520266628 0 214 
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-client/src/test/resources/application_1440536969523_0001.har/part-0 b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-client/src/test/resources/application_1440536969523_0001.har/part-0
+new file mode 100644
+index 0000000000000000000000000000000000000000..fef262a81541f110716edd22e3443b2f121f8d1a
+GIT binary patch
+literal 795
+zcmca8csXO@*6Z6W?>jn7+VwDilYu?VH7MBA-;afXfq_wwf!{G8z{k_sF$5?S@969!
+z%)k-m=^7pn6lP#A%1+EHNi7m)5JXnxAMWQG1T+XLtHGd_oS#>cn3<Pa6mMu^Vqj`)
+zW@%<=YGfR5U|?Vv4?-Yd=*_@ZT#}MnRK&n!XzY=ilasFi;d6l{@=HrlB!GO7L}hVK
+zemar_n9s$)$iTqDz=iOR7SYaNVadzSOJx)|bK=YiX2F!il0+*fXSd9pRK3i+l++5a
+z>{$_RZUL}V2%5~9duC?*NHV#pC5d1yXKt{u0fQ72s`4P$T|^6cbUwoAbdL$6K%|&3
+wb<fXFNvcf65*Nr)Xt9BiqBK5?;PG+p%sHI#A%!zOp5Tg)d+_*B#TFl207%&HP5=M^
+
+literal 0
+HcmV?d00001
+
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/pom.xml b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/pom.xml
+index a0631fa..36f264a 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/pom.xml
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/pom.xml
+@@ -227,6 +227,10 @@
+             <exclude>src/main/resources/webapps/static/dt-1.9.4/css/jui-dt.css</exclude>
+             <exclude>src/main/resources/webapps/static/dt-1.9.4/css/demo_table.css</exclude>
+             <exclude>src/main/resources/webapps/static/jquery/themes-1.9.1/base/jquery-ui.css</exclude>
++            <exclude>src/test/resources/application_1440536969523_0001.har/_index</exclude>
++            <exclude>src/test/resources/application_1440536969523_0001.har/part-0</exclude>
++            <exclude>src/test/resources/application_1440536969523_0001.har/_masterindex</exclude>
++            <exclude>src/test/resources/application_1440536969523_0001.har/_SUCCESS</exclude>
+           </excludes>
+         </configuration>
+       </plugin>
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/main/java/org/apache/hadoop/yarn/logaggregation/LogCLIHelpers.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/main/java/org/apache/hadoop/yarn/logaggregation/LogCLIHelpers.java
+index 1546ece..9442e23 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/main/java/org/apache/hadoop/yarn/logaggregation/LogCLIHelpers.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/main/java/org/apache/hadoop/yarn/logaggregation/LogCLIHelpers.java
+@@ -30,6 +30,7 @@
+ import org.apache.hadoop.conf.Configuration;
+ import org.apache.hadoop.fs.FileContext;
+ import org.apache.hadoop.fs.FileStatus;
++import org.apache.hadoop.fs.HarFs;
+ import org.apache.hadoop.fs.Path;
+ import org.apache.hadoop.fs.RemoteIterator;
+ import org.apache.hadoop.yarn.api.records.ApplicationId;
+@@ -52,8 +53,9 @@ public int dumpAContainersLogs(String appId, String containerId,
+         YarnConfiguration.NM_REMOTE_APP_LOG_DIR,
+         YarnConfiguration.DEFAULT_NM_REMOTE_APP_LOG_DIR));
+     String suffix = LogAggregationUtils.getRemoteNodeLogDirSuffix(getConf());
++    ApplicationId applicationId = ConverterUtils.toApplicationId(appId);
+     Path remoteAppLogDir = LogAggregationUtils.getRemoteAppLogDir(
+-        remoteRootLogDir, ConverterUtils.toApplicationId(appId), jobOwner,
++        remoteRootLogDir, applicationId, jobOwner,
+         suffix);
+     RemoteIterator<FileStatus> nodeFiles;
+     try {
+@@ -71,6 +73,12 @@ public int dumpAContainersLogs(String appId, String containerId,
+     while (nodeFiles.hasNext()) {
+       FileStatus thisNodeFile = nodeFiles.next();
+       String fileName = thisNodeFile.getPath().getName();
++      if (fileName.equals(applicationId + ".har")) {
++        Path p = new Path("har:///"
++            + thisNodeFile.getPath().toUri().getRawPath());
++        nodeFiles = HarFs.get(p.toUri(), conf).listStatusIterator(p);
++        continue;
++      }
+       if (fileName.contains(LogAggregationUtils.getNodeString(nodeId))
+           && !fileName.endsWith(LogAggregationUtils.TMP_FILE_SUFFIX)) {
+         AggregatedLogFormat.LogReader reader = null;
+@@ -154,6 +162,12 @@ public int dumpAllContainersLogs(ApplicationId appId, String appOwner,
+     boolean foundAnyLogs = false;
+     while (nodeFiles.hasNext()) {
+       FileStatus thisNodeFile = nodeFiles.next();
++      if (thisNodeFile.getPath().getName().equals(appId + ".har")) {
++        Path p = new Path("har:///"
++            + thisNodeFile.getPath().toUri().getRawPath());
++        nodeFiles = HarFs.get(p.toUri(), conf).listStatusIterator(p);
++        continue;
++      }
+       if (!thisNodeFile.getPath().getName()
+         .endsWith(LogAggregationUtils.TMP_FILE_SUFFIX)) {
+         AggregatedLogFormat.LogReader reader =
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/main/java/org/apache/hadoop/yarn/webapp/log/AggregatedLogsBlock.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/main/java/org/apache/hadoop/yarn/webapp/log/AggregatedLogsBlock.java
+index 620d097..69fc347 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/main/java/org/apache/hadoop/yarn/webapp/log/AggregatedLogsBlock.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/main/java/org/apache/hadoop/yarn/webapp/log/AggregatedLogsBlock.java
+@@ -32,6 +32,7 @@
+ import org.apache.hadoop.conf.Configuration;
+ import org.apache.hadoop.fs.FileContext;
+ import org.apache.hadoop.fs.FileStatus;
++import org.apache.hadoop.fs.HarFs;
+ import org.apache.hadoop.fs.Path;
+ import org.apache.hadoop.fs.RemoteIterator;
+ import org.apache.hadoop.security.UserGroupInformation;
+@@ -120,6 +121,12 @@ protected void render(Block html) {
+         AggregatedLogFormat.LogReader reader = null;
+         try {
+           FileStatus thisNodeFile = nodeFiles.next();
++          if (thisNodeFile.getPath().getName().equals(applicationId + ".har")) {
++            Path p = new Path("har:///"
++                + thisNodeFile.getPath().toUri().getRawPath());
++            nodeFiles = HarFs.get(p.toUri(), conf).listStatusIterator(p);
++            continue;
++          }
+           if (!thisNodeFile.getPath().getName()
+             .contains(LogAggregationUtils.getNodeString(nodeId))
+               || thisNodeFile.getPath().getName()
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/test/java/org/apache/hadoop/yarn/logaggregation/TestAggregatedLogsBlock.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/test/java/org/apache/hadoop/yarn/logaggregation/TestAggregatedLogsBlock.java
+index 2a5762c..798406d 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/test/java/org/apache/hadoop/yarn/logaggregation/TestAggregatedLogsBlock.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/test/java/org/apache/hadoop/yarn/logaggregation/TestAggregatedLogsBlock.java
+@@ -23,6 +23,7 @@
+ import java.io.FileWriter;
+ import java.io.PrintWriter;
+ import java.io.Writer;
++import java.net.URL;
+ import java.util.Arrays;
+ import java.util.HashMap;
+ import java.util.List;
+@@ -30,6 +31,7 @@
+ 
+ import javax.servlet.http.HttpServletRequest;
+ 
++import org.apache.commons.io.FileUtils;
+ import org.apache.hadoop.conf.Configuration;
+ import org.apache.hadoop.fs.FileUtil;
+ import org.apache.hadoop.fs.Path;
+@@ -117,7 +119,8 @@ public void testBadLogs() throws Exception {
+   }
+ 
+   /**
+-   * All ok and the AggregatedLogsBlockFor should aggregate logs and show it.
++   * Reading from logs should succeed and they should be shown in the
++   * AggregatedLogsBlock html.
+    * 
+    * @throws Exception
+    */
+@@ -144,8 +147,56 @@ public void testAggregatedLogsBlock() throws Exception {
+     assertTrue(out.contains("test log1"));
+     assertTrue(out.contains("test log2"));
+     assertTrue(out.contains("test log3"));
++  }
++
++  /**
++   * Reading from logs should succeed (from a HAR archive) and they should be
++   * shown in the AggregatedLogsBlock html.
++   *
++   * @throws Exception
++   */
++  @Test
++  public void testAggregatedLogsBlockHar() throws Exception {
++    FileUtil.fullyDelete(new File("target/logs"));
++    Configuration configuration = getConfiguration();
++
++    URL harUrl = ClassLoader.getSystemClassLoader()
++        .getResource("application_1440536969523_0001.har");
++    assertNotNull(harUrl);
++    String path = "target/logs/admin/logs/application_1440536969523_0001" +
++        "/application_1440536969523_0001.har";
++    FileUtils.copyDirectory(new File(harUrl.getPath()), new File(path));
++
++    AggregatedLogsBlockForTest aggregatedBlock = getAggregatedLogsBlockForTest(
++        configuration, "admin",
++        "container_1440536969523_0001_01_000001", "host1:1111");
++    ByteArrayOutputStream data = new ByteArrayOutputStream();
++    PrintWriter printWriter = new PrintWriter(data);
++    HtmlBlock html = new HtmlBlockForTest();
++    HtmlBlock.Block block = new BlockForTest(html, printWriter, 10, false);
++    aggregatedBlock.render(block);
+ 
++    block.getWriter().flush();
++    String out = data.toString();
++    assertTrue(out.contains("Hello stderr"));
++    assertTrue(out.contains("Hello stdout"));
++    assertTrue(out.contains("Hello syslog"));
++
++    aggregatedBlock = getAggregatedLogsBlockForTest(
++        configuration, "admin",
++        "container_1440536969523_0001_01_000002", "host2:2222");
++    data = new ByteArrayOutputStream();
++    printWriter = new PrintWriter(data);
++    html = new HtmlBlockForTest();
++    block = new BlockForTest(html, printWriter, 10, false);
++    aggregatedBlock.render(block);
++    block.getWriter().flush();
++    out = data.toString();
++    assertTrue(out.contains("Goodbye stderr"));
++    assertTrue(out.contains("Goodbye stdout"));
++    assertTrue(out.contains("Goodbye syslog"));
+   }
++
+   /**
+    * Log files was deleted.
+    * @throws Exception
+@@ -188,14 +239,20 @@ private Configuration getConfiguration() {
+ 
+   private AggregatedLogsBlockForTest getAggregatedLogsBlockForTest(
+       Configuration configuration, String user, String containerId) {
++    return getAggregatedLogsBlockForTest(configuration, user, containerId,
++        "localhost:1234");
++  }
++
++  private AggregatedLogsBlockForTest getAggregatedLogsBlockForTest(
++      Configuration configuration, String user, String containerId,
++      String nodeName) {
+     HttpServletRequest request = mock(HttpServletRequest.class);
+     when(request.getRemoteUser()).thenReturn(user);
+     AggregatedLogsBlockForTest aggregatedBlock = new AggregatedLogsBlockForTest(
+         configuration);
+     aggregatedBlock.setRequest(request);
+     aggregatedBlock.moreParams().put(YarnWebParams.CONTAINER_ID, containerId);
+-    aggregatedBlock.moreParams().put(YarnWebParams.NM_NODENAME,
+-        "localhost:1234");
++    aggregatedBlock.moreParams().put(YarnWebParams.NM_NODENAME, nodeName);
+     aggregatedBlock.moreParams().put(YarnWebParams.APP_OWNER, user);
+     aggregatedBlock.moreParams().put("start", "");
+     aggregatedBlock.moreParams().put("end", "");
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/test/resources/application_1440536969523_0001.har/_SUCCESS b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/test/resources/application_1440536969523_0001.har/_SUCCESS
+new file mode 100644
+index 0000000..e69de29
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/test/resources/application_1440536969523_0001.har/_index b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/test/resources/application_1440536969523_0001.har/_index
+new file mode 100644
+index 0000000..92ee728
+--- /dev/null
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/test/resources/application_1440536969523_0001.har/_index
+@@ -0,0 +1,3 @@
++%2F dir 1440540845855+504+rkanter+supergroup 0 0 host1_1111 host2_2222 
++%2Fhost1_1111 file part-0 0 394 1440540845834+420+rkanter+supergroup 
++%2Fhost2_2222 file part-0 394 400 1440540845854+420+rkanter+supergroup 
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/test/resources/application_1440536969523_0001.har/_masterindex b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/test/resources/application_1440536969523_0001.har/_masterindex
+new file mode 100644
+index 0000000..086d2b8
+--- /dev/null
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/test/resources/application_1440536969523_0001.har/_masterindex
+@@ -0,0 +1,2 @@
++3 
++0 1520266628 0 214 
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/test/resources/application_1440536969523_0001.har/part-0 b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/test/resources/application_1440536969523_0001.har/part-0
+new file mode 100644
+index 0000000000000000000000000000000000000000..fef262a81541f110716edd22e3443b2f121f8d1a
+GIT binary patch
+literal 795
+zcmca8csXO@*6Z6W?>jn7+VwDilYu?VH7MBA-;afXfq_wwf!{G8z{k_sF$5?S@969!
+z%)k-m=^7pn6lP#A%1+EHNi7m)5JXnxAMWQG1T+XLtHGd_oS#>cn3<Pa6mMu^Vqj`)
+zW@%<=YGfR5U|?Vv4?-Yd=*_@ZT#}MnRK&n!XzY=ilasFi;d6l{@=HrlB!GO7L}hVK
+zemar_n9s$)$iTqDz=iOR7SYaNVadzSOJx)|bK=YiX2F!il0+*fXSd9pRK3i+l++5a
+z>{$_RZUL}V2%5~9duC?*NHV#pC5d1yXKt{u0fQ72s`4P$T|^6cbUwoAbdL$6K%|&3
+wb<fXFNvcf65*Nr)Xt9BiqBK5?;PG+p%sHI#A%!zOp5Tg)d+_*B#TFl207%&HP5=M^
+
+literal 0
+HcmV?d00001
+
+-- 
+1.7.9.5
+

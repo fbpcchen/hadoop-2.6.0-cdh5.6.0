@@ -1,0 +1,54 @@
+From 145cd734fb68451197b4ab3c62d3a21a6b93b0d2 Mon Sep 17 00:00:00 2001
+From: Kihwal Lee <kihwal@apache.org>
+Date: Fri, 8 May 2015 09:32:07 -0500
+Subject: [PATCH 0614/1023] HDFS-7894. Rolling upgrade readiness is not
+ updated in jmx until query command is issued.
+ Contributed by Brahma Reddy Battula. (cherry
+ picked from commit
+ 6f622672b62aa8d719060063ef0e47480cdc8655)
+
+(cherry picked from commit 802a5775f3522c57c60ae29ecb9533dbbfecfe76)
+---
+ .../hadoop/hdfs/server/namenode/FSNamesystem.java  |   23 ++++++++++++++++++--
+ 1 file changed, 21 insertions(+), 2 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSNamesystem.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSNamesystem.java
+index 8b6ac10..e0ed8ac8 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSNamesystem.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSNamesystem.java
+@@ -8533,11 +8533,30 @@ public void setNeedRollbackFsImage(boolean needRollbackFsImage) {
+ 
+   @Override  // NameNodeMXBean
+   public RollingUpgradeInfo.Bean getRollingUpgradeStatus() {
++    if (!isRollingUpgrade()) {
++      return null;
++    }
+     RollingUpgradeInfo upgradeInfo = getRollingUpgradeInfo();
+-    if (upgradeInfo != null) {
++    if (upgradeInfo.createdRollbackImages()) {
+       return new RollingUpgradeInfo.Bean(upgradeInfo);
+     }
+-    return null;
++    readLock();
++    try {
++      // check again after acquiring the read lock.
++      upgradeInfo = getRollingUpgradeInfo();
++      if (upgradeInfo == null) {
++        return null;
++      }
++      if (!upgradeInfo.createdRollbackImages()) {
++        boolean hasRollbackImage = this.getFSImage().hasRollbackFSImage();
++        upgradeInfo.setCreatedRollbackImages(hasRollbackImage);
++      }
++    } catch (IOException ioe) {
++      LOG.warn("Encountered exception setting Rollback Image", ioe);
++    } finally {
++      readUnlock();
++    }
++    return new RollingUpgradeInfo.Bean(upgradeInfo);
+   }
+ 
+   /** Is rolling upgrade in progress? */
+-- 
+1.7.9.5
+

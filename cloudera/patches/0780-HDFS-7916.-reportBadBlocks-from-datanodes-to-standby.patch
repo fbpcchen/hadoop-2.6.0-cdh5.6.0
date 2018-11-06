@@ -1,0 +1,42 @@
+From 8d4ca015df1d921449f0f8cdddce316c79daf01d Mon Sep 17 00:00:00 2001
+From: Vinayakumar B <vinayakumarb@apache.org>
+Date: Tue, 5 May 2015 11:05:37 +0530
+Subject: [PATCH 0780/1023] HDFS-7916. 'reportBadBlocks' from datanodes to
+ standby Node BPServiceActor goes for infinite
+ loop (Contributed by Vinayakumar B) Reverted
+ earlier commit
+
+(cherry picked from commit 318081ccd7af1ec02ec18f35ea95c579326be728)
+(cherry picked from commit 01bdfd794cf460ae0a399649eaae54676d101214)
+
+Change-Id: I2c07c9dce1ae411ace6f5739af8a604ef0e8c6ff
+(cherry picked from commit b0d7ec2a2775a55206b9ed52b5809bcc36200992)
+---
+ .../hdfs/server/datanode/ReportBadBlockAction.java |    4 ----
+ 1 file changed, 4 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/ReportBadBlockAction.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/ReportBadBlockAction.java
+index 0a07858..c6bb8aa 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/ReportBadBlockAction.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/ReportBadBlockAction.java
+@@ -26,7 +26,6 @@
+ import org.apache.hadoop.hdfs.protocol.LocatedBlock;
+ import org.apache.hadoop.hdfs.protocolPB.DatanodeProtocolClientSideTranslatorPB;
+ import org.apache.hadoop.hdfs.server.protocol.DatanodeRegistration;
+-import org.apache.hadoop.ipc.StandbyException;
+ 
+ /**
+  * ReportBadBlockAction is an instruction issued by {{BPOfferService}} to
+@@ -60,9 +59,6 @@ public void reportTo(DatanodeProtocolClientSideTranslatorPB bpNamenode,
+ 
+     try {
+       bpNamenode.reportBadBlocks(locatedBlock);
+-    } catch (StandbyException e) {
+-      DataNode.LOG.warn("Failed to report bad block " + block
+-          + " to standby namenode");
+     } catch (IOException e) {
+       throw new BPServiceActorActionException("Failed to report bad block "
+           + block + " to namenode: ");
+-- 
+1.7.9.5
+

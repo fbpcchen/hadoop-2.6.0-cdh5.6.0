@@ -1,0 +1,56 @@
+From 95c0a8b0ee24639bf89ba050ae8c15e1372b5f98 Mon Sep 17 00:00:00 2001
+From: Robert Kanter <rkanter@apache.org>
+Date: Tue, 6 Oct 2015 16:49:50 -0700
+Subject: [PATCH 0902/1023] MAPREDUCE-6503. archive-logs tool should use
+ HADOOP_PREFIX instead of HADOOP_HOME (rkanter)
+
+(cherry picked from commit 1bca1bb5175b5976a5a0e45b6e1c4486bdf87a0e)
+(cherry picked from commit e5bf4594cc9749bd35313243acbcc167b8764708)
+
+Conflicts:
+	hadoop-mapreduce-project/CHANGES.txt
+
+Change-Id: I146e9e474126f94f2b3841c7c0d4643887b4be3d
+---
+ .../org/apache/hadoop/tools/HadoopArchiveLogs.java |    4 ++--
+ .../apache/hadoop/tools/TestHadoopArchiveLogs.java |    2 +-
+ 2 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/hadoop-tools/hadoop-archive-logs/src/main/java/org/apache/hadoop/tools/HadoopArchiveLogs.java b/hadoop-tools/hadoop-archive-logs/src/main/java/org/apache/hadoop/tools/HadoopArchiveLogs.java
+index 8b8e77b..b633521 100644
+--- a/hadoop-tools/hadoop-archive-logs/src/main/java/org/apache/hadoop/tools/HadoopArchiveLogs.java
++++ b/hadoop-tools/hadoop-archive-logs/src/main/java/org/apache/hadoop/tools/HadoopArchiveLogs.java
+@@ -437,7 +437,7 @@ public int compare(AppInfo o1, AppInfo o2) {
+   fi
+   export HADOOP_CLIENT_OPTS="-Xmx1024m"
+   export HADOOP_CLASSPATH=/dist/share/hadoop/tools/lib/hadoop-archive-logs-2.8.0-SNAPSHOT.jar:/dist/share/hadoop/tools/lib/hadoop-archives-2.8.0-SNAPSHOT.jar
+-  "$HADOOP_HOME"/bin/hadoop org.apache.hadoop.tools.HadoopArchiveLogsRunner -appId "$appId" -user "$user" -workingDir /tmp/logs/archive-logs-work -remoteRootLogDir /tmp/logs -suffix logs
++  "$HADOOP_PREFIX"/bin/hadoop org.apache.hadoop.tools.HadoopArchiveLogsRunner -appId "$appId" -user "$user" -workingDir /tmp/logs/archive-logs-work -remoteRootLogDir /tmp/logs -suffix logs
+    */
+   @VisibleForTesting
+   void generateScript(File localScript, Path workingDir,
+@@ -471,7 +471,7 @@ void generateScript(File localScript, Path workingDir,
+       fw.write("m\"\n");
+       fw.write("export HADOOP_CLASSPATH=");
+       fw.write(classpath);
+-      fw.write("\n\"$HADOOP_HOME\"/bin/hadoop ");
++      fw.write("\n\"$HADOOP_PREFIX\"/bin/hadoop ");
+       fw.write(HadoopArchiveLogsRunner.class.getName());
+       fw.write(" -appId \"$appId\" -user \"$user\" -workingDir ");
+       fw.write(workingDir.toString());
+diff --git a/hadoop-tools/hadoop-archive-logs/src/test/java/org/apache/hadoop/tools/TestHadoopArchiveLogs.java b/hadoop-tools/hadoop-archive-logs/src/test/java/org/apache/hadoop/tools/TestHadoopArchiveLogs.java
+index 3b8a40f..95835d1 100644
+--- a/hadoop-tools/hadoop-archive-logs/src/test/java/org/apache/hadoop/tools/TestHadoopArchiveLogs.java
++++ b/hadoop-tools/hadoop-archive-logs/src/test/java/org/apache/hadoop/tools/TestHadoopArchiveLogs.java
+@@ -286,7 +286,7 @@ public void testGenerateScript() throws Exception {
+     Assert.assertEquals("fi", lines[12]);
+     Assert.assertEquals("export HADOOP_CLIENT_OPTS=\"-Xmx1024m\"", lines[13]);
+     Assert.assertTrue(lines[14].startsWith("export HADOOP_CLASSPATH="));
+-    Assert.assertEquals("\"$HADOOP_HOME\"/bin/hadoop org.apache.hadoop.tools." +
++    Assert.assertEquals("\"$HADOOP_PREFIX\"/bin/hadoop org.apache.hadoop.tools." +
+         "HadoopArchiveLogsRunner -appId \"$appId\" -user \"$user\" -workingDir "
+         + workingDir.toString() + " -remoteRootLogDir " +
+         remoteRootLogDir.toString() + " -suffix " + suffix, lines[15]);
+-- 
+1.7.9.5
+

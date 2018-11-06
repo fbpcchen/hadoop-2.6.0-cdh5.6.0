@@ -1,0 +1,563 @@
+From 43916b2c701360ce1c62e33a62cba5f05163bd27 Mon Sep 17 00:00:00 2001
+From: Colin Patrick Mccabe <cmccabe@cloudera.com>
+Date: Tue, 25 Aug 2015 14:09:13 -0700
+Subject: [PATCH 0788/1023] HDFS-8846. Add a unit test for INotify
+ functionality across a layout version upgrade
+ (Zhe Zhang via Colin P. McCabe)
+
+(cherry picked from commit a4d9acc51d1a977bc333da17780c00c72e8546f1)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt
+	hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDFSUpgrade.java
+
+Change-Id: Ie33ab003f5da8e3d658a98936c08c4a199e227c6
+(cherry picked from commit 3b258193ff80c0f2739313b9d35898eeb814d74b)
+---
+ .../hdfs/TestDFSInotifyEventInputStream.java       |    2 +-
+ .../org/apache/hadoop/hdfs/TestDFSUpgrade.java     |   78 +-------------
+ .../hadoop/hdfs/TestDFSUpgradeFromImage.java       |  107 +++++++++++++++++++-
+ .../src/test/resources/hadoop-252-dfs-dir.tgz      |  Bin 0 -> 14112 bytes
+ 4 files changed, 105 insertions(+), 82 deletions(-)
+ create mode 100644 hadoop-hdfs-project/hadoop-hdfs/src/test/resources/hadoop-252-dfs-dir.tgz
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDFSInotifyEventInputStream.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDFSInotifyEventInputStream.java
+index f7dc0b2..3ac85fb 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDFSInotifyEventInputStream.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDFSInotifyEventInputStream.java
+@@ -50,7 +50,7 @@
+   private static final Log LOG = LogFactory.getLog(
+       TestDFSInotifyEventInputStream.class);
+ 
+-  private static EventBatch waitForNextEvents(DFSInotifyEventInputStream eis)
++  public static EventBatch waitForNextEvents(DFSInotifyEventInputStream eis)
+     throws IOException, MissingEventsException {
+     EventBatch batch = null;
+     while ((batch = eis.poll()) == null);
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDFSUpgrade.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDFSUpgrade.java
+index 9a7fcb1..2a00746 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDFSUpgrade.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDFSUpgrade.java
+@@ -28,19 +28,13 @@
+ import static org.junit.Assert.fail;
+ 
+ import java.io.File;
+-import java.io.FilenameFilter;
+ import java.io.IOException;
+-import java.nio.file.Files;
+-import java.util.List;
+ import java.util.regex.Pattern;
+ 
+-import com.google.common.base.Preconditions;
+ import org.apache.commons.logging.Log;
+ import org.apache.commons.logging.LogFactory;
+ import org.apache.hadoop.conf.Configuration;
+ import org.apache.hadoop.hdfs.protocol.HdfsConstants;
+-import org.apache.hadoop.hdfs.inotify.Event;
+-import org.apache.hadoop.hdfs.inotify.EventBatch;
+ import org.apache.hadoop.hdfs.protocol.HdfsConstants.RollingUpgradeAction;
+ import org.apache.hadoop.hdfs.protocol.HdfsConstants.SafeModeAction;
+ import org.apache.hadoop.hdfs.server.common.HdfsServerConstants.NodeType;
+@@ -48,21 +42,13 @@
+ import org.apache.hadoop.hdfs.server.common.InconsistentFSStateException;
+ import org.apache.hadoop.hdfs.server.common.Storage;
+ import org.apache.hadoop.hdfs.server.common.StorageInfo;
+-import org.apache.hadoop.hdfs.server.namenode.EditLogFileInputStream;
+-import org.apache.hadoop.hdfs.server.namenode.EditLogFileOutputStream;
+-import org.apache.hadoop.hdfs.server.namenode.FSEditLogOp;
+-import org.apache.hadoop.hdfs.server.namenode.NNStorage;
+-import org.apache.hadoop.hdfs.server.namenode.NameNodeLayoutVersion;
+ import org.apache.hadoop.hdfs.server.namenode.TestParallelImageWrite;
+-import org.apache.hadoop.io.IOUtils;
+ import org.apache.hadoop.ipc.RemoteException;
+ import org.apache.hadoop.util.StringUtils;
+ import org.junit.BeforeClass;
+ import org.junit.Ignore;
+ import org.junit.Test;
+ 
+-import static org.apache.hadoop.hdfs.inotify.Event.CreateEvent;
+-
+ import com.google.common.base.Charsets;
+ import com.google.common.base.Joiner;
+ 
+@@ -80,7 +66,7 @@
+   private Configuration conf;
+   private int testCounter = 0;
+   private MiniDFSCluster cluster = null;
+-    
++
+   /**
+    * Writes an INFO log message containing the parameters.
+    */
+@@ -465,68 +451,6 @@ public void test203LayoutVersion() {
+     }
+   }
+ 
+-  @Test
+-  public void testPreserveEditLogs() throws Exception {
+-    conf = new HdfsConfiguration();
+-    conf = UpgradeUtilities.initializeStorageStateConf(1, conf);
+-    String[] nameNodeDirs = conf.getStrings(DFSConfigKeys.DFS_NAMENODE_NAME_DIR_KEY);
+-    conf.setBoolean(DFSConfigKeys.DFS_DATANODE_DUPLICATE_REPLICA_DELETION, false);
+-
+-    log("Normal NameNode upgrade", 1);
+-    File[] created =
+-        UpgradeUtilities.createNameNodeStorageDirs(nameNodeDirs, "current");
+-    for (final File createdDir : created) {
+-      List<String> fileNameList =
+-          IOUtils.listDirectory(createdDir, EditLogsFilter.INSTANCE);
+-      for (String fileName : fileNameList) {
+-        String tmpFileName = fileName + ".tmp";
+-        File existingFile = new File(createdDir, fileName);
+-        File tmpFile = new File(createdDir, tmpFileName);
+-        Files.move(existingFile.toPath(), tmpFile.toPath());
+-        File newFile = new File(createdDir, fileName);
+-        Preconditions.checkState(newFile.createNewFile(),
+-            "Cannot create new edits log file in " + createdDir);
+-        EditLogFileInputStream in = new EditLogFileInputStream(tmpFile,
+-            HdfsConstants.INVALID_TXID, HdfsConstants.INVALID_TXID,
+-            false);
+-        EditLogFileOutputStream out = new EditLogFileOutputStream(conf, newFile,
+-            (int)tmpFile.length());
+-        out.create(NameNodeLayoutVersion.CURRENT_LAYOUT_VERSION + 1);
+-        FSEditLogOp logOp = in.readOp();
+-        while (logOp != null) {
+-          out.write(logOp);
+-          logOp = in.readOp();
+-        }
+-        out.setReadyToFlush();
+-        out.flushAndSync(true);
+-        out.close();
+-        Files.delete(tmpFile.toPath());
+-      }
+-    }
+-
+-    cluster = createCluster();
+-
+-    DFSInotifyEventInputStream ieis =
+-        cluster.getFileSystem().getInotifyEventStream(0);
+-    EventBatch batch = ieis.poll();
+-    Event[] events = batch.getEvents();
+-    assertTrue("Should be able to get transactions before the upgrade.",
+-        events.length > 0);
+-    assertEquals(events[0].getEventType(), Event.EventType.CREATE);
+-    assertEquals(((CreateEvent) events[0]).getPath(), "/TestUpgrade");
+-    cluster.shutdown();
+-    UpgradeUtilities.createEmptyDirs(nameNodeDirs);
+-  }
+-
+-  private enum EditLogsFilter implements FilenameFilter {
+-    INSTANCE;
+-
+-    @Override
+-    public boolean accept(File dir, String name) {
+-      return name.startsWith(NNStorage.NameNodeFile.EDITS.getName());
+-    }
+-  }
+-
+   public static void main(String[] args) throws Exception {
+     TestDFSUpgrade t = new TestDFSUpgrade();
+     TestDFSUpgrade.initialize();
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDFSUpgradeFromImage.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDFSUpgradeFromImage.java
+index ad907f6..ffbaa89 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDFSUpgradeFromImage.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDFSUpgradeFromImage.java
+@@ -18,10 +18,6 @@
+ 
+ package org.apache.hadoop.hdfs;
+ 
+-import static org.junit.Assert.assertEquals;
+-import static org.junit.Assert.assertTrue;
+-import static org.junit.Assert.fail;
+-
+ import java.io.BufferedReader;
+ import java.io.File;
+ import java.io.FileOutputStream;
+@@ -40,10 +36,13 @@
+ import org.apache.hadoop.fs.FileStatus;
+ import org.apache.hadoop.fs.FileUtil;
+ import org.apache.hadoop.fs.Path;
++import org.apache.hadoop.hdfs.inotify.Event;
++import org.apache.hadoop.hdfs.inotify.EventBatch;
+ import org.apache.hadoop.hdfs.protocol.DirectoryListing;
+ import org.apache.hadoop.hdfs.protocol.HdfsConstants;
+ import org.apache.hadoop.hdfs.protocol.HdfsFileStatus;
+ import org.apache.hadoop.hdfs.server.common.HdfsServerConstants.StartupOption;
++import org.apache.hadoop.hdfs.server.namenode.FSImage;
+ import org.apache.hadoop.hdfs.server.namenode.FSImageFormat;
+ import org.apache.hadoop.hdfs.server.namenode.FSImageTestUtil;
+ import org.apache.hadoop.test.GenericTestUtils;
+@@ -51,6 +50,9 @@
+ import org.apache.log4j.Logger;
+ import org.junit.Test;
+ 
++import static org.apache.hadoop.hdfs.inotify.Event.CreateEvent;
++import static org.junit.Assert.*;
++
+ /**
+  * This tests data transfer protocol handling in the Datanode. It sends
+  * various forms of wrong data and verifies that Datanode handles it well.
+@@ -74,6 +76,7 @@
+   private static final String HADOOP023_RESERVED_IMAGE =
+       "hadoop-0.23-reserved.tgz";
+   private static final String HADOOP2_RESERVED_IMAGE = "hadoop-2-reserved.tgz";
++  private static final String HADOOP252_IMAGE = "hadoop-252-dfs-dir.tgz";
+ 
+   private static class ReferenceFileInfo {
+     String path;
+@@ -620,4 +623,100 @@ public void testUpgradeFromRel1BBWImage() throws IOException {
+           numDataNodes(1).enableManagedDfsDirsRedundancy(false).
+           manageDataDfsDirs(false), null);
+   }
++
++  @Test
++  public void testPreserveEditLogs() throws Exception {
++    unpackStorage(HADOOP252_IMAGE, HADOOP_DFS_DIR_TXT);
++    /**
++     * The pre-created image has the following edits:
++     * mkdir /input; mkdir /input/dir1~5
++     * copyFromLocal randome_file_1 /input/dir1
++     * copyFromLocal randome_file_2 /input/dir2
++     * mv /input/dir1/randome_file_1 /input/dir3/randome_file_3
++     * rmdir /input/dir1
++     */
++    Configuration conf = new HdfsConfiguration();
++    conf = UpgradeUtilities.initializeStorageStateConf(1, conf);
++    MiniDFSCluster cluster = new MiniDFSCluster.Builder(conf).numDataNodes(0)
++        .format(false)
++        .manageDataDfsDirs(false)
++        .manageNameDfsDirs(false)
++        .startupOption(StartupOption.UPGRADE)
++        .build();
++    DFSInotifyEventInputStream ieis =
++        cluster.getFileSystem().getInotifyEventStream(0);
++
++    EventBatch batch;
++    Event.CreateEvent ce;
++    Event.RenameEvent re;
++
++    // mkdir /input
++    batch = TestDFSInotifyEventInputStream.waitForNextEvents(ieis);
++    assertEquals(1, batch.getEvents().length);
++    assertTrue(batch.getEvents()[0].getEventType() == Event.EventType.CREATE);
++    ce = (Event.CreateEvent) batch.getEvents()[0];
++    assertEquals(ce.getPath(), "/input");
++
++    // mkdir /input/dir1~5
++    for (int i = 1; i <= 5; i++) {
++      batch = TestDFSInotifyEventInputStream.waitForNextEvents(ieis);
++      assertEquals(1, batch.getEvents().length);
++      assertTrue(batch.getEvents()[0].getEventType() == Event.EventType.CREATE);
++      ce = (Event.CreateEvent) batch.getEvents()[0];
++      assertEquals(ce.getPath(), "/input/dir" + i);
++    }
++    // copyFromLocal randome_file_1~2 /input/dir1~2
++    for (int i = 1; i <= 2; i++) {
++      batch = TestDFSInotifyEventInputStream.waitForNextEvents(ieis);
++      assertEquals(1, batch.getEvents().length);
++      if (batch.getEvents()[0].getEventType() != Event.EventType.CREATE) {
++        FSImage.LOG.debug("");
++      }
++      assertTrue(batch.getEvents()[0].getEventType() == Event.EventType.CREATE);
++
++      // copyFromLocal randome_file_1 /input/dir1, CLOSE
++      batch = TestDFSInotifyEventInputStream.waitForNextEvents(ieis);
++      assertEquals(1, batch.getEvents().length);
++      assertTrue(batch.getEvents()[0].getEventType() == Event.EventType.CLOSE);
++
++      // copyFromLocal randome_file_1 /input/dir1, CLOSE
++      batch = TestDFSInotifyEventInputStream.waitForNextEvents(ieis);
++      assertEquals(1, batch.getEvents().length);
++      assertTrue(batch.getEvents()[0].getEventType() ==
++          Event.EventType.RENAME);
++      re = (Event.RenameEvent) batch.getEvents()[0];
++      assertEquals(re.getDstPath(), "/input/dir" + i + "/randome_file_" + i);
++    }
++
++    // mv /input/dir1/randome_file_1 /input/dir3/randome_file_3
++    long txIDBeforeRename = batch.getTxid();
++    batch = TestDFSInotifyEventInputStream.waitForNextEvents(ieis);
++    assertEquals(1, batch.getEvents().length);
++    assertTrue(batch.getEvents()[0].getEventType() == Event.EventType.RENAME);
++    re = (Event.RenameEvent) batch.getEvents()[0];
++    assertEquals(re.getDstPath(), "/input/dir3/randome_file_3");
++
++
++    // rmdir /input/dir1
++    batch = TestDFSInotifyEventInputStream.waitForNextEvents(ieis);
++    assertEquals(1, batch.getEvents().length);
++    assertTrue(batch.getEvents()[0].getEventType() == Event.EventType.UNLINK);
++    assertEquals(((Event.UnlinkEvent) batch.getEvents()[0]).getPath(),
++        "/input/dir1");
++    long lastTxID = batch.getTxid();
++
++    // Start inotify from the tx before rename /input/dir1/randome_file_1
++    ieis = cluster.getFileSystem().getInotifyEventStream(txIDBeforeRename);
++    batch = TestDFSInotifyEventInputStream.waitForNextEvents(ieis);
++    assertEquals(1, batch.getEvents().length);
++    assertTrue(batch.getEvents()[0].getEventType() == Event.EventType.RENAME);
++    re = (Event.RenameEvent) batch.getEvents()[0];
++    assertEquals(re.getDstPath(), "/input/dir3/randome_file_3");
++
++    // Try to read beyond available edits
++    ieis = cluster.getFileSystem().getInotifyEventStream(lastTxID + 1);
++    assertNull(ieis.poll());
++
++    cluster.shutdown();
++  }
+ }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/resources/hadoop-252-dfs-dir.tgz b/hadoop-hdfs-project/hadoop-hdfs/src/test/resources/hadoop-252-dfs-dir.tgz
+new file mode 100644
+index 0000000000000000000000000000000000000000..4ad3e256ac3891503b9ade881570c13240931568
+GIT binary patch
+literal 14112
+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
+S>VWbeDtkun|1{nI&;J2+jrt1!
+
+literal 0
+HcmV?d00001
+
+-- 
+1.7.9.5
+

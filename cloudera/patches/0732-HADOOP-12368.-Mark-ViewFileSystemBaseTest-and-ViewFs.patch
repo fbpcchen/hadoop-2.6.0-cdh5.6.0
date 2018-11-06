@@ -1,0 +1,44 @@
+From 99c615bcd0461e9bc54ef0a8a05f1267b083ebc9 Mon Sep 17 00:00:00 2001
+From: Andrew Wang <wang@apache.org>
+Date: Mon, 31 Aug 2015 18:17:14 -0700
+Subject: [PATCH 0732/1023] HADOOP-12368. Mark ViewFileSystemBaseTest and
+ ViewFsBaseTest as abstract.
+
+(cherry picked from commit 7ad3556ed38560585579172aa68356f37b2288c8)
+(cherry picked from commit 8dbe2a12bbc8cb343e88183719a469aa88cca110)
+
+Change-Id: I05d54a189daae1f1fa819933fb8dc48c2db1bcc6
+---
+ .../hadoop/fs/viewfs/ViewFileSystemBaseTest.java   |    2 +-
+ .../apache/hadoop/fs/viewfs/ViewFsBaseTest.java    |    2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/viewfs/ViewFileSystemBaseTest.java b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/viewfs/ViewFileSystemBaseTest.java
+index a324556..1529980 100644
+--- a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/viewfs/ViewFileSystemBaseTest.java
++++ b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/viewfs/ViewFileSystemBaseTest.java
+@@ -74,7 +74,7 @@
+  * </p>
+  */
+ 
+-public class ViewFileSystemBaseTest {
++abstract public class ViewFileSystemBaseTest {
+   FileSystem fsView;  // the view file system - the mounts are here
+   FileSystem fsTarget;  // the target file system - the mount will point here
+   Path targetTestRoot;
+diff --git a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/viewfs/ViewFsBaseTest.java b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/viewfs/ViewFsBaseTest.java
+index 035b280..1ccb163 100644
+--- a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/viewfs/ViewFsBaseTest.java
++++ b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/viewfs/ViewFsBaseTest.java
+@@ -76,7 +76,7 @@
+  *     @AfterClass    public static void ClusterShutdownAtEnd()
+  * </p>
+  */
+-public class ViewFsBaseTest {
++abstract public class ViewFsBaseTest {
+   FileContext fcView; // the view file system - the mounts are here
+   FileContext fcTarget; // the target file system - the mount will point here
+   Path targetTestRoot;
+-- 
+1.7.9.5
+

@@ -1,0 +1,175 @@
+From 0b172286bf2f42d5d8c9ff21fcf19e4503e9a93d Mon Sep 17 00:00:00 2001
+From: Colin Patrick Mccabe <cmccabe@cloudera.com>
+Date: Tue, 2 Jun 2015 11:40:37 -0700
+Subject: [PATCH 0782/1023] HDFS-8486. DN startup may cause severe data loss
+ (Daryn Sharp via Colin P.  McCabe)
+
+(cherry picked from commit 17e369511dd18d6e25e10ddb0cd9511f7ec8f469)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt
+	hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/TestFsDatasetImpl.java
+
+Change-Id: I4a6e904b59e843940b55c0d85dee5f6c5fc84c9d
+(cherry picked from commit 4a96b1577478c4dab623523e0f6ede7dff39a348)
+---
+ .../hadoop/hdfs/server/datanode/DataNode.java      |    2 +-
+ .../datanode/fsdataset/impl/BlockPoolSlice.java    |   28 +++++++++++----
+ .../datanode/fsdataset/impl/TestFsDatasetImpl.java |   38 ++++++++++++++++++--
+ 3 files changed, 59 insertions(+), 9 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java
+index f3b78ca..62021a0 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java
+@@ -1350,9 +1350,9 @@ void initBlockPool(BPOfferService bpos) throws IOException {
+     // failures.
+     checkDiskError();
+ 
+-    initDirectoryScanner(conf);
+     data.addBlockPool(nsInfo.getBlockPoolID(), conf);
+     blockScanner.enableBlockPoolId(bpos.getBlockPoolId());
++    initDirectoryScanner(conf);
+   }
+ 
+   BPOfferService[] getAllBpOs() {
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/BlockPoolSlice.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/BlockPoolSlice.java
+index 907a839..46f51eb 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/BlockPoolSlice.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/BlockPoolSlice.java
+@@ -535,10 +535,28 @@ ReplicaInfo resolveDuplicateReplicas(
+       // Leave both block replicas in place.
+       return replica1;
+     }
++    final ReplicaInfo replicaToDelete =
++        selectReplicaToDelete(replica1, replica2);
++    final ReplicaInfo replicaToKeep =
++        (replicaToDelete != replica1) ? replica1 : replica2;
++    // Update volumeMap and delete the replica
++    volumeMap.add(bpid, replicaToKeep);
++    if (replicaToDelete != null) {
++      deleteReplica(replicaToDelete);
++    }
++    return replicaToKeep;
++  }
+ 
++  static ReplicaInfo selectReplicaToDelete(final ReplicaInfo replica1,
++      final ReplicaInfo replica2) {
+     ReplicaInfo replicaToKeep;
+     ReplicaInfo replicaToDelete;
+ 
++    // it's the same block so don't ever delete it, even if GS or size
++    // differs.  caller should keep the one it just discovered on disk
++    if (replica1.getBlockFile().equals(replica2.getBlockFile())) {
++      return null;
++    }
+     if (replica1.getGenerationStamp() != replica2.getGenerationStamp()) {
+       replicaToKeep = replica1.getGenerationStamp() > replica2.getGenerationStamp()
+           ? replica1 : replica2;
+@@ -558,10 +576,10 @@ ReplicaInfo resolveDuplicateReplicas(
+       LOG.debug("resolveDuplicateReplicas decide to keep " + replicaToKeep
+           + ".  Will try to delete " + replicaToDelete);
+     }
++    return replicaToDelete;
++  }
+ 
+-    // Update volumeMap.
+-    volumeMap.add(bpid, replicaToKeep);
+-
++  private void deleteReplica(final ReplicaInfo replicaToDelete) {
+     // Delete the files on disk. Failure here is okay.
+     final File blockFile = replicaToDelete.getBlockFile();
+     if (!blockFile.delete()) {
+@@ -571,10 +589,8 @@ ReplicaInfo resolveDuplicateReplicas(
+     if (!metaFile.delete()) {
+       LOG.warn("Failed to delete meta file " + metaFile);
+     }
+-
+-    return replicaToKeep;
+   }
+-  
++
+   /**
+    * Find out the number of bytes in the block that match its crc.
+    * 
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/TestFsDatasetImpl.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/TestFsDatasetImpl.java
+index 76c41ea..06c5dee 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/TestFsDatasetImpl.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/TestFsDatasetImpl.java
+@@ -30,7 +30,9 @@
+ import org.apache.hadoop.hdfs.server.datanode.DNConf;
+ import org.apache.hadoop.hdfs.server.datanode.DataNode;
+ import org.apache.hadoop.hdfs.server.datanode.DataStorage;
++import org.apache.hadoop.hdfs.server.datanode.FinalizedReplica;
+ import org.apache.hadoop.hdfs.server.datanode.ReplicaHandler;
++import org.apache.hadoop.hdfs.server.datanode.ReplicaInfo;
+ import org.apache.hadoop.hdfs.server.datanode.StorageLocation;
+ import org.apache.hadoop.hdfs.server.datanode.fsdataset.FsVolumeReference;
+ import org.apache.hadoop.hdfs.server.datanode.fsdataset.RoundRobinVolumeChoosingPolicy;
+@@ -42,13 +44,13 @@
+ import org.junit.Before;
+ import org.junit.Test;
+ import org.mockito.Matchers;
++import org.mockito.Mockito;
+ import org.mockito.invocation.InvocationOnMock;
+ import org.mockito.stubbing.Answer;
+ 
+ import java.io.File;
+ import java.io.IOException;
+ import java.util.ArrayList;
+-import java.util.Arrays;
+ import java.util.Collections;
+ import java.util.HashSet;
+ import java.util.List;
+@@ -57,10 +59,11 @@
+ import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_DATANODE_SCAN_PERIOD_HOURS_KEY;
+ import static org.junit.Assert.assertEquals;
+ import static org.junit.Assert.assertFalse;
++import static org.junit.Assert.assertNull;
++import static org.junit.Assert.assertSame;
+ import static org.junit.Assert.assertTrue;
+ import static org.junit.Assert.fail;
+ import static org.mockito.Matchers.any;
+-import static org.mockito.Matchers.anyList;
+ import static org.mockito.Matchers.anyListOf;
+ import static org.mockito.Matchers.anyString;
+ import static org.mockito.Matchers.eq;
+@@ -337,4 +340,35 @@ public void testAddVolumeFailureReleasesInUseLock() throws IOException {
+ 
+     FsDatasetTestUtil.assertFileLockReleased(badDir.toString());
+   }
++
++  @Test
++  public void testDuplicateReplicaResolution() throws IOException {
++    FsVolumeImpl fsv1 = Mockito.mock(FsVolumeImpl.class);
++    FsVolumeImpl fsv2 = Mockito.mock(FsVolumeImpl.class);
++
++    File f1 = new File("d1/block");
++    File f2 = new File("d2/block");
++
++    ReplicaInfo replicaOlder = new FinalizedReplica(1,1,1,fsv1,f1);
++    ReplicaInfo replica = new FinalizedReplica(1,2,2,fsv1,f1);
++    ReplicaInfo replicaSame = new FinalizedReplica(1,2,2,fsv1,f1);
++    ReplicaInfo replicaNewer = new FinalizedReplica(1,3,3,fsv1,f1);
++
++    ReplicaInfo replicaOtherOlder = new FinalizedReplica(1,1,1,fsv2,f2);
++    ReplicaInfo replicaOtherSame = new FinalizedReplica(1,2,2,fsv2,f2);
++    ReplicaInfo replicaOtherNewer = new FinalizedReplica(1,3,3,fsv2,f2);
++
++    // equivalent path so don't remove either
++    assertNull(BlockPoolSlice.selectReplicaToDelete(replicaSame, replica));
++    assertNull(BlockPoolSlice.selectReplicaToDelete(replicaOlder, replica));
++    assertNull(BlockPoolSlice.selectReplicaToDelete(replicaNewer, replica));
++
++    // keep latest found replica
++    assertSame(replica,
++        BlockPoolSlice.selectReplicaToDelete(replicaOtherSame, replica));
++    assertSame(replicaOtherOlder,
++        BlockPoolSlice.selectReplicaToDelete(replicaOtherOlder, replica));
++    assertSame(replica,
++        BlockPoolSlice.selectReplicaToDelete(replicaOtherNewer, replica));
++  }
+ }
+-- 
+1.7.9.5
+

@@ -1,0 +1,116 @@
+From 0283df4266a1fd350a634e8852ed83a9b435bd0e Mon Sep 17 00:00:00 2001
+From: Xuan <xgong@apache.org>
+Date: Mon, 27 Jul 2015 23:45:58 -0700
+Subject: [PATCH 0703/1023] YARN-3982. container-executor parsing of
+ container-executor.cfg broken in trunk and
+ branch-2. Contributed by Varun Vasudev
+
+(cherry picked from commit f17093421521efcbdc813f6f2b8411e45ecc7863)
+(cherry picked from commit 2ec008eb38b7a8b4dceb5e64c4c6d73fee147740)
+---
+ .../native/container-executor/impl/configuration.c |    4 ++--
+ .../test/test-container-executor.c                 |   22 +++++++++++++-------
+ 2 files changed, 17 insertions(+), 9 deletions(-)
+
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/native/container-executor/impl/configuration.c b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/native/container-executor/impl/configuration.c
+index 2825367..373dbfd 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/native/container-executor/impl/configuration.c
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/native/container-executor/impl/configuration.c
+@@ -284,11 +284,11 @@ char * get_value(const char* key) {
+ 
+ /**
+  * Function to return an array of values for a key.
+- * Value delimiter is assumed to be a '%'.
++ * Value delimiter is assumed to be a ','.
+  */
+ char ** get_values(const char * key) {
+   char *value = get_value(key);
+-  return extract_values(value);
++  return extract_values_delim(value, ",");
+ }
+ 
+ char ** extract_values_delim(char *value, const char *delim) {
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/native/container-executor/test/test-container-executor.c b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/native/container-executor/test/test-container-executor.c
+index 99bcf34..001a37d 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/native/container-executor/test/test-container-executor.c
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/native/container-executor/test/test-container-executor.c
+@@ -145,7 +145,7 @@ void check_pid_file(const char* pid_file, pid_t mypid) {
+   }
+ 
+   char myPidBuf[33];
+-  snprintf(myPidBuf, 33, "%" PRId64, (int64_t)mypid);
++  snprintf(myPidBuf, 33, "%" PRId64, (int64_t)(mypid + 1));
+   if (strncmp(pidBuf, myPidBuf, strlen(myPidBuf)) != 0) {
+     printf("FAIL: failed to find matching pid in pid file\n");
+     printf("FAIL: Expected pid %" PRId64 " : Got %.*s", (int64_t)mypid,
+@@ -212,15 +212,15 @@ void test_get_app_log_dir() {
+   free(logdir);
+ }
+ 
+-void test_check_user() {
++void test_check_user(int expectedFailure) {
+   printf("\nTesting test_check_user\n");
+   struct passwd *user = check_user(username);
+-  if (user == NULL) {
++  if (user == NULL && !expectedFailure) {
+     printf("FAIL: failed check for user %s\n", username);
+     exit(1);
+   }
+   free(user);
+-  if (check_user("lp") != NULL) {
++  if (check_user("lp") != NULL && !expectedFailure) {
+     printf("FAIL: failed check for system user lp\n");
+     exit(1);
+   }
+@@ -228,7 +228,7 @@ void test_check_user() {
+     printf("FAIL: failed check for system user root\n");
+     exit(1);
+   }
+-  if (check_user("daemon") == NULL) {
++  if (check_user("daemon") == NULL && !expectedFailure) {
+     printf("FAIL: failed check for whitelisted system user daemon\n");
+     exit(1);
+   }
+@@ -467,6 +467,7 @@ void test_signal_container() {
+     printf("FAIL: fork failed\n");
+     exit(1);
+   } else if (child == 0) {
++    printf("\nSwitching to user %d\n", user_detail->pw_uid);
+     if (change_user(user_detail->pw_uid, user_detail->pw_gid) != 0) {
+       exit(1);
+     }
+@@ -474,6 +475,10 @@ void test_signal_container() {
+     exit(0);
+   } else {
+     printf("Child container launched as %" PRId64 "\n", (int64_t)child);
++    printf("Signaling container as user %s\n", yarn_username);
++    // there's a race condition for child calling change_user and us
++    // calling signal_container_as_user, hence sleeping
++    sleep(3);
+     if (signal_container_as_user(yarn_username, child, SIGQUIT) != 0) {
+       exit(1);
+     }
+@@ -805,7 +810,7 @@ int main(int argc, char **argv) {
+   printf("\nTesting delete_app()\n");
+   test_delete_app();
+ 
+-  test_check_user();
++  test_check_user(0);
+ 
+   // the tests that change user need to be run in a subshell, so that
+   // when they change user they don't give up our privs
+@@ -832,7 +837,10 @@ int main(int argc, char **argv) {
+ 
+   read_config(TEST_ROOT "/test.cfg");
+   username = "bin";
+-  test_check_user();
++  test_check_user(1);
++
++  username = "sys";
++  test_check_user(1);
+ 
+   run("rm -fr " TEST_ROOT);
+   printf("\nFinished tests\n");
+-- 
+1.7.9.5
+

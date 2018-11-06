@@ -1,0 +1,43 @@
+From 4e58c77dfa4d95d676d55bc905fd64032dee3149 Mon Sep 17 00:00:00 2001
+From: Jian He <jianhe@apache.org>
+Date: Tue, 14 Apr 2015 11:36:37 -0700
+Subject: [PATCH 0905/1023] CLOUDERA-BUILD Partial backport that removes
+ unnecessary locking thats causing CDH-32524
+
+Change-Id: Ie9d56c24b209084f89e5e35c3290ab5e88aeb263
+(cherry picked from commit 15c6bbab2c69739d1183ba554b887d07d4b71a26)
+---
+ .../rmapp/attempt/RMAppAttemptImpl.java            |   10 ++--------
+ 1 file changed, 2 insertions(+), 8 deletions(-)
+
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/rmapp/attempt/RMAppAttemptImpl.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/rmapp/attempt/RMAppAttemptImpl.java
+index 6ec289d..d1ad7b4 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/rmapp/attempt/RMAppAttemptImpl.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/rmapp/attempt/RMAppAttemptImpl.java
+@@ -146,7 +146,7 @@
+   private ConcurrentMap<NodeId, List<ContainerStatus>>
+       finishedContainersSentToAM =
+       new ConcurrentHashMap<NodeId, List<ContainerStatus>>();
+-  private Container masterContainer;
++  private volatile Container masterContainer;
+ 
+   private float progress = 0;
+   private String host = "N/A";
+@@ -744,13 +744,7 @@ public float getProgress() {
+ 
+   @Override
+   public Container getMasterContainer() {
+-    this.readLock.lock();
+-
+-    try {
+-      return this.masterContainer;
+-    } finally {
+-      this.readLock.unlock();
+-    }
++    return this.masterContainer;
+   }
+ 
+   @InterfaceAudience.Private
+-- 
+1.7.9.5
+

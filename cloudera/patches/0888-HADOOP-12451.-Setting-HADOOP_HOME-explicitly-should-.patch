@@ -1,0 +1,37 @@
+From 6cdbe6e75980b730e5ea6e3041f48a0f9ff3e3c4 Mon Sep 17 00:00:00 2001
+From: Karthik Kambatla <kasha@apache.org>
+Date: Thu, 1 Oct 2015 11:29:50 -0700
+Subject: [PATCH 0888/1023] HADOOP-12451. Setting HADOOP_HOME explicitly
+ should be allowed. (kasha)
+
+(cherry picked from commit db145e0c9add81c74d853baa8187005f97ea1b53)
+
+(cherry picked from commit 49ff1e527660d7c3b85320b508f676910014c536)
+
+Change-Id: I238b51d6e2335b885ac91b0f89e22b6a96dca861
+(cherry picked from commit 3023ed83fc7c26fdef77a3a9bc46b714fe5a8de5)
+---
+ .../hadoop-common/src/main/bin/hadoop-config.sh    |    7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/bin/hadoop-config.sh b/hadoop-common-project/hadoop-common/src/main/bin/hadoop-config.sh
+index 15e7afa..c813e7f 100644
+--- a/hadoop-common-project/hadoop-common/src/main/bin/hadoop-config.sh
++++ b/hadoop-common-project/hadoop-common/src/main/bin/hadoop-config.sh
+@@ -233,8 +233,11 @@ TOOL_PATH="${TOOL_PATH:-$HADOOP_PREFIX/share/hadoop/tools/lib/*}"
+ 
+ HADOOP_OPTS="$HADOOP_OPTS -Dhadoop.log.dir=$HADOOP_LOG_DIR"
+ HADOOP_OPTS="$HADOOP_OPTS -Dhadoop.log.file=$HADOOP_LOGFILE"
+-HADOOP_HOME=$HADOOP_PREFIX
+-if $cygwin; then
++
++if [ "$HADOOP_HOME" = "" ]; then
++  HADOOP_HOME=$HADOOP_PREFIX
++fi
++if [ "$cygwin" = true ]; then
+   HADOOP_HOME=$(cygpath -w "$HADOOP_HOME" 2>/dev/null)
+ fi
+ export HADOOP_HOME
+-- 
+1.7.9.5
+

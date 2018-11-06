@@ -1,0 +1,38 @@
+From c3db4590756342a0921c959aca1a51144689701e Mon Sep 17 00:00:00 2001
+From: Allen Wittenauer <aw@apache.org>
+Date: Mon, 9 Feb 2015 13:58:50 -0800
+Subject: [PATCH 0606/1023] HDFS-7546. Document, and set an accepting default
+ for dfs.namenode.kerberos.principal.pattern
+ (Harsh J via aw)
+
+(cherry picked from commit 63613c79c1042ea3d7706ed6f7eccc8cf48ff6ea)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt
+---
+ .../src/main/resources/hdfs-default.xml            |    9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/resources/hdfs-default.xml b/hadoop-hdfs-project/hadoop-hdfs/src/main/resources/hdfs-default.xml
+index 1d48ed6..18d3a9a 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/resources/hdfs-default.xml
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/resources/hdfs-default.xml
+@@ -1287,6 +1287,15 @@
+ </property>
+ 
+ <property>
++  <name>dfs.namenode.kerberos.principal.pattern</name>
++  <value>*</value>
++  <description>
++    A client-side RegEx that can be configured to control
++    allowed realms to authenticate with (useful in cross-realm env.)
++  </description>
++</property>
++
++<property>
+   <name>dfs.namenode.avoid.read.stale.datanode</name>
+   <value>false</value>
+   <description>
+-- 
+1.7.9.5
+

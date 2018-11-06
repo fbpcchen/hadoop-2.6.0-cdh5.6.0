@@ -1,0 +1,62 @@
+From 550443aadcd5fa7e5da098d60d55b1c39c92a7d0 Mon Sep 17 00:00:00 2001
+From: cnauroth <cnauroth@apache.org>
+Date: Fri, 25 Sep 2015 22:33:53 -0700
+Subject: [PATCH 0878/1023] HADOOP-11918. Listing an empty s3a root directory
+ throws FileNotFound. Contributed by Lei (Eddy)
+ Xu.
+
+(cherry picked from commit 7fe521b1dd49f81ae325f78cf531cfff15be6641)
+
+Change-Id: Id058bb352320cd1b04084a878605c4bd5e48f287
+---
+ .../AbstractContractRootDirectoryTest.java         |   14 ++++++++++++++
+ .../org/apache/hadoop/fs/s3a/S3AFileSystem.java    |    3 +++
+ 2 files changed, 17 insertions(+)
+
+diff --git a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/contract/AbstractContractRootDirectoryTest.java b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/contract/AbstractContractRootDirectoryTest.java
+index 83d9143..fb1455e 100644
+--- a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/contract/AbstractContractRootDirectoryTest.java
++++ b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/contract/AbstractContractRootDirectoryTest.java
+@@ -25,6 +25,7 @@
+ import org.slf4j.LoggerFactory;
+ 
+ import java.io.IOException;
++import org.apache.hadoop.fs.FileStatus;
+ 
+ import static org.apache.hadoop.fs.contract.ContractTestUtils.createFile;
+ import static org.apache.hadoop.fs.contract.ContractTestUtils.dataset;
+@@ -120,4 +121,17 @@ public void testCreateFileOverRoot() throws Throwable {
+     assertIsDirectory(root);
+   }
+ 
++  @Test
++  public void testListEmptyRootDirectory() throws IOException {
++    //extra sanity checks here to avoid support calls about complete loss of data
++    skipIfUnsupported(TEST_ROOT_TESTS_ENABLED);
++    FileSystem fs = getFileSystem();
++    Path root = new Path("/");
++    FileStatus[] statuses = fs.listStatus(root);
++    for (FileStatus status : statuses) {
++      ContractTestUtils.assertDeleted(fs, status.getPath(), true);
++    }
++    assertEquals("listStatus on empty root-directory returned a non-empty list",
++        0, fs.listStatus(root).length);
++  }
+ }
+diff --git a/hadoop-tools/hadoop-aws/src/main/java/org/apache/hadoop/fs/s3a/S3AFileSystem.java b/hadoop-tools/hadoop-aws/src/main/java/org/apache/hadoop/fs/s3a/S3AFileSystem.java
+index 48a5465..6c5e714 100644
+--- a/hadoop-tools/hadoop-aws/src/main/java/org/apache/hadoop/fs/s3a/S3AFileSystem.java
++++ b/hadoop-tools/hadoop-aws/src/main/java/org/apache/hadoop/fs/s3a/S3AFileSystem.java
+@@ -955,6 +955,9 @@ public S3AFileStatus getFileStatus(Path f) throws IOException {
+ 
+         return new S3AFileStatus(true, false,
+             f.makeQualified(uri, workingDir));
++      } else if (key.isEmpty()) {
++        LOG.debug("Found root directory");
++        return new S3AFileStatus(true, true, f.makeQualified(uri, workingDir));
+       }
+     } catch (AmazonServiceException e) {
+       if (e.getStatusCode() != 404) {
+-- 
+1.7.9.5
+

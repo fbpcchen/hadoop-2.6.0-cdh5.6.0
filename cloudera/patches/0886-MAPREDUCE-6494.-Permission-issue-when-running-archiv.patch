@@ -1,0 +1,237 @@
+From ddd70eccc7bb858e9e93d5a34de27094e347d925 Mon Sep 17 00:00:00 2001
+From: Robert Kanter <rkanter@apache.org>
+Date: Wed, 30 Sep 2015 17:33:53 -0700
+Subject: [PATCH 0886/1023] MAPREDUCE-6494. Permission issue when running
+ archive-logs tool as different users (rkanter)
+
+(cherry picked from commit 5db371f52f5c6e894a7e6a5d523084f4b316a7ab)
+(cherry picked from commit 46ef5aa8ebc8f4e929f92558c5af90a5c427bcd1)
+
+Conflicts:
+	hadoop-mapreduce-project/CHANGES.txt
+
+Change-Id: I5c026966b7187ede212b43a64a159a87136fff49
+(cherry picked from commit 4cb9cb39bbcb0ce5751bd7a6ad7bb0b0711aeb2a)
+---
+ .../org/apache/hadoop/tools/HadoopArchiveLogs.java |   91 +++++++++++++-------
+ .../apache/hadoop/tools/TestHadoopArchiveLogs.java |   40 +++++++++
+ 2 files changed, 100 insertions(+), 31 deletions(-)
+
+diff --git a/hadoop-tools/hadoop-archive-logs/src/main/java/org/apache/hadoop/tools/HadoopArchiveLogs.java b/hadoop-tools/hadoop-archive-logs/src/main/java/org/apache/hadoop/tools/HadoopArchiveLogs.java
+index 0879d41..8b8e77b 100644
+--- a/hadoop-tools/hadoop-archive-logs/src/main/java/org/apache/hadoop/tools/HadoopArchiveLogs.java
++++ b/hadoop-tools/hadoop-archive-logs/src/main/java/org/apache/hadoop/tools/HadoopArchiveLogs.java
+@@ -76,6 +76,7 @@
+   private static final String MAX_TOTAL_LOGS_SIZE_OPTION = "maxTotalLogsSize";
+   private static final String MEMORY_OPTION = "memory";
+   private static final String VERBOSE_OPTION = "verbose";
++  private static final String FORCE_OPTION = "force";
+ 
+   private static final int DEFAULT_MAX_ELIGIBLE = -1;
+   private static final int DEFAULT_MIN_NUM_LOG_FILES = 20;
+@@ -91,6 +92,8 @@
+   @VisibleForTesting
+   long memory = DEFAULT_MEMORY;
+   private boolean verbose = false;
++  @VisibleForTesting
++  boolean force = false;
+ 
+   @VisibleForTesting
+   Set<AppInfo> eligibleApplications;
+@@ -126,6 +129,8 @@ public static void main(String[] args) {
+ 
+   @Override
+   public int run(String[] args) throws Exception {
++    int exitCode = 1;
++
+     handleOpts(args);
+ 
+     FileSystem fs = null;
+@@ -141,44 +146,41 @@ public int run(String[] args) throws Exception {
+     }
+     try {
+       fs = FileSystem.get(conf);
+-      checkFilesAndSeedApps(fs, remoteRootLogDir, suffix);
++      if (prepareWorkingDir(fs, workingDir)) {
+ 
+-      // Prepare working directory
+-      if (fs.exists(workingDir)) {
+-        fs.delete(workingDir, true);
+-      }
+-      fs.mkdirs(workingDir);
+-      fs.setPermission(workingDir,
+-          new FsPermission(FsAction.ALL, FsAction.NONE, FsAction.NONE));
+-    } finally {
+-      if (fs != null) {
+-        fs.close();
+-      }
+-    }
+-
+-    filterAppsByAggregatedStatus();
++        checkFilesAndSeedApps(fs, remoteRootLogDir, suffix);
+ 
+-    checkMaxEligible();
++        filterAppsByAggregatedStatus();
+ 
+-    if (eligibleApplications.isEmpty()) {
+-      LOG.info("No eligible applications to process");
+-      System.exit(0);
+-    }
++        checkMaxEligible();
+ 
+-    StringBuilder sb =
+-        new StringBuilder("Will process the following applications:");
+-    for (AppInfo app : eligibleApplications) {
+-      sb.append("\n\t").append(app.getAppId());
+-    }
+-    LOG.info(sb.toString());
++        if (eligibleApplications.isEmpty()) {
++          LOG.info("No eligible applications to process");
++          exitCode = 0;
++        } else {
++          StringBuilder sb =
++              new StringBuilder("Will process the following applications:");
++          for (AppInfo app : eligibleApplications) {
++            sb.append("\n\t").append(app.getAppId());
++          }
++          LOG.info(sb.toString());
+ 
+-    File localScript = File.createTempFile("hadoop-archive-logs-", ".sh");
+-    generateScript(localScript, workingDir, remoteRootLogDir, suffix);
++          File localScript = File.createTempFile("hadoop-archive-logs-", ".sh");
++          generateScript(localScript, workingDir, remoteRootLogDir, suffix);
+ 
+-    if (runDistributedShell(localScript)) {
+-      return 0;
++          exitCode = runDistributedShell(localScript) ? 0 : 1;
++        }
++      }
++    } finally {
++      if (fs != null) {
++        // Cleanup working directory
++        if (fs.exists(workingDir)) {
++          fs.delete(workingDir, true);
++        }
++        fs.close();
++      }
+     }
+-    return -1;
++    return exitCode;
+   }
+ 
+   private void handleOpts(String[] args) throws ParseException {
+@@ -202,12 +204,17 @@ private void handleOpts(String[] args) throws ParseException {
+     memoryOpt.setArgName("megabytes");
+     Option verboseOpt = new Option(VERBOSE_OPTION, false,
+         "Print more details.");
++    Option forceOpt = new Option(FORCE_OPTION, false,
++        "Force recreating the working directory if an existing one is found. " +
++            "This should only be used if you know that another instance is " +
++            "not currently running");
+     opts.addOption(helpOpt);
+     opts.addOption(maxEligibleOpt);
+     opts.addOption(minNumLogFilesOpt);
+     opts.addOption(maxTotalLogsSizeOpt);
+     opts.addOption(memoryOpt);
+     opts.addOption(verboseOpt);
++    opts.addOption(forceOpt);
+ 
+     try {
+       CommandLineParser parser = new GnuParser();
+@@ -242,6 +249,9 @@ private void handleOpts(String[] args) throws ParseException {
+       if (commandLine.hasOption(VERBOSE_OPTION)) {
+         verbose = true;
+       }
++      if (commandLine.hasOption(FORCE_OPTION)) {
++        force = true;
++      }
+     } catch (ParseException pe) {
+       HelpFormatter formatter = new HelpFormatter();
+       formatter.printHelp("yarn archive-logs", opts);
+@@ -250,6 +260,25 @@ private void handleOpts(String[] args) throws ParseException {
+   }
+ 
+   @VisibleForTesting
++  boolean prepareWorkingDir(FileSystem fs, Path workingDir) throws IOException {
++    if (fs.exists(workingDir)) {
++      if (force) {
++        LOG.info("Existing Working Dir detected: -" + FORCE_OPTION +
++            " specified -> recreating Working Dir");
++        fs.delete(workingDir, true);
++      } else {
++        LOG.info("Existing Working Dir detected: -" + FORCE_OPTION +
++            " not specified -> exiting");
++        return false;
++      }
++    }
++    fs.mkdirs(workingDir);
++    fs.setPermission(workingDir,
++        new FsPermission(FsAction.ALL, FsAction.ALL, FsAction.NONE));
++    return true;
++  }
++
++  @VisibleForTesting
+   void filterAppsByAggregatedStatus() throws IOException, YarnException {
+     YarnClient client = YarnClient.createYarnClient();
+     try {
+diff --git a/hadoop-tools/hadoop-archive-logs/src/test/java/org/apache/hadoop/tools/TestHadoopArchiveLogs.java b/hadoop-tools/hadoop-archive-logs/src/test/java/org/apache/hadoop/tools/TestHadoopArchiveLogs.java
+index 7423f79..3b8a40f 100644
+--- a/hadoop-tools/hadoop-archive-logs/src/test/java/org/apache/hadoop/tools/TestHadoopArchiveLogs.java
++++ b/hadoop-tools/hadoop-archive-logs/src/test/java/org/apache/hadoop/tools/TestHadoopArchiveLogs.java
+@@ -23,6 +23,8 @@
+ import org.apache.hadoop.fs.FSDataOutputStream;
+ import org.apache.hadoop.fs.FileSystem;
+ import org.apache.hadoop.fs.Path;
++import org.apache.hadoop.fs.permission.FsAction;
++import org.apache.hadoop.fs.permission.FsPermission;
+ import org.apache.hadoop.yarn.api.records.ApplicationId;
+ import org.apache.hadoop.yarn.api.records.ApplicationReport;
+ import org.apache.hadoop.yarn.api.records.ApplicationSubmissionContext;
+@@ -309,6 +311,44 @@ public void testStatuses() throws Exception {
+     Assert.assertArrayEquals(statuses, LogAggregationStatus.values());
+   }
+ 
++  @Test(timeout = 5000)
++  public void testPrepareWorkingDir() throws Exception {
++    Configuration conf = new Configuration();
++    HadoopArchiveLogs hal = new HadoopArchiveLogs(conf);
++    FileSystem fs = FileSystem.getLocal(conf);
++    Path workingDir = new Path("target", "testPrepareWorkingDir");
++    fs.delete(workingDir, true);
++    Assert.assertFalse(fs.exists(workingDir));
++    // -force is false and the dir doesn't exist so it will create one
++    hal.force = false;
++    boolean dirPrepared = hal.prepareWorkingDir(fs, workingDir);
++    Assert.assertTrue(dirPrepared);
++    Assert.assertTrue(fs.exists(workingDir));
++    Assert.assertEquals(
++        new FsPermission(FsAction.ALL, FsAction.ALL, FsAction.NONE),
++        fs.getFileStatus(workingDir).getPermission());
++    // Throw a file in the dir
++    Path dummyFile = new Path(workingDir, "dummy.txt");
++    fs.createNewFile(dummyFile);
++    Assert.assertTrue(fs.exists(dummyFile));
++    // -force is false and the dir exists, so nothing will happen and the dummy
++    // still exists
++    dirPrepared = hal.prepareWorkingDir(fs, workingDir);
++    Assert.assertFalse(dirPrepared);
++    Assert.assertTrue(fs.exists(workingDir));
++    Assert.assertTrue(fs.exists(dummyFile));
++    // -force is true and the dir exists, so it will recreate it and the dummy
++    // won't exist anymore
++    hal.force = true;
++    dirPrepared = hal.prepareWorkingDir(fs, workingDir);
++    Assert.assertTrue(dirPrepared);
++    Assert.assertTrue(fs.exists(workingDir));
++    Assert.assertEquals(
++        new FsPermission(FsAction.ALL, FsAction.ALL, FsAction.NONE),
++        fs.getFileStatus(workingDir).getPermission());
++    Assert.assertFalse(fs.exists(dummyFile));
++  }
++
+   private static void createFile(FileSystem fs, Path p, long sizeMultiple)
+       throws IOException {
+     FSDataOutputStream out = null;
+-- 
+1.7.9.5
+

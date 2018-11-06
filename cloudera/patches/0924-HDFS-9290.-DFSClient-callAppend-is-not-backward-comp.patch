@@ -1,0 +1,33 @@
+From 3be1c8d0c4fd516acd0576bbb326da6f50b6b1d7 Mon Sep 17 00:00:00 2001
+From: Kihwal Lee <kihwal@apache.org>
+Date: Fri, 23 Oct 2015 16:38:47 -0500
+Subject: [PATCH 0924/1023] HDFS-9290. DFSClient#callAppend() is not backward
+ compatible for slightly older NameNodes.
+ Contributed by Tony Wu. (cherry picked from
+ commit b9e0417bdf2b9655dc4256bdb43683eca1ab46be)
+
+Change-Id: Ie6520440322e4c1bd2b438ec37c9f0afbaa4c3bd
+(cherry picked from commit be5551c3c937513eef78edbb045b0b17df474705)
+---
+ .../java/org/apache/hadoop/hdfs/DFSClient.java     |    5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSClient.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSClient.java
+index 08c58f4..4e4df19 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSClient.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSClient.java
+@@ -1851,6 +1851,11 @@ private DFSOutputStream callAppend(String src,
+                                      SnapshotAccessControlException.class);
+     }
+     HdfsFileStatus newStat = lastBlockWithStatus.getFileStatus();
++    if (newStat == null) {
++      DFSClient.LOG.debug("NameNode is on an older version, request file " +
++          "info with additional RPC call for file: " + src);
++      newStat = getFileInfo(src);
++    }
+     return DFSOutputStream.newStreamForAppend(this, src, buffersize, progress,
+         lastBlockWithStatus.getLastBlock(), newStat,
+         dfsClientConf.createChecksum());
+-- 
+1.7.9.5
+

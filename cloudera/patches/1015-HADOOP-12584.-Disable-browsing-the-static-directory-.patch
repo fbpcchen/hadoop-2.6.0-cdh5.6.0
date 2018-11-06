@@ -1,0 +1,60 @@
+From 3f24ed54726b63cdb9fc9fd5c67ffa91e559657c Mon Sep 17 00:00:00 2001
+From: Akira Ajisaka <aajisaka@apache.org>
+Date: Tue, 12 Jan 2016 13:30:58 +0900
+Subject: [PATCH 1015/1023] HADOOP-12584. Disable browsing the static
+ directory in HttpServer2. Contributed by Robert
+ Kanter.
+
+(cherry picked from commit 9c89bcd04212543ae279d34938ec2ad319e5ba6d)
+(cherry picked from commit df95343047568a387c67a72a7ece04f3f97514e1)
+
+Conflicts:
+	hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/http/HttpServer2.java
+
+Change-Id: Idda61febb736b27a4463df082852ade9ea999f76
+(cherry picked from commit 9ee19fc8834ce74901fe7ac5ab2fd8f88d12341c)
+(cherry picked from commit 70276e3e3a6c8b65c603902380fb132730c40922)
+---
+ .../java/org/apache/hadoop/http/HttpServer2.java   |    3 +++
+ .../org/apache/hadoop/yarn/webapp/TestWebApp.java  |    4 +---
+ 2 files changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/http/HttpServer2.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/http/HttpServer2.java
+index 563b983..05c37c5 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/http/HttpServer2.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/http/HttpServer2.java
+@@ -596,6 +596,9 @@ protected void addDefaultApps(ContextHandlerCollection parent,
+     staticContext.setResourceBase(appDir + "/static");
+     staticContext.addServlet(DefaultServlet.class, "/*");
+     staticContext.setDisplayName("static");
++    @SuppressWarnings("unchecked")
++    Map<String, String> params = staticContext.getInitParams();
++    params.put("org.mortbay.jetty.servlet.Default.dirAllowed", "false");
+     setContextAttributes(staticContext, conf);
+     defaultContexts.put(staticContext, true);
+   }
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/test/java/org/apache/hadoop/yarn/webapp/TestWebApp.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/test/java/org/apache/hadoop/yarn/webapp/TestWebApp.java
+index 6eaeb2b..acec205 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/test/java/org/apache/hadoop/yarn/webapp/TestWebApp.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/test/java/org/apache/hadoop/yarn/webapp/TestWebApp.java
+@@ -261,7 +261,7 @@ public void setup() {
+   }
+ 
+   // This is to test the GuiceFilter should only be applied to webAppContext,
+-  // not to staticContext  and logContext;
++  // not to logContext;
+   @Test public void testYARNWebAppContext() throws Exception {
+     // setting up the log context
+     System.setProperty("hadoop.log.dir", "/Not/Existing/dir");
+@@ -272,8 +272,6 @@ public void setup() {
+     });
+     String baseUrl = baseUrl(app);
+     try {
+-      // should not redirect to foo
+-      assertFalse("foo".equals(getContent(baseUrl +"static").trim()));
+       // Not able to access a non-existing dir, should not redirect to foo.
+       assertEquals(404, getResponseCode(baseUrl +"logs"));
+       // should be able to redirect to foo.
+-- 
+1.7.9.5
+

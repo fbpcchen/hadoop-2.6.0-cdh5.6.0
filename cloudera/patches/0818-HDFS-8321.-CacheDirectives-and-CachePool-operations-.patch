@@ -1,0 +1,101 @@
+From 7f4f30ef7eeed6964c15bec9061f26c47d6e70ba Mon Sep 17 00:00:00 2001
+From: Haohui Mai <wheat9@apache.org>
+Date: Mon, 4 May 2015 15:47:16 -0700
+Subject: [PATCH 0818/1023] HDFS-8321. CacheDirectives and CachePool
+ operations should throw RetriableException in
+ safemode. Contributed by Haohui Mai.
+
+(cherry picked from commit f6b908ab070269e000578b04afa6d4c14c6326fd)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt
+	hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSNamesystem.java
+
+Change-Id: Ic5ef1845c1333e1f3a00de1bb3ed0c8cc08ea47a
+(cherry picked from commit f17ea0c0724bda3ee5bff04a22fa8738539c45a5)
+(cherry picked from commit fc4a0c0b7d3284e749826b9bddd6a70e91880dba)
+---
+ .../hadoop/hdfs/server/namenode/FSNamesystem.java  |   32 +++++---------------
+ 1 file changed, 8 insertions(+), 24 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSNamesystem.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSNamesystem.java
+index 0f02943..7c6fa76 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSNamesystem.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSNamesystem.java
+@@ -8637,10 +8637,7 @@ long addCacheDirective(CacheDirectiveInfo directive, EnumSet<CacheFlag> flags)
+     Long result = null;
+     try {
+       checkOperation(OperationCategory.WRITE);
+-      if (isInSafeMode()) {
+-        throw new SafeModeException(
+-            "Cannot add cache directive", safeMode);
+-      }
++      checkNameNodeSafeMode("Cannot add cache directive");
+       if (directive.getId() != null) {
+         throw new IOException("addDirective: you cannot specify an ID " +
+             "for this operation.");
+@@ -8681,10 +8678,7 @@ void modifyCacheDirective(CacheDirectiveInfo directive,
+     writeLock();
+     try {
+       checkOperation(OperationCategory.WRITE);
+-      if (isInSafeMode()) {
+-        throw new SafeModeException(
+-            "Cannot add cache directive", safeMode);
+-      }
++      checkNameNodeSafeMode("Cannot add cache directive");
+       cacheManager.modifyDirective(directive, pc, flags);
+       getEditLog().logModifyCacheDirectiveInfo(directive,
+           cacheEntry != null);
+@@ -8714,10 +8708,7 @@ void removeCacheDirective(Long id) throws IOException {
+     writeLock();
+     try {
+       checkOperation(OperationCategory.WRITE);
+-      if (isInSafeMode()) {
+-        throw new SafeModeException(
+-            "Cannot remove cache directives", safeMode);
+-      }
++      checkNameNodeSafeMode("Cannot remove cache directives");
+       cacheManager.removeDirective(id, pc);
+       getEditLog().logRemoveCacheDirectiveInfo(id, cacheEntry != null);
+       success = true;
+@@ -8770,10 +8761,8 @@ public void addCachePool(CachePoolInfo req) throws IOException {
+     String poolInfoStr = null;
+     try {
+       checkOperation(OperationCategory.WRITE);
+-      if (isInSafeMode()) {
+-        throw new SafeModeException(
+-            "Cannot add cache pool " + req.getPoolName(), safeMode);
+-      }
++      checkNameNodeSafeMode("Cannot add cache pool"
++          + (req == null ? null : req.getPoolName()));
+       if (pc != null) {
+         pc.checkSuperuserPrivilege();
+       }
+@@ -8804,10 +8793,8 @@ public void modifyCachePool(CachePoolInfo req) throws IOException {
+     boolean success = false;
+     try {
+       checkOperation(OperationCategory.WRITE);
+-      if (isInSafeMode()) {
+-        throw new SafeModeException(
+-            "Cannot modify cache pool " + req.getPoolName(), safeMode);
+-      }
++      checkNameNodeSafeMode("Cannot modify cache pool"
++          + (req == null ? null : req.getPoolName()));
+       if (pc != null) {
+         pc.checkSuperuserPrivilege();
+       }
+@@ -8838,10 +8825,7 @@ public void removeCachePool(String cachePoolName) throws IOException {
+     boolean success = false;
+     try {
+       checkOperation(OperationCategory.WRITE);
+-      if (isInSafeMode()) {
+-        throw new SafeModeException(
+-            "Cannot remove cache pool " + cachePoolName, safeMode);
+-      }
++      checkNameNodeSafeMode("Cannot modify cache pool" + cachePoolName);
+       if (pc != null) {
+         pc.checkSuperuserPrivilege();
+       }
+-- 
+1.7.9.5
+

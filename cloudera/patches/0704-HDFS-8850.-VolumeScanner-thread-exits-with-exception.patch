@@ -1,0 +1,39 @@
+From 154d90f15c3c47bb8eef6ba6348798fc58a7a08d Mon Sep 17 00:00:00 2001
+From: yliu <yliu@apache.org>
+Date: Tue, 4 Aug 2015 15:51:37 +0800
+Subject: [PATCH 0704/1023] HDFS-8850. VolumeScanner thread exits with
+ exception if there is no block pool to be scanned
+ but there are suspicious blocks. (Colin Patrick
+ McCabe via yliu)
+
+(cherry picked from commit d2b941f94a835f7bdde7714d21a470b505aa582b)
+---
+ .../hadoop/hdfs/server/datanode/VolumeScanner.java |   12 +++++++-----
+ 1 file changed, 7 insertions(+), 5 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/VolumeScanner.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/VolumeScanner.java
+index 615abe9..0f8636f 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/VolumeScanner.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/VolumeScanner.java
+@@ -536,11 +536,13 @@ private long runLoop(ExtendedBlock suspectBlock) {
+           return 0;
+         }
+       }
+-      long saveDelta = monotonicMs - curBlockIter.getLastSavedMs();
+-      if (saveDelta >= conf.cursorSaveMs) {
+-        LOG.debug("{}: saving block iterator {} after {} ms.",
+-            this, curBlockIter, saveDelta);
+-        saveBlockIterator(curBlockIter);
++      if (curBlockIter != null) {
++        long saveDelta = monotonicMs - curBlockIter.getLastSavedMs();
++        if (saveDelta >= conf.cursorSaveMs) {
++          LOG.debug("{}: saving block iterator {} after {} ms.",
++              this, curBlockIter, saveDelta);
++          saveBlockIterator(curBlockIter);
++        }
+       }
+       bytesScanned = scanBlock(block, conf.targetBytesPerSec);
+       if (bytesScanned >= 0) {
+-- 
+1.7.9.5
+

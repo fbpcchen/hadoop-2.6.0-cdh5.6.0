@@ -1,0 +1,29 @@
+From b713a334abbc9e951f9c186bb5ec84a6d72fbee8 Mon Sep 17 00:00:00 2001
+From: Yongjun Zhang <yzhang@cloudera.com>
+Date: Thu, 16 Apr 2015 21:07:15 -0700
+Subject: [PATCH 0746/1023] CLOUDERA-BUILD. to support switching to netty 4.
+
+Change-Id: I8f41b799f130c27db854eec98bb189f705e9f7d4
+---
+ hadoop-hdfs-project/hadoop-hdfs/pom.xml |    5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/pom.xml b/hadoop-hdfs-project/hadoop-hdfs/pom.xml
+index 6d9cd13..8032494 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/pom.xml
++++ b/hadoop-hdfs-project/hadoop-hdfs/pom.xml
+@@ -182,6 +182,11 @@ http://maven.apache.org/xsd/maven-4.0.0.xsd">
+     </dependency>
+     <dependency>
+       <groupId>io.netty</groupId>
++      <artifactId>netty</artifactId>
++      <scope>compile</scope>
++    </dependency>
++    <dependency>
++      <groupId>io.netty</groupId>
+       <artifactId>netty-all</artifactId>
+       <scope>compile</scope>
+     </dependency>
+-- 
+1.7.9.5
+

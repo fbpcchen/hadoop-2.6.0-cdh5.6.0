@@ -1,0 +1,40 @@
+From bd133b3475c8c9568f4754619d1f0235c0e346fe Mon Sep 17 00:00:00 2001
+From: cnauroth <cnauroth@apache.org>
+Date: Fri, 21 Nov 2014 16:36:31 -0800
+Subject: [PATCH 0864/1023] HDFS-7425. NameNode block deletion logging uses
+ incorrect appender. Contributed by Chris Nauroth.
+
+(cherry picked from commit b8c094b0754099f13d668081b4afcf0644e325c3)
+(cherry picked from commit 8d8eb8dcec94e92d94eedef883cdece8ba333087)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt
+
+(cherry picked from commit 23799329682083abff07a68780aeebff403f2f81)
+
+Change-Id: I3fc50d2b5790535bece79d46cda5fcc88a0d1f63
+(cherry picked from commit 8e1975a316023012fedba02eb5078d7965c48c6b)
+---
+ .../hdfs/server/blockmanagement/BlockManager.java  |    6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlockManager.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlockManager.java
+index d513988..7047134 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlockManager.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlockManager.java
+@@ -3559,8 +3559,10 @@ private int invalidateWorkForOneNode(DatanodeInfo dn) {
+     } finally {
+       namesystem.writeUnlock();
+     }
+-    blockLog.info("BLOCK* {}: ask {} to delete {}", getClass().getSimpleName(),
+-        dn, toInvalidate);
++    if (blockLog.isInfoEnabled()) {
++      blockLog.info("BLOCK* " + getClass().getSimpleName()
++          + ": ask " + dn + " to delete " + toInvalidate);
++    }
+     return toInvalidate.size();
+   }
+ 
+-- 
+1.7.9.5
+

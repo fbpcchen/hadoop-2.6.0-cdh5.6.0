@@ -1,0 +1,163 @@
+From a98ee2b3050c9e48c7449b1bc3ae38059217bb8f Mon Sep 17 00:00:00 2001
+From: Zhe Zhang <zhezhang@cloudera.com>
+Date: Wed, 12 Aug 2015 22:45:28 -0700
+Subject: [PATCH 0712/1023] CLOUDERA-BUILD. CDH-28020. Hadoop Archive test
+ (testMapReduceOnArchive) failing - 6 different
+ configs. (zhezhang)
+
+---
+ .../content/xdocs/hadoop_archives.xml              |   12 ++++++---
+ .../org/apache/hadoop/tools/HadoopArchives.java    |   26 ++++++++++++++++----
+ 2 files changed, 29 insertions(+), 9 deletions(-)
+
+diff --git a/hadoop-mapreduce1-project/src/docs/src/documentation/content/xdocs/hadoop_archives.xml b/hadoop-mapreduce1-project/src/docs/src/documentation/content/xdocs/hadoop_archives.xml
+index bd45eba..e7f4d62 100644
+--- a/hadoop-mapreduce1-project/src/docs/src/documentation/content/xdocs/hadoop_archives.xml
++++ b/hadoop-mapreduce1-project/src/docs/src/documentation/content/xdocs/hadoop_archives.xml
+@@ -35,7 +35,7 @@
+         <section>
+         <title>How to Create an Archive</title>
+         <p>
+-        <code>Usage: hadoop archive -archiveName name -p &lt;parent&gt; &lt;src&gt;* &lt;dest&gt;</code>
++        <code>Usage: hadoop archive -archiveName name -p &lt;parent&gt; &#91;-r &lt;replication factor&gt;&#93; &lt;src&gt;* &lt;dest&gt;</code>
+         </p>
+         <p>
+         -archiveName is the name of the archive you would like to create. 
+@@ -46,8 +46,11 @@
+         Here /foo/bar is the parent path and a/b/c, e/f/g are relative paths to parent. 
+         Note that this is a Map/Reduce job that creates the archives. You would
+         need a map reduce cluster to run this. For a detailed example the later sections. </p>
++        <p>
++        -r indicates the desired replication factor; if this optional argument is not specified,
++        a replication factor of 3 will be used. </p>
+         <p> If you just want to archive a single directory /foo/bar then you can just use </p>
+-        <p><code> hadoop archive -archiveName zoo.har -p /foo/bar /outputdir </code></p>
++        <p><code> hadoop archive -archiveName zoo.har -p /foo/bar -r 3 /outputdir </code></p>
+         </section>
+         
+         <section>
+@@ -68,13 +71,14 @@
+  		<section>
+ 	    <title>Creating an Archive</title>
+ 			
+-        <p><code>hadoop archive -archiveName foo.har -p /user/hadoop dir1 dir2 /user/zoo </code></p>
++        <p><code>hadoop archive -archiveName foo.har -p /user/hadoop -r 3 dir1 dir2 /user/zoo </code></p>
+         <p>
+          The above example is creating an archive using /user/hadoop as the relative archive directory.
+          The directories /user/hadoop/dir1 and /user/hadoop/dir2 will be 
+         archived in the following file system directory -- /user/zoo/foo.har. Archiving does not delete the input
+         files. If you want to delete the input files after creating the archives (to reduce namespace), you
+-        will have to do it on your own. 
++        will have to do it on your own. In this example, because `-r 3` is specified, a replication factor of 3
++        will be used.
+         </p>
+         </section>
+         <section>
+diff --git a/hadoop-mapreduce1-project/src/tools/org/apache/hadoop/tools/HadoopArchives.java b/hadoop-mapreduce1-project/src/tools/org/apache/hadoop/tools/HadoopArchives.java
+index eea2e95..d986a49 100644
+--- a/hadoop-mapreduce1-project/src/tools/org/apache/hadoop/tools/HadoopArchives.java
++++ b/hadoop-mapreduce1-project/src/tools/org/apache/hadoop/tools/HadoopArchives.java
+@@ -81,12 +81,17 @@
+   static final String TOTAL_SIZE_LABEL = NAME + ".total.size";
+   static final String DST_HAR_LABEL = NAME + ".archive.name";
+   static final String SRC_PARENT_LABEL = NAME + ".parent.path";
++  static final String HAR_REPLICATION_LABEL = NAME + ".replication.factor";
++
+   // size of each part file
+   // its fixed for now.
+   static final long partSize = 2 * 1024 * 1024 * 1024l;
++  /** the desired replication degree; default is 10 **/
++  short repl = 3;
+ 
+   private static final String usage = "archive"
+-  + " -archiveName NAME -p <parent path> <src>* <dest>" +
++  + " -archiveName NAME -p <parent path> [-r <replication factor>]" +
++      " <src>* <dest>" +
+   "\n";
+   
+  
+@@ -398,6 +403,7 @@ void archive(Path parentPath, List<Path> srcPaths,
+     FileSystem fs = parentPath.getFileSystem(conf);
+     conf.set(DST_HAR_LABEL, archiveName);
+     conf.set(SRC_PARENT_LABEL, parentPath.makeQualified(fs).toString());
++    conf.setInt(HAR_REPLICATION_LABEL, repl);
+     Path outputPath = new Path(dest, archiveName);
+     FileOutputFormat.setOutputPath(conf, outputPath);
+     FileSystem outFs = outputPath.getFileSystem(conf);
+@@ -472,8 +478,6 @@ void archive(Path parentPath, List<Path> srcPaths,
+     } finally {
+       srcWriter.close();
+     }
+-    //increase the replication of src files
+-    jobfs.setReplication(srcFiles, (short) 10);
+     conf.setInt(SRC_COUNT_LABEL, numFiles);
+     conf.setLong(TOTAL_SIZE_LABEL, totalSize);
+     int numMaps = (int)(totalSize/partSize);
+@@ -511,6 +515,7 @@ void archive(Path parentPath, List<Path> srcPaths,
+     FileSystem destFs = null;
+     byte[] buffer;
+     int buf_size = 128 * 1024;
++    private int replication = 3;
+     
+     // configure the mapper and create 
+     // the part file.
+@@ -518,6 +523,8 @@ void archive(Path parentPath, List<Path> srcPaths,
+     // tmp files. 
+     public void configure(JobConf conf) {
+       this.conf = conf;
++
++      replication = conf.getInt(HAR_REPLICATION_LABEL, 3);
+       // this is tightly tied to map reduce
+       // since it does not expose an api 
+       // to get the partition
+@@ -638,6 +645,7 @@ public void map(LongWritable key, Text value,
+     public void close() throws IOException {
+       // close the part files.
+       partStream.close();
++      destFs.setReplication(tmpOutput, (short) replication);
+     }
+   }
+   
+@@ -661,6 +669,7 @@ public void close() throws IOException {
+     private int numIndexes = 1000;
+     private Path tmpOutputDir = null;
+     private int written = 0;
++    private int replication = 3;
+     private int keyVal = 0;
+     
+     // configure 
+@@ -669,6 +678,7 @@ public void configure(JobConf conf) {
+       tmpOutputDir = FileOutputFormat.getWorkOutputPath(this.conf);
+       masterIndex = new Path(tmpOutputDir, "_masterindex");
+       index = new Path(tmpOutputDir, "_index");
++      replication = conf.getInt(HAR_REPLICATION_LABEL, 3);
+       try {
+         fs = masterIndex.getFileSystem(conf);
+         if (fs.exists(masterIndex)) {
+@@ -727,8 +737,8 @@ public void close() throws IOException {
+       outStream.close();
+       indexStream.close();
+       // try increasing the replication 
+-      fs.setReplication(index, (short) 5);
+-      fs.setReplication(masterIndex, (short) 5);
++      fs.setReplication(index, (short) replication);
++      fs.setReplication(masterIndex, (short) replication);
+     }
+     
+   }
+@@ -768,6 +778,12 @@ public int run(String[] args) throws Exception {
+       }
+       parentPath = new Path(args[i+1]);
+       i+=2;
++
++      if ("-r".equals(args[i])) {
++        repl = Short.parseShort(args[i + 1]);
++        i += 2;
++      }
++
+       //read the rest of the paths
+       for (; i < args.length; i++) {
+         if (i == (args.length - 1)) {
+-- 
+1.7.9.5
+

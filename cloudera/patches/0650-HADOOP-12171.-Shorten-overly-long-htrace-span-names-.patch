@@ -1,0 +1,125 @@
+From c4105eaf313ab9f91d0975e4db509a11a8f81c9a Mon Sep 17 00:00:00 2001
+From: Colin Patrick Mccabe <cmccabe@cloudera.com>
+Date: Wed, 1 Jul 2015 17:57:11 -0700
+Subject: [PATCH 0650/1023] HADOOP-12171. Shorten overly-long htrace span
+ names for server (cmccabe)
+
+(cherry picked from commit a78d5074fb3da4779a6b5fd9947e60b9d755ee14)
+(cherry picked from commit 490bef08567d6083c079b6583af707e1c76eeca7)
+---
+ .../java/org/apache/hadoop/ipc/RpcClientUtil.java  |   24 ++++++++++++++++++++
+ .../main/java/org/apache/hadoop/ipc/Server.java    |    4 +++-
+ .../org/apache/hadoop/tracing/TestTracing.java     |   18 +++++++--------
+ 3 files changed, 36 insertions(+), 10 deletions(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/RpcClientUtil.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/RpcClientUtil.java
+index d9bd71b..da1e699 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/RpcClientUtil.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/RpcClientUtil.java
+@@ -210,4 +210,28 @@ public static String methodToTraceString(Method method) {
+     }
+     return clazz.getSimpleName() + "#" + method.getName();
+   }
++
++  /**
++   * Convert an RPC class method to a string.
++   * The format we want is
++   * 'SecondOutermostClassShortName#OutermostClassShortName'.
++   *
++   * For example, if the full class name is:
++   *   org.apache.hadoop.hdfs.protocol.ClientProtocol.getBlockLocations
++   *
++   * the format we want is:
++   *   ClientProtocol#getBlockLocations
++   */
++  public static String toTraceName(String fullName) {
++    int lastPeriod = fullName.lastIndexOf('.');
++    if (lastPeriod < 0) {
++      return fullName;
++    }
++    int secondLastPeriod = fullName.lastIndexOf('.', lastPeriod - 1);
++    if (secondLastPeriod < 0) {
++      return fullName;
++    }
++    return fullName.substring(secondLastPeriod + 1, lastPeriod) + "#" +
++        fullName.substring(lastPeriod + 1);
++  }
+ }
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/Server.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/Server.java
+index 65f82e6..9745563 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/Server.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/Server.java
+@@ -1858,7 +1858,9 @@ private void processRpcRequest(RpcRequestHeaderProto header,
+         // If the incoming RPC included tracing info, always continue the trace
+         TraceInfo parentSpan = new TraceInfo(header.getTraceInfo().getTraceId(),
+                                              header.getTraceInfo().getParentId());
+-        traceSpan = Trace.startSpan(rpcRequest.toString(), parentSpan).detach();
++        traceSpan = Trace.startSpan(
++            RpcClientUtil.toTraceName(rpcRequest.toString()),
++            parentSpan).detach();
+       }
+ 
+       Call call = new Call(header.getCallId(), header.getRetryCount(),
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracing.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracing.java
+index 58b3659..c3d2c73 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracing.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracing.java
+@@ -67,18 +67,18 @@ public void writeWithTracing() throws Exception {
+ 
+     String[] expectedSpanNames = {
+       "testWriteTraceHooks",
+-      "org.apache.hadoop.hdfs.protocol.ClientProtocol.create",
++      "ClientProtocol#create",
+       "ClientNamenodeProtocol#create",
+-      "org.apache.hadoop.hdfs.protocol.ClientProtocol.fsync",
++      "ClientProtocol#fsync",
+       "ClientNamenodeProtocol#fsync",
+-      "org.apache.hadoop.hdfs.protocol.ClientProtocol.complete",
++      "ClientProtocol#complete",
+       "ClientNamenodeProtocol#complete",
+       "newStreamForCreate",
+       "DFSOutputStream#write",
+       "DFSOutputStream#close",
+       "dataStreamer",
+       "OpWriteBlockProto",
+-      "org.apache.hadoop.hdfs.protocol.ClientProtocol.addBlock",
++      "ClientProtocol#addBlock",
+       "ClientNamenodeProtocol#addBlock"
+     };
+     SetSpanReceiver.assertSpanNamesFound(expectedSpanNames);
+@@ -95,11 +95,11 @@ public void writeWithTracing() throws Exception {
+     // and children of them are exception.
+     String[] spansInTopTrace = {
+       "testWriteTraceHooks",
+-      "org.apache.hadoop.hdfs.protocol.ClientProtocol.create",
++      "ClientProtocol#create",
+       "ClientNamenodeProtocol#create",
+-      "org.apache.hadoop.hdfs.protocol.ClientProtocol.fsync",
++      "ClientProtocol#fsync",
+       "ClientNamenodeProtocol#fsync",
+-      "org.apache.hadoop.hdfs.protocol.ClientProtocol.complete",
++      "ClientProtocol#complete",
+       "ClientNamenodeProtocol#complete",
+       "newStreamForCreate",
+       "DFSOutputStream#write",
+@@ -113,7 +113,7 @@ public void writeWithTracing() throws Exception {
+ 
+     // test for timeline annotation added by HADOOP-11242
+     Assert.assertEquals("called",
+-        map.get("org.apache.hadoop.hdfs.protocol.ClientProtocol.create")
++        map.get("ClientProtocol#create")
+            .get(0).getTimelineAnnotations()
+            .get(0).getMessage());
+ 
+@@ -131,7 +131,7 @@ public void readWithTracing() throws Exception {
+ 
+     String[] expectedSpanNames = {
+       "testReadTraceHooks",
+-      "org.apache.hadoop.hdfs.protocol.ClientProtocol.getBlockLocations",
++      "ClientProtocol#getBlockLocations",
+       "ClientNamenodeProtocol#getBlockLocations",
+       "OpReadBlockProto"
+     };
+-- 
+1.7.9.5
+

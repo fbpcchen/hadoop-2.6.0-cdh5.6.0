@@ -1,0 +1,89 @@
+From 05c979853ec102e33f76dad8ff9827f6de7b3946 Mon Sep 17 00:00:00 2001
+From: Vinayakumar B <vinayakumarb@apache.org>
+Date: Tue, 15 Sep 2015 17:19:59 +0530
+Subject: [PATCH 0983/1023] HDFS-9067.
+ o.a.h.hdfs.server.datanode.fsdataset.impl.TestLazyWriter
+ is failing in trunk (Contributed by Surendra
+ Singh Lilhore)
+
+(cherry picked from commit a4405674919d14be89bc4da22db2f417b5ae6ac3)
+(cherry picked from commit aa963ab441bee91400aab8d973ca505bf5b2e291)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/DFSTestUtil.java
+	hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/LazyPersistTestCase.java
+
+Change-Id: Icdbb89076bcd1d5e69de3ec428b16e74e2a64c3e
+---
+ .../java/org/apache/hadoop/hdfs/DFSTestUtil.java   |   20 ++++++++++++++++++++
+ .../fsdataset/impl/LazyPersistTestCase.java        |    6 ++++++
+ 2 files changed, 26 insertions(+)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/DFSTestUtil.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/DFSTestUtil.java
+index 26e89ac..200781c 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/DFSTestUtil.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/DFSTestUtil.java
+@@ -27,6 +27,7 @@
+ import com.google.common.collect.Maps;
+ import com.google.common.collect.Sets;
+ import org.apache.commons.io.FileUtils;
++import org.apache.commons.lang.UnhandledException;
+ import org.apache.commons.logging.Log;
+ import org.apache.commons.logging.LogFactory;
+ import org.apache.hadoop.conf.Configuration;
+@@ -79,6 +80,7 @@
+ import org.apache.hadoop.hdfs.server.protocol.DatanodeRegistration;
+ import org.apache.hadoop.hdfs.server.protocol.DatanodeStorage;
+ import org.apache.hadoop.hdfs.tools.DFSAdmin;
++import org.apache.hadoop.hdfs.tools.JMXGet;
+ import org.apache.hadoop.io.IOUtils;
+ import org.apache.hadoop.io.nativeio.NativeIO;
+ import org.apache.hadoop.net.NetUtils;
+@@ -1727,4 +1729,22 @@ public static boolean changeReplicaLength(MiniDFSCluster cluster,
+     LOG.info("failed to change length of block " + blk);
+     return false;
+   }
++
++  public static void waitForMetric(final JMXGet jmx, final String metricName, final int expectedValue)
++      throws TimeoutException, InterruptedException {
++    GenericTestUtils.waitFor(new Supplier<Boolean>() {
++      @Override
++      public Boolean get() {
++        try {
++          final int currentValue = Integer.parseInt(jmx.getValue(metricName));
++          LOG.info("Waiting for " + metricName +
++                       " to reach value " + expectedValue +
++                       ", current value = " + currentValue);
++          return currentValue == expectedValue;
++        } catch (Exception e) {
++          throw new UnhandledException("Test failed due to unexpected exception", e);
++        }
++      }
++    }, 1000, Integer.MAX_VALUE);
++  }
+ }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/LazyPersistTestCase.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/LazyPersistTestCase.java
+index 6d58113..b37f58a 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/LazyPersistTestCase.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/LazyPersistTestCase.java
+@@ -74,6 +74,7 @@
+ import java.util.EnumSet;
+ import java.util.List;
+ import java.util.UUID;
++import java.util.concurrent.TimeoutException;
+ 
+ import static org.apache.hadoop.fs.CreateFlag.CREATE;
+ import static org.apache.hadoop.fs.CreateFlag.LAZY_PERSIST;
+@@ -409,4 +410,9 @@ private void printRamDiskJMXMetrics() {
+       e.printStackTrace();
+     }
+   }
++
++  protected void waitForMetric(final String metricName, final int expectedValue)
++      throws TimeoutException, InterruptedException {
++    DFSTestUtil.waitForMetric(jmx, metricName, expectedValue);
++  }
+ }
+-- 
+1.7.9.5
+

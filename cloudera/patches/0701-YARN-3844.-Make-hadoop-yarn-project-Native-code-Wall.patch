@@ -1,0 +1,266 @@
+From 5d067a672d05dc471c0a9e69146d91976ebc6309 Mon Sep 17 00:00:00 2001
+From: Colin Patrick Mccabe <cmccabe@cloudera.com>
+Date: Fri, 17 Jul 2015 11:38:59 -0700
+Subject: [PATCH 0701/1023] YARN-3844. Make hadoop-yarn-project Native code
+ -Wall-clean (Alan Burlison via Colin P. McCabe)
+
+(cherry picked from commit 419c51d233bd124eadb38ff013693576ec02c4f1)
+(cherry picked from commit aff955a14ad0b163e5a482951c7ffea398595acb)
+---
+ .../native/container-executor/impl/configuration.c |    9 +++---
+ .../container-executor/impl/container-executor.c   |   20 ++++++------
+ .../container-executor/impl/container-executor.h   |    4 +--
+ .../test/test-container-executor.c                 |   32 +++++++++++---------
+ 4 files changed, 35 insertions(+), 30 deletions(-)
+
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/native/container-executor/impl/configuration.c b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/native/container-executor/impl/configuration.c
+index 51adc97..eaa1f19 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/native/container-executor/impl/configuration.c
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/native/container-executor/impl/configuration.c
+@@ -22,6 +22,7 @@
+ #include "configuration.h"
+ #include "container-executor.h"
+ 
++#include <inttypes.h>
+ #include <errno.h>
+ #include <unistd.h>
+ #include <stdio.h>
+@@ -74,14 +75,14 @@ static int is_only_root_writable(const char *file) {
+     return 0;
+   }
+   if (file_stat.st_uid != 0) {
+-    fprintf(ERRORFILE, "File %s must be owned by root, but is owned by %d\n",
+-            file, file_stat.st_uid);
++    fprintf(ERRORFILE, "File %s must be owned by root, but is owned by %" PRId64 "\n",
++            file, (int64_t)file_stat.st_uid);
+     return 0;
+   }
+   if ((file_stat.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
+     fprintf(ERRORFILE, 
+-	    "File %s must not be world or group writable, but is %03o\n",
+-	    file, file_stat.st_mode & (~S_IFMT));
++	    "File %s must not be world or group writable, but is %03lo\n",
++	    file, (unsigned long)file_stat.st_mode & (~S_IFMT));
+     return 0;
+   }
+   return 1;
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/native/container-executor/impl/container-executor.c b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/native/container-executor/impl/container-executor.c
+index cbbdcf7..99865a9 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/native/container-executor/impl/container-executor.c
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/native/container-executor/impl/container-executor.c
+@@ -19,6 +19,7 @@
+ #include "configuration.h"
+ #include "container-executor.h"
+ 
++#include <inttypes.h>
+ #include <libgen.h>
+ #include <dirent.h>
+ #include <fcntl.h>
+@@ -68,7 +69,7 @@ void set_nm_uid(uid_t user, gid_t group) {
+  */
+ char* get_executable() {
+   char buffer[PATH_MAX];
+-  snprintf(buffer, PATH_MAX, "/proc/%u/exe", getpid());
++  snprintf(buffer, PATH_MAX, "/proc/%" PRId64 "/exe", (int64_t)getpid());
+   char *filename = malloc(PATH_MAX);
+   ssize_t len = readlink(buffer, filename, PATH_MAX);
+   if (len == -1) {
+@@ -181,7 +182,7 @@ static int write_pid_to_cgroup_as_root(const char* cgroup_file, pid_t pid) {
+ 
+   // write pid
+   char pid_buf[21];
+-  snprintf(pid_buf, sizeof(pid_buf), "%d", pid);
++  snprintf(pid_buf, sizeof(pid_buf), "%" PRId64, (int64_t)pid);
+   ssize_t written = write(cgroup_fd, pid_buf, strlen(pid_buf));
+   close(cgroup_fd);
+   if (written == -1) {
+@@ -222,7 +223,7 @@ static int write_pid_to_file_as_nm(const char* pid_file, pid_t pid) {
+ 
+   // write pid to temp file
+   char pid_buf[21];
+-  snprintf(pid_buf, 21, "%d", pid);
++  snprintf(pid_buf, 21, "%" PRId64, (int64_t)pid);
+   ssize_t written = write(pid_fd, pid_buf, strlen(pid_buf));
+   close(pid_fd);
+   if (written == -1) {
+@@ -307,7 +308,7 @@ static int wait_and_get_exit_code(pid_t pid) {
+   } while (waitpid_result == -1 && errno == EINTR);
+ 
+   if (waitpid_result < 0) {
+-    fprintf(LOGFILE, "error waiting for process %d - %s\n", pid, strerror(errno));
++    fprintf(LOGFILE, "error waiting for process %" PRId64 " - %s\n", (int64_t)pid, strerror(errno));
+     return -1;
+   }
+ 
+@@ -316,7 +317,7 @@ static int wait_and_get_exit_code(pid_t pid) {
+   } else if (WIFSIGNALED(child_status)) {
+     exit_code = 0x80 + WTERMSIG(child_status);
+   } else {
+-    fprintf(LOGFILE, "Unable to determine exit status for pid %d\n", pid);
++    fprintf(LOGFILE, "Unable to determine exit status for pid %" PRId64 "\n", (int64_t)pid);
+   }
+ 
+   return exit_code;
+@@ -510,7 +511,8 @@ int mkdirs(const char* path, mode_t perm) {
+ * Give 0 or 1 to represent whether this is the final component. If it is, we
+ * need to check the permission.
+ */
+-int create_validate_dir(char* npath, mode_t perm, char* path, int finalComponent) {
++int create_validate_dir(const char* npath, mode_t perm, const char* path,
++                        int finalComponent) {
+   struct stat sb;
+   if (stat(npath, &sb) != 0) {
+     if (mkdir(npath, perm) != 0) {
+@@ -534,7 +536,7 @@ int create_validate_dir(char* npath, mode_t perm, char* path, int finalComponent
+ 
+ // check whether the given path is a directory
+ // also check the access permissions whether it is the same as desired permissions
+-int check_dir(char* npath, mode_t st_mode, mode_t desired, int finalComponent) {
++int check_dir(const char* npath, mode_t st_mode, mode_t desired, int finalComponent) {
+   if (!S_ISDIR(st_mode)) {
+     fprintf(LOGFILE, "Path %s is file not dir\n", npath);
+     return -1;
+@@ -1491,7 +1493,7 @@ int mount_cgroup(const char *pair, const char *hierarchy) {
+ 
+ static int run_traffic_control(const char *opts[], char *command_file) {
+   const int max_tc_args = 16;
+-  char *args[max_tc_args];
++  const char *args[max_tc_args];
+   int i = 0, j = 0;
+ 
+   args[i++] = TC_BIN;
+@@ -1517,7 +1519,7 @@ static int run_traffic_control(const char *opts[], char *command_file) {
+     unlink(command_file);
+     return 0;
+   } else {
+-    execv(TC_BIN, args);
++    execv(TC_BIN, (char**)args);
+     //if we reach here, exec failed
+     fprintf(LOGFILE, "failed to execute tc command! error: %s\n", strerror(errno));
+     return TRAFFIC_CONTROL_EXECUTION_FAILED;
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/native/container-executor/impl/container-executor.h b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/native/container-executor/impl/container-executor.h
+index 43ef98d..b530f15 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/native/container-executor/impl/container-executor.h
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/native/container-executor/impl/container-executor.h
+@@ -217,10 +217,10 @@ int change_user(uid_t user, gid_t group);
+ 
+ int mount_cgroup(const char *pair, const char *hierarchy);
+ 
+-int check_dir(char* npath, mode_t st_mode, mode_t desired,
++int check_dir(const char* npath, mode_t st_mode, mode_t desired,
+    int finalComponent);
+ 
+-int create_validate_dir(char* npath, mode_t perm, char* path,
++int create_validate_dir(const char* npath, mode_t perm, const char* path,
+    int finalComponent);
+ 
+ /**
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/native/container-executor/test/test-container-executor.c b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/native/container-executor/test/test-container-executor.c
+index 13604f0..99bcf34 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/native/container-executor/test/test-container-executor.c
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/native/container-executor/test/test-container-executor.c
+@@ -18,6 +18,7 @@
+ #include "configuration.h"
+ #include "container-executor.h"
+ 
++#include <inttypes.h>
+ #include <errno.h>
+ #include <fcntl.h>
+ #include <unistd.h>
+@@ -73,17 +74,17 @@ void run(const char *cmd) {
+   } else {
+     int status = 0;
+     if (waitpid(child, &status, 0) <= 0) {
+-      printf("FAIL: failed waiting for child process %s pid %d - %s\n", 
+-	     cmd, child, strerror(errno));
++      printf("FAIL: failed waiting for child process %s pid %" PRId64 " - %s\n",
++	     cmd, (int64_t)child, strerror(errno));
+       exit(1);
+     }
+     if (!WIFEXITED(status)) {
+-      printf("FAIL: process %s pid %d did not exit\n", cmd, child);
++      printf("FAIL: process %s pid %" PRId64 " did not exit\n", cmd, (int64_t)child);
+       exit(1);
+     }
+     if (WEXITSTATUS(status) != 0) {
+-      printf("FAIL: process %s pid %d exited with error status %d\n", cmd, 
+-	     child, WEXITSTATUS(status));
++      printf("FAIL: process %s pid %" PRId64 " exited with error status %d\n", cmd,
++	     (int64_t)child, WEXITSTATUS(status));
+       exit(1);
+     }
+   }
+@@ -144,10 +145,11 @@ void check_pid_file(const char* pid_file, pid_t mypid) {
+   }
+ 
+   char myPidBuf[33];
+-  snprintf(myPidBuf, 33, "%d", mypid);
++  snprintf(myPidBuf, 33, "%" PRId64, (int64_t)mypid);
+   if (strncmp(pidBuf, myPidBuf, strlen(myPidBuf)) != 0) {
+     printf("FAIL: failed to find matching pid in pid file\n");
+-    printf("FAIL: Expected pid %d : Got %.*s", mypid, (int)bytes, pidBuf);
++    printf("FAIL: Expected pid %" PRId64 " : Got %.*s", (int64_t)mypid,
++      (int)bytes, pidBuf);
+     exit(1);
+   }
+ }
+@@ -441,16 +443,16 @@ void run_test_in_child(const char* test_name, void (*func)()) {
+   } else {
+     int status = 0;
+     if (waitpid(child, &status, 0) == -1) {
+-      printf("FAIL: waitpid %d failed - %s\n", child, strerror(errno));
++      printf("FAIL: waitpid %" PRId64 " failed - %s\n", (int64_t)child, strerror(errno));
+       exit(1);
+     }
+     if (!WIFEXITED(status)) {
+-      printf("FAIL: child %d didn't exit - %d\n", child, status);
++      printf("FAIL: child %" PRId64 " didn't exit - %d\n", (int64_t)child, status);
+       exit(1);
+     }
+     if (WEXITSTATUS(status) != 0) {
+-      printf("FAIL: child %d exited with bad status %d\n",
+-	     child, WEXITSTATUS(status));
++      printf("FAIL: child %" PRId64 " exited with bad status %d\n",
++	     (int64_t)child, WEXITSTATUS(status));
+       exit(1);
+     }
+   }
+@@ -471,7 +473,7 @@ void test_signal_container() {
+     sleep(3600);
+     exit(0);
+   } else {
+-    printf("Child container launched as %d\n", child);
++    printf("Child container launched as %" PRId64 "\n", (int64_t)child);
+     if (signal_container_as_user(yarn_username, child, SIGQUIT) != 0) {
+       exit(1);
+     }
+@@ -508,7 +510,7 @@ void test_signal_container_group() {
+     sleep(3600);
+     exit(0);
+   }
+-  printf("Child container launched as %d\n", child);
++  printf("Child container launched as %" PRId64 "\n", (int64_t)child);
+   // there's a race condition for child calling change_user and us 
+   // calling signal_container_as_user, hence sleeping
+   sleep(3);
+@@ -586,7 +588,7 @@ void test_init_app() {
+   }
+   int status = 0;
+   if (waitpid(child, &status, 0) <= 0) {
+-    printf("FAIL: failed waiting for process %d - %s\n", child, 
++    printf("FAIL: failed waiting for process %" PRId64 " - %s\n", (int64_t)child,
+ 	   strerror(errno));
+     exit(1);
+   }
+@@ -687,7 +689,7 @@ void test_run_container() {
+   }
+   int status = 0;
+   if (waitpid(child, &status, 0) <= 0) {
+-    printf("FAIL: failed waiting for process %d - %s\n", child, 
++    printf("FAIL: failed waiting for process %" PRId64 " - %s\n", (int64_t)child,
+ 	   strerror(errno));
+     exit(1);
+   }
+-- 
+1.7.9.5
+

@@ -1,0 +1,163 @@
+From b88fb897e72934a32631c36316eba4d2fa455593 Mon Sep 17 00:00:00 2001
+From: Kihwal Lee <kihwal@apache.org>
+Date: Fri, 27 Mar 2015 09:06:23 -0500
+Subject: [PATCH 0610/1023] HDFS-7990. IBR delete ack should not be delayed.
+ Contributed by Daryn Sharp. (cherry picked from
+ commit 60882ab26d49f05cbf0686944af6559f86b3417d)
+
+(cherry picked from commit 577ea088655480a7550d968c02f8b5dd8b0d5298)
+---
+ .../hdfs/server/datanode/BPServiceActor.java       |   17 +++++++----------
+ .../apache/hadoop/hdfs/server/datanode/DNConf.java |    2 --
+ .../hdfs/server/datanode/SimulatedFSDataset.java   |   13 ++++++++++++-
+ .../datanode/TestIncrementalBlockReports.java      |    4 ++--
+ 4 files changed, 21 insertions(+), 15 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BPServiceActor.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BPServiceActor.java
+index 25d88e1..214b832 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BPServiceActor.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BPServiceActor.java
+@@ -82,12 +82,11 @@
+ 
+   final BPOfferService bpos;
+   
+-  // lastBlockReport, lastDeletedReport and lastHeartbeat may be assigned/read
++  // lastBlockReport and lastHeartbeat may be assigned/read
+   // by testing threads (through BPServiceActor#triggerXXX), while also 
+   // assigned/read by the actor thread. Thus they should be declared as volatile
+   // to make sure the "happens-before" consistency.
+   volatile long lastBlockReport = 0;
+-  volatile long lastDeletedReport = 0;
+ 
+   boolean resetBlockReportTime = true;
+ 
+@@ -415,10 +414,10 @@ void triggerHeartbeatForTests() {
+   @VisibleForTesting
+   void triggerDeletionReportForTests() {
+     synchronized (pendingIncrementalBRperStorage) {
+-      lastDeletedReport = 0;
++      sendImmediateIBR = true;
+       pendingIncrementalBRperStorage.notifyAll();
+ 
+-      while (lastDeletedReport == 0) {
++      while (sendImmediateIBR) {
+         try {
+           pendingIncrementalBRperStorage.wait(100);
+         } catch (InterruptedException e) {
+@@ -463,7 +462,6 @@ private long generateUniqueBlockReportId() {
+     // or we will report an RBW replica after the BlockReport already reports
+     // a FINALIZED one.
+     reportReceivedDeletedBlocks();
+-    lastDeletedReport = startTime;
+ 
+     long brCreateStartTime = now();
+     Map<DatanodeStorage, BlockListAsLongs> perVolumeBlockLists =
+@@ -673,7 +671,6 @@ private void handleRollingUpgradeStatus(HeartbeatResponse resp) throws IOExcepti
+    */
+   private void offerService() throws Exception {
+     LOG.info("For namenode " + nnAddr + " using"
+-        + " DELETEREPORT_INTERVAL of " + dnConf.deleteReportInterval + " msec "
+         + " BLOCKREPORT_INTERVAL of " + dnConf.blockReportInterval + "msec"
+         + " CACHEREPORT_INTERVAL of " + dnConf.cacheReportInterval + "msec"
+         + " Initial delay: " + dnConf.initialBlockReportDelay + "msec"
+@@ -689,7 +686,9 @@ private void offerService() throws Exception {
+         //
+         // Every so often, send heartbeat or block-report
+         //
+-        if (startTime - lastHeartbeat >= dnConf.heartBeatInterval) {
++        boolean sendHeartbeat =
++            startTime - lastHeartbeat >= dnConf.heartBeatInterval;
++        if (sendHeartbeat) {
+           //
+           // All heartbeat messages include following info:
+           // -- Datanode name
+@@ -728,10 +727,8 @@ private void offerService() throws Exception {
+             }
+           }
+         }
+-        if (sendImmediateIBR ||
+-            (startTime - lastDeletedReport > dnConf.deleteReportInterval)) {
++        if (sendImmediateIBR || sendHeartbeat) {
+           reportReceivedDeletedBlocks();
+-          lastDeletedReport = startTime;
+         }
+ 
+         List<DatanodeCommand> cmds = blockReport();
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DNConf.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DNConf.java
+index 67cd1ce..3406f29 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DNConf.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DNConf.java
+@@ -82,7 +82,6 @@
+   final long heartBeatInterval;
+   final long blockReportInterval;
+   final long blockReportSplitThreshold;
+-  final long deleteReportInterval;
+   final long initialBlockReportDelay;
+   final long cacheReportInterval;
+   final long dfsclientSlowIoWarningThresholdMs;
+@@ -164,7 +163,6 @@ public DNConf(Configuration conf) {
+     heartBeatInterval = conf.getLong(DFS_HEARTBEAT_INTERVAL_KEY,
+         DFS_HEARTBEAT_INTERVAL_DEFAULT) * 1000L;
+     
+-    this.deleteReportInterval = 100 * heartBeatInterval;
+     // do we need to sync block file contents to disk when blockfile is closed?
+     this.syncOnClose = conf.getBoolean(DFS_DATANODE_SYNCONCLOSE_KEY, 
+         DFS_DATANODE_SYNCONCLOSE_DEFAULT);
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/SimulatedFSDataset.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/SimulatedFSDataset.java
+index 800e7d9..efc8c00 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/SimulatedFSDataset.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/SimulatedFSDataset.java
+@@ -85,7 +85,7 @@
+     @Override
+     public SimulatedFSDataset newInstance(DataNode datanode,
+         DataStorage storage, Configuration conf) throws IOException {
+-      return new SimulatedFSDataset(storage, conf);
++      return new SimulatedFSDataset(datanode, storage, conf);
+     }
+ 
+     @Override
+@@ -509,8 +509,15 @@ public FsDatasetSpi getDataset() {
+   private final SimulatedStorage storage;
+   private final SimulatedVolume volume;
+   private final String datanodeUuid;
++  private final DataNode datanode;
+   
++
+   public SimulatedFSDataset(DataStorage storage, Configuration conf) {
++    this(null, storage, conf);
++  }
++
++  public SimulatedFSDataset(DataNode datanode, DataStorage storage, Configuration conf) {
++    this.datanode = datanode;
+     if (storage != null) {
+       for (int i = 0; i < storage.getNumStorageDirs(); ++i) {
+         storage.createStorageID(storage.getStorageDir(i), false);
+@@ -737,6 +744,10 @@ public synchronized void invalidate(String bpid, Block[] invalidBlks)
+       }
+       storage.free(bpid, binfo.getNumBytes());
+       map.remove(b);
++      if (datanode != null) {
++        datanode.notifyNamenodeDeletedBlock(new ExtendedBlock(bpid, b),
++            binfo.getStorageUuid());
++      }
+     }
+     if (error) {
+       throw new IOException("Invalidate: Missing blocks.");
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestIncrementalBlockReports.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestIncrementalBlockReports.java
+index b5aa93f..cd2c125 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestIncrementalBlockReports.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestIncrementalBlockReports.java
+@@ -159,8 +159,8 @@ public void testReportBlockDeleted() throws InterruptedException, IOException {
+           anyString(),
+           any(StorageReceivedDeletedBlocks[].class));
+ 
+-      // Trigger a block report, this also triggers an IBR.
+-      DataNodeTestUtils.triggerBlockReport(singletonDn);
++      // Trigger a heartbeat, this also triggers an IBR.
++      DataNodeTestUtils.triggerHeartbeat(singletonDn);
+       Thread.sleep(2000);
+ 
+       // Ensure that the deleted block is reported.
+-- 
+1.7.9.5
+

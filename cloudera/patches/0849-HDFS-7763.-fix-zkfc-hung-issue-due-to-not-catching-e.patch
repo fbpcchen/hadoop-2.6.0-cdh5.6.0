@@ -1,0 +1,39 @@
+From 2ed2dc85ff37ccae0fda85aea67305d973b02099 Mon Sep 17 00:00:00 2001
+From: Andrew Wang <wang@apache.org>
+Date: Tue, 24 Feb 2015 15:31:13 -0800
+Subject: [PATCH 0849/1023] HDFS-7763. fix zkfc hung issue due to not catching
+ exception in a corner case. Contributed by Liang
+ Xie.
+
+(cherry picked from commit 7105ebaa9f370db04962a1e19a67073dc080433b)
+(cherry picked from commit efb7e287f45c6502f293456034a37d9209a917be)
+
+Change-Id: Ia7f431eec2ecd2248747ee1bb9206003163c0d85
+(cherry picked from commit 3f71e7d7c1b53a2d01430247d2cbd8da4dee22a3)
+---
+ .../hadoop/hdfs/tools/DFSZKFailoverController.java |    9 +++++++--
+ 1 file changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/tools/DFSZKFailoverController.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/tools/DFSZKFailoverController.java
+index 64982ae..45561f4 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/tools/DFSZKFailoverController.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/tools/DFSZKFailoverController.java
+@@ -185,8 +185,13 @@ public static void main(String args[])
+         new HdfsConfiguration(), args);
+     DFSZKFailoverController zkfc = DFSZKFailoverController.create(
+         parser.getConfiguration());
+-    
+-    System.exit(zkfc.run(parser.getRemainingArgs()));
++    int retCode = 0;
++    try {
++      retCode = zkfc.run(parser.getRemainingArgs());
++    } catch (Throwable t) {
++      LOG.fatal("Got a fatal error, exiting now", t);
++    }
++    System.exit(retCode);
+   }
+ 
+   @Override
+-- 
+1.7.9.5
+

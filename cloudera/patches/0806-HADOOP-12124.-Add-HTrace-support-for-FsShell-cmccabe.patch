@@ -1,0 +1,68 @@
+From 17949861e80a6bcc4d3a9f6bd1d88371d4a4fee2 Mon Sep 17 00:00:00 2001
+From: Colin Patrick Mccabe <cmccabe@cloudera.com>
+Date: Tue, 30 Jun 2015 16:46:25 -0700
+Subject: [PATCH 0806/1023] HADOOP-12124. Add HTrace support for FsShell
+ (cmccabe)
+
+(cherry picked from commit ad60807238c4f7779cb0685e7d39ca0c50e01b2f)
+(cherry picked from commit 016c794e75be975078a5b422e79720bbc1044028)
+
+Change-Id: I6836e324d69b9faaad2d8399094b4acca9ccc0e3
+(cherry picked from commit 27fd39187ebbf3c3330c93992c8764d86a8a1e9f)
+---
+ .../main/java/org/apache/hadoop/fs/FsShell.java    |   16 ++++++++++++++--
+ 1 file changed, 14 insertions(+), 2 deletions(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/FsShell.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/FsShell.java
+index db73f6d..24b6339 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/FsShell.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/FsShell.java
+@@ -33,8 +33,13 @@
+ import org.apache.hadoop.fs.shell.CommandFactory;
+ import org.apache.hadoop.fs.shell.FsCommand;
+ import org.apache.hadoop.tools.TableListing;
++import org.apache.hadoop.tracing.TraceUtils;
+ import org.apache.hadoop.util.Tool;
+ import org.apache.hadoop.util.ToolRunner;
++import org.apache.htrace.Sampler;
++import org.apache.htrace.SamplerBuilder;
++import org.apache.htrace.Trace;
++import org.apache.htrace.TraceScope;
+ 
+ /** Provide command line access to a FileSystem. */
+ @InterfaceAudience.Private
+@@ -47,6 +52,7 @@
+   private FileSystem fs;
+   private Trash trash;
+   protected CommandFactory commandFactory;
++  private Sampler traceSampler;
+ 
+   private final String usagePrefix =
+     "Usage: hadoop fs [generic options]";
+@@ -272,7 +278,8 @@ private TableListing createOptionTableListing() {
+   public int run(String argv[]) throws Exception {
+     // initialize FsShell
+     init();
+-
++    traceSampler = new SamplerBuilder(TraceUtils.
++        wrapHadoopConf("dfs.shell.htrace.", getConf())).build();
+     int exitCode = -1;
+     if (argv.length < 1) {
+       printUsage(System.err);
+@@ -284,7 +291,12 @@ public int run(String argv[]) throws Exception {
+         if (instance == null) {
+           throw new UnknownCommandException();
+         }
+-        exitCode = instance.run(Arrays.copyOfRange(argv, 1, argv.length));
++        TraceScope scope = Trace.startSpan(instance.getCommandName(), traceSampler);
++        try {
++          exitCode = instance.run(Arrays.copyOfRange(argv, 1, argv.length));
++        } finally {
++          scope.close();
++        }
+       } catch (IllegalArgumentException e) {
+         displayError(cmd, e.getLocalizedMessage());
+         if (instance != null) {
+-- 
+1.7.9.5
+

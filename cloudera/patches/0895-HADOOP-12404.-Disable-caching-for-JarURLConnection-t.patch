@@ -1,0 +1,52 @@
+From c5303275b41392b65c308fd4fae09eb3fb02b8a0 Mon Sep 17 00:00:00 2001
+From: Zhihai Xu <zxu@apache.org>
+Date: Fri, 18 Sep 2015 10:40:04 -0700
+Subject: [PATCH 0895/1023] HADOOP-12404. Disable caching for JarURLConnection
+ to avoid sharing JarFile with other users when
+ loading resource from URL in Configuration class.
+ Contributed by Zhihai Xu
+
+(cherry picked from commit 88d89267ff6b66e144bfcceb09532191975f2a4a)
+
+Conflicts:
+	hadoop-common-project/hadoop-common/CHANGES.txt
+
+Change-Id: Ic1c5d5fc0e10ce672045a5782765d71d0ca80388
+(cherry picked from commit f6c65c3924c48cef74aaab486f17daa7b46b4fdf)
+---
+ .../java/org/apache/hadoop/conf/Configuration.java |   11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/conf/Configuration.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/conf/Configuration.java
+index 2ca66a2..878e7e3 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/conf/Configuration.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/conf/Configuration.java
+@@ -34,7 +34,9 @@
+ import java.io.Writer;
+ import java.lang.ref.WeakReference;
+ import java.net.InetSocketAddress;
++import java.net.JarURLConnection;
+ import java.net.URL;
++import java.net.URLConnection;
+ import java.util.ArrayList;
+ import java.util.Arrays;
+ import java.util.Collection;
+@@ -2467,7 +2469,14 @@ private Document parse(DocumentBuilder builder, URL url)
+     if (url == null) {
+       return null;
+     }
+-    return parse(builder, url.openStream(), url.toString());
++
++    URLConnection connection = url.openConnection();
++    if (connection instanceof JarURLConnection) {
++      // Disable caching for JarURLConnection to avoid sharing JarFile
++      // with other users.
++      connection.setUseCaches(false);
++    }
++    return parse(builder, connection.getInputStream(), url.toString());
+   }
+ 
+   private Document parse(DocumentBuilder builder, InputStream is,
+-- 
+1.7.9.5
+

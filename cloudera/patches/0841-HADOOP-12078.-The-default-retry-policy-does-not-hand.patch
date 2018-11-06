@@ -1,0 +1,192 @@
+From 6d98797543c27c6ebffb5e77951fa28d20113b50 Mon Sep 17 00:00:00 2001
+From: Arpit Agarwal <arp@apache.org>
+Date: Tue, 9 Jun 2015 20:58:39 -0700
+Subject: [PATCH 0841/1023] HADOOP-12078. The default retry policy does not
+ handle RetriableException correctly. (Contributed
+ by Arpit Agarwal)
+
+(cherry picked from commit 105cadb4217bf55d0875883952745b5fd63e6819)
+
+Conflicts:
+	hadoop-common-project/hadoop-common/CHANGES.txt
+
+Change-Id: I2a110532324d466b05cd11a3bdac7377e01e16bf
+(cherry picked from commit cd5ea3ebf98b70e8ce3a5540c628c2dd26f1ae30)
+(cherry picked from commit 94e08efb67315cb665625bea58193da647e9415e)
+---
+ .../org/apache/hadoop/io/retry/RetryPolicies.java  |    2 +-
+ .../org/apache/hadoop/io/retry/RetryUtils.java     |    7 +-
+ .../hadoop/io/retry/TestDefaultRetryPolicy.java    |  101 ++++++++++++++++++++
+ .../hdfs/server/namenode/NameNodeRpcServer.java    |    3 +-
+ 4 files changed, 110 insertions(+), 3 deletions(-)
+ create mode 100644 hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/io/retry/TestDefaultRetryPolicy.java
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/io/retry/RetryPolicies.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/io/retry/RetryPolicies.java
+index 14ded8e..5668ad1 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/io/retry/RetryPolicies.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/io/retry/RetryPolicies.java
+@@ -626,7 +626,7 @@ private static boolean isWrappedStandbyException(Exception e) {
+     return unwrapped instanceof StandbyException;
+   }
+   
+-  private static RetriableException getWrappedRetriableException(Exception e) {
++  static RetriableException getWrappedRetriableException(Exception e) {
+     if (!(e instanceof RemoteException)) {
+       return null;
+     }
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/io/retry/RetryUtils.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/io/retry/RetryUtils.java
+index e6f4519..fab406d 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/io/retry/RetryUtils.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/io/retry/RetryUtils.java
+@@ -25,6 +25,7 @@
+ import org.apache.hadoop.ipc.RemoteException;
+ 
+ import com.google.protobuf.ServiceException;
++import org.apache.hadoop.ipc.RetriableException;
+ 
+ public class RetryUtils {
+   public static final Log LOG = LogFactory.getLog(RetryUtils.class);
+@@ -92,7 +93,11 @@ public RetryAction shouldRetry(Exception e, int retries, int failovers,
+ 
+           //see (1) and (2) in the javadoc of this method.
+           final RetryPolicy p;
+-          if (e instanceof RemoteException) {
++          if (e instanceof RetriableException
++              || RetryPolicies.getWrappedRetriableException(e) != null) {
++            // RetriableException or RetriableException wrapped
++            p = multipleLinearRandomRetry;
++          } else if (e instanceof RemoteException) {
+             final RemoteException re = (RemoteException)e;
+             p = remoteExceptionToRetry.getName().equals(re.getClassName())?
+                 multipleLinearRandomRetry: RetryPolicies.TRY_ONCE_THEN_FAIL;
+diff --git a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/io/retry/TestDefaultRetryPolicy.java b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/io/retry/TestDefaultRetryPolicy.java
+new file mode 100644
+index 0000000..8a61c04
+--- /dev/null
++++ b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/io/retry/TestDefaultRetryPolicy.java
+@@ -0,0 +1,101 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ * <p/>
++ * http://www.apache.org/licenses/LICENSE-2.0
++ * <p/>
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package org.apache.hadoop.io.retry;
++
++import org.apache.hadoop.conf.Configuration;
++import org.apache.hadoop.ipc.RemoteException;
++import org.apache.hadoop.ipc.RetriableException;
++import org.junit.Rule;
++import org.junit.Test;
++import org.junit.rules.Timeout;
++
++import java.io.IOException;
++
++import static org.hamcrest.core.Is.is;
++import static org.junit.Assert.assertThat;
++
++/**
++ * Test the behavior of the default retry policy.
++ */
++public class TestDefaultRetryPolicy {
++  @Rule
++  public Timeout timeout = new Timeout(300000);
++
++  /**
++   * Verify that the default retry policy correctly retries
++   * RetriableException when defaultRetryPolicyEnabled is enabled.
++   *
++   * @throws IOException
++   */
++  @Test
++  public void testWithRetriable() throws Exception {
++    Configuration conf = new Configuration();
++    RetryPolicy policy = RetryUtils.getDefaultRetryPolicy(
++        conf, "Test.No.Such.Key",
++        true,                     // defaultRetryPolicyEnabled = true
++        "Test.No.Such.Key", "10000,6",
++        null);
++    RetryPolicy.RetryAction action = policy.shouldRetry(
++        new RetriableException("Dummy exception"), 0, 0, true);
++    assertThat(action.action,
++        is(RetryPolicy.RetryAction.RetryDecision.RETRY));
++  }
++
++  /**
++   * Verify that the default retry policy correctly retries
++   * a RetriableException wrapped in a RemoteException when
++   * defaultRetryPolicyEnabled is enabled.
++   *
++   * @throws IOException
++   */
++  @Test
++  public void testWithWrappedRetriable() throws Exception {
++    Configuration conf = new Configuration();
++    RetryPolicy policy = RetryUtils.getDefaultRetryPolicy(
++        conf, "Test.No.Such.Key",
++        true,                     // defaultRetryPolicyEnabled = true
++        "Test.No.Such.Key", "10000,6",
++        null);
++    RetryPolicy.RetryAction action = policy.shouldRetry(
++        new RemoteException(RetriableException.class.getName(),
++            "Dummy exception"), 0, 0, true);
++    assertThat(action.action,
++        is(RetryPolicy.RetryAction.RetryDecision.RETRY));
++  }
++
++  /**
++   * Verify that the default retry policy does *not* retry
++   * RetriableException when defaultRetryPolicyEnabled is disabled.
++   *
++   * @throws IOException
++   */
++  @Test
++  public void testWithRetriableAndRetryDisabled() throws Exception {
++    Configuration conf = new Configuration();
++    RetryPolicy policy = RetryUtils.getDefaultRetryPolicy(
++        conf, "Test.No.Such.Key",
++        false,                     // defaultRetryPolicyEnabled = false
++        "Test.No.Such.Key", "10000,6",
++        null);
++    RetryPolicy.RetryAction action = policy.shouldRetry(
++        new RetriableException("Dummy exception"), 0, 0, true);
++    assertThat(action.action,
++        is(RetryPolicy.RetryAction.RetryDecision.FAIL));
++  }
++}
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNodeRpcServer.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNodeRpcServer.java
+index 99f2996..914acee 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNodeRpcServer.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNodeRpcServer.java
+@@ -141,6 +141,7 @@
+ import org.apache.hadoop.io.Text;
+ import org.apache.hadoop.ipc.ProtobufRpcEngine;
+ import org.apache.hadoop.ipc.RPC;
++import org.apache.hadoop.ipc.RetriableException;
+ import org.apache.hadoop.ipc.RetryCache;
+ import org.apache.hadoop.ipc.Server;
+ import org.apache.hadoop.ipc.WritableRpcEngine;
+@@ -1639,7 +1640,7 @@ public void removeXAttr(String src, XAttr xAttr) throws IOException {
+ 
+   private void checkNNStartup() throws IOException {
+     if (!this.nn.isStarted()) {
+-      throw new IOException(this.nn.getRole() + " still not started");
++      throw new RetriableException(this.nn.getRole() + " still not started");
+     }
+   }
+ 
+-- 
+1.7.9.5
+

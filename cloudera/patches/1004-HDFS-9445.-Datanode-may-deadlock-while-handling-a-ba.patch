@@ -1,0 +1,162 @@
+From 07e1632ea9315639f828a50e4b53401762461b5e Mon Sep 17 00:00:00 2001
+From: Kihwal Lee <kihwal@apache.org>
+Date: Fri, 11 Dec 2015 08:46:03 -0600
+Subject: [PATCH 1004/1023] HDFS-9445. Datanode may deadlock while handling a
+ bad volume. Contributed by Walter Su. (cherry
+ picked from commit
+ a48301791e9564363bc2abad4e89e344b0d7a5ff)
+
+(cherry picked from commit a72ef921f00f6536bcb3e09ef5bd147cd8890065)
+
+Change-Id: I4765f2dc9f70286a003b164814dfebc1210a11bc
+---
+ .../datanode/fsdataset/impl/FsDatasetImpl.java     |   89 ++++++++++++--------
+ .../datanode/fsdataset/impl/TestFsDatasetImpl.java |    4 +
+ 2 files changed, 56 insertions(+), 37 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetImpl.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetImpl.java
+index a458fc9..ca162ba 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetImpl.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetImpl.java
+@@ -449,48 +449,67 @@ public void addVolume(final StorageLocation location,
+    * Removes a set of volumes from FsDataset.
+    * @param volumesToRemove a set of absolute root path of each volume.
+    * @param clearFailure set true to clear failure information.
+-   *
+-   * DataNode should call this function before calling
+-   * {@link DataStorage#removeVolumes(java.util.Collection)}.
+    */
+   @Override
+-  public synchronized void removeVolumes(
+-      Set<File> volumesToRemove, boolean clearFailure) {
++  public void removeVolumes(Set<File> volumesToRemove, boolean clearFailure) {
+     // Make sure that all volumes are absolute path.
+     for (File vol : volumesToRemove) {
+       Preconditions.checkArgument(vol.isAbsolute(),
+           String.format("%s is not absolute path.", vol.getPath()));
+     }
+-    for (int idx = 0; idx < dataStorage.getNumStorageDirs(); idx++) {
+-      Storage.StorageDirectory sd = dataStorage.getStorageDir(idx);
+-      final File absRoot = sd.getRoot().getAbsoluteFile();
+-      if (volumesToRemove.contains(absRoot)) {
+-        LOG.info("Removing " + absRoot + " from FsDataset.");
+-
+-        // Disable the volume from the service.
+-        asyncDiskService.removeVolume(sd.getCurrentDir());
+-        volumes.removeVolume(absRoot, clearFailure);
+-
+-        // Removed all replica information for the blocks on the volume. Unlike
+-        // updating the volumeMap in addVolume(), this operation does not scan
+-        // disks.
+-        for (String bpid : volumeMap.getBlockPoolList()) {
+-          for (Iterator<ReplicaInfo> it = volumeMap.replicas(bpid).iterator();
+-               it.hasNext(); ) {
+-            ReplicaInfo block = it.next();
+-            final File absBasePath =
+-                new File(block.getVolume().getBasePath()).getAbsoluteFile();
+-            if (absBasePath.equals(absRoot)) {
+-              invalidate(bpid, block);
+-              it.remove();
++
++    Map<String, List<ReplicaInfo>> blkToInvalidate = new HashMap<>();
++    List<String> storageToRemove = new ArrayList<>();
++    synchronized (this) {
++      for (int idx = 0; idx < dataStorage.getNumStorageDirs(); idx++) {
++        Storage.StorageDirectory sd = dataStorage.getStorageDir(idx);
++        final File absRoot = sd.getRoot().getAbsoluteFile();
++        if (volumesToRemove.contains(absRoot)) {
++          LOG.info("Removing " + absRoot + " from FsDataset.");
++
++          // Disable the volume from the service.
++          asyncDiskService.removeVolume(sd.getCurrentDir());
++          volumes.removeVolume(absRoot, clearFailure);
++
++          // Removed all replica information for the blocks on the volume.
++          // Unlike updating the volumeMap in addVolume(), this operation does
++          // not scan disks.
++          for (String bpid : volumeMap.getBlockPoolList()) {
++            List<ReplicaInfo> blocks = new ArrayList<>();
++            for (Iterator<ReplicaInfo> it = volumeMap.replicas(bpid).iterator();
++                 it.hasNext(); ) {
++              ReplicaInfo block = it.next();
++              final File absBasePath =
++                  new File(block.getVolume().getBasePath()).getAbsoluteFile();
++              if (absBasePath.equals(absRoot)) {
++                blocks.add(block);
++                it.remove();
++              }
+             }
++            blkToInvalidate.put(bpid, blocks);
+           }
++
++          storageToRemove.add(sd.getStorageUuid());
+         }
++      }
++      setupAsyncLazyPersistThreads();
++    }
+ 
+-        storageMap.remove(sd.getStorageUuid());
++    // Call this outside the lock.
++    for (Map.Entry<String, List<ReplicaInfo>> entry :
++        blkToInvalidate.entrySet()) {
++      String bpid = entry.getKey();
++      List<ReplicaInfo> blocks = entry.getValue();
++      for (ReplicaInfo block : blocks) {
++        invalidate(bpid, block);
++      }
++    }
++
++    synchronized (this) {
++      for(String storageUuid : storageToRemove) {
++        storageMap.remove(storageUuid);
+       }
+     }
+-    setupAsyncLazyPersistThreads();
+   }
+ 
+   private StorageType getStorageTypeFromLocations(
+@@ -1869,15 +1888,11 @@ public void invalidate(String bpid, Block invalidBlks[]) throws IOException {
+   public void invalidate(String bpid, ReplicaInfo block) {
+     // If a DFSClient has the replica in its cache of short-circuit file
+     // descriptors (and the client is using ShortCircuitShm), invalidate it.
+-    // The short-circuit registry is null in the unit tests, because the
+-    // datanode is mock object.
+-    if (datanode.getShortCircuitRegistry() != null) {
+-      datanode.getShortCircuitRegistry().processBlockInvalidation(
+-          new ExtendedBlockId(block.getBlockId(), bpid));
++    datanode.getShortCircuitRegistry().processBlockInvalidation(
++        new ExtendedBlockId(block.getBlockId(), bpid));
+ 
+-      // If the block is cached, start uncaching it.
+-      cacheManager.uncacheBlock(bpid, block.getBlockId());
+-    }
++    // If the block is cached, start uncaching it.
++    cacheManager.uncacheBlock(bpid, block.getBlockId());
+ 
+     datanode.notifyNamenodeDeletedBlock(new ExtendedBlock(bpid, block),
+         block.getStorageUuid());
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/TestFsDatasetImpl.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/TestFsDatasetImpl.java
+index 4fb7d56..31ee6e4 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/TestFsDatasetImpl.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/TestFsDatasetImpl.java
+@@ -38,6 +38,7 @@
+ import org.apache.hadoop.hdfs.server.datanode.FinalizedReplica;
+ import org.apache.hadoop.hdfs.server.datanode.ReplicaHandler;
+ import org.apache.hadoop.hdfs.server.datanode.ReplicaInfo;
++import org.apache.hadoop.hdfs.server.datanode.ShortCircuitRegistry;
+ import org.apache.hadoop.hdfs.server.datanode.StorageLocation;
+ import org.apache.hadoop.hdfs.server.datanode.fsdataset.FsDatasetSpi;
+ import org.apache.hadoop.hdfs.server.datanode.fsdataset.FsVolumeReference;
+@@ -146,6 +147,9 @@ public void setUp() throws IOException {
+     when(datanode.getDnConf()).thenReturn(dnConf);
+     final BlockScanner disabledBlockScanner = new BlockScanner(datanode, conf);
+     when(datanode.getBlockScanner()).thenReturn(disabledBlockScanner);
++    final ShortCircuitRegistry shortCircuitRegistry =
++        new ShortCircuitRegistry(conf);
++    when(datanode.getShortCircuitRegistry()).thenReturn(shortCircuitRegistry);
+ 
+     createStorageDirs(storage, conf, NUM_INIT_VOLUMES);
+     dataset = new FsDatasetImpl(datanode, storage, conf);
+-- 
+1.7.9.5
+

@@ -1,0 +1,42 @@
+From 668a183baf35535aa1f17fb27846344b0e970d73 Mon Sep 17 00:00:00 2001
+From: Ravi Prakash <raviprak@apache.org>
+Date: Thu, 14 May 2015 15:55:37 -0700
+Subject: [PATCH 0700/1023] YARN-1519. Check in container-executor if sysconf
+ is implemented before using it (Radim Kolar and
+ Eric Payne via raviprak)
+
+(cherry picked from commit 53fe4eff09fdaeed75a8cad3a26156bf963a8d37)
+(cherry picked from commit 4caadaa8bb61e6514c002a81b31bf4a649a685b5)
+---
+ .../container-executor/impl/container-executor.c   |    7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/native/container-executor/impl/container-executor.c b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/native/container-executor/impl/container-executor.c
+index e7419e1..cbbdcf7 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/native/container-executor/impl/container-executor.c
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/native/container-executor/impl/container-executor.c
+@@ -631,8 +631,11 @@ static int create_container_directories(const char* user, const char *app_id,
+  */
+ static struct passwd* get_user_info(const char* user) {
+   int string_size = sysconf(_SC_GETPW_R_SIZE_MAX);
+-  void* buffer = malloc(string_size + sizeof(struct passwd));
+   struct passwd *result = NULL;
++  if(string_size < 1024) {
++    string_size = 1024;
++  }
++  void* buffer = malloc(string_size + sizeof(struct passwd));
+   if (getpwnam_r(user, buffer, buffer + sizeof(struct passwd), string_size,
+ 		 &result) != 0) {
+     free(buffer);
+@@ -1425,7 +1428,7 @@ void chown_dir_contents(const char *dir_path, uid_t uid, gid_t gid) {
+      
+   dp = opendir(dir_path);
+   if (dp != NULL) {
+-    while (ep = readdir(dp)) {
++    while ((ep = readdir(dp)) != NULL) {
+       stpncpy(buf, ep->d_name, strlen(ep->d_name));
+       buf[strlen(ep->d_name)] = '\0';
+       change_owner(path_tmp, uid, gid);
+-- 
+1.7.9.5
+

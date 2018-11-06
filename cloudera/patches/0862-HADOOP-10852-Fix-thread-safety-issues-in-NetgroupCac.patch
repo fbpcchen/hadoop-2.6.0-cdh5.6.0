@@ -1,0 +1,135 @@
+From c2cea7ab2c5c015385267cc67c4cebc23bb6a3dd Mon Sep 17 00:00:00 2001
+From: Wei-Chiu Chuang <weichiu@cloudera.com>
+Date: Fri, 25 Sep 2015 17:53:10 -0700
+Subject: [PATCH 0862/1023] HADOOP-10852 Fix thread safety issues in
+ NetgroupCache. (Benoy Antony)
+
+(cherry picked from commit a095622f36c5e9fff3ec02b14b800038a81f6286)
+(cherry picked from commit 2eabbae29288dd597395648529f4db04d95265cf)
+
+Change-Id: I28e58ac011542eb90b9b88ba3a2d593f131186b9
+(cherry picked from commit 49e14182dee36a18e2ca1b17196c2947d94ced08)
+---
+ .../org/apache/hadoop/security/NetgroupCache.java  |   61 +++++++++++---------
+ 1 file changed, 33 insertions(+), 28 deletions(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/security/NetgroupCache.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/security/NetgroupCache.java
+index bd9c448..4495a66 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/security/NetgroupCache.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/security/NetgroupCache.java
+@@ -17,11 +17,11 @@
+  */
+ package org.apache.hadoop.security;
+ 
++import java.util.Collections;
++import java.util.HashSet;
+ import java.util.LinkedList;
+ import java.util.List;
+-import java.util.Map;
+ import java.util.Set;
+-import java.util.HashSet;
+ import java.util.concurrent.ConcurrentHashMap;
+ 
+ import org.apache.hadoop.classification.InterfaceAudience;
+@@ -36,14 +36,9 @@
+ @InterfaceAudience.LimitedPrivate({"HDFS", "MapReduce"})
+ @InterfaceStability.Unstable
+ public class NetgroupCache {
+-  private static boolean netgroupToUsersMapUpdated = true;
+-  private static Map<String, Set<String>> netgroupToUsersMap =
+-    new ConcurrentHashMap<String, Set<String>>();
+-
+-  private static Map<String, Set<String>> userToNetgroupsMap =
++  private static ConcurrentHashMap<String, Set<String>> userToNetgroupsMap =
+     new ConcurrentHashMap<String, Set<String>>();
+ 
+-
+   /**
+    * Get netgroups for a given user
+    *
+@@ -52,21 +47,11 @@
+    */
+   public static void getNetgroups(final String user,
+       List<String> groups) {
+-    if(netgroupToUsersMapUpdated) {
+-      netgroupToUsersMapUpdated = false; // at the beginning to avoid race
+-      //update userToNetgroupsMap
+-      for(String netgroup : netgroupToUsersMap.keySet()) {
+-        for(String netuser : netgroupToUsersMap.get(netgroup)) {
+-          // add to userToNetgroupsMap
+-          if(!userToNetgroupsMap.containsKey(netuser)) {
+-            userToNetgroupsMap.put(netuser, new HashSet<String>());
+-          }
+-          userToNetgroupsMap.get(netuser).add(netgroup);
+-        }
+-      }
+-    }
+-    if(userToNetgroupsMap.containsKey(user)) {
+-      groups.addAll(userToNetgroupsMap.get(user));
++    Set<String> userGroups = userToNetgroupsMap.get(user);
++    //ConcurrentHashMap does not allow null values; 
++    //So null value check can be used to check if the key exists
++    if (userGroups != null) {
++      groups.addAll(userGroups);
+     }
+   }
+ 
+@@ -76,7 +61,15 @@ public static void getNetgroups(final String user,
+    * @return list of cached groups
+    */
+   public static List<String> getNetgroupNames() {
+-    return new LinkedList<String>(netgroupToUsersMap.keySet());
++    return new LinkedList<String>(getGroups());
++  }
++
++  private static Set<String> getGroups() {
++    Set<String> allGroups = new HashSet<String> ();
++    for (Set<String> userGroups : userToNetgroupsMap.values()) {
++      allGroups.addAll(userGroups);
++    }
++    return allGroups;
+   }
+ 
+   /**
+@@ -86,14 +79,13 @@ public static void getNetgroups(final String user,
+    * @return true if group is cached, false otherwise
+    */
+   public static boolean isCached(String group) {
+-    return netgroupToUsersMap.containsKey(group);
++    return getGroups().contains(group);
+   }
+ 
+   /**
+    * Clear the cache
+    */
+   public static void clear() {
+-    netgroupToUsersMap.clear();
+     userToNetgroupsMap.clear();
+   }
+ 
+@@ -104,7 +96,20 @@ public static void clear() {
+    * @param users list of users for a given group
+    */
+   public static void add(String group, List<String> users) {
+-    netgroupToUsersMap.put(group, new HashSet<String>(users));
+-    netgroupToUsersMapUpdated = true; // at the end to avoid race
++    for (String user : users) {
++      Set<String> userGroups = userToNetgroupsMap.get(user);
++      // ConcurrentHashMap does not allow null values; 
++      // So null value check can be used to check if the key exists
++      if (userGroups == null) {
++        //Generate a ConcurrentHashSet (backed by the keyset of the ConcurrentHashMap)
++        userGroups =
++            Collections.newSetFromMap(new ConcurrentHashMap<String,Boolean>());
++        Set<String> currentSet = userToNetgroupsMap.putIfAbsent(user, userGroups);
++        if (currentSet != null) {
++          userGroups = currentSet;
++        }
++      }
++      userGroups.add(group);
++    }
+   }
+ }
+-- 
+1.7.9.5
+

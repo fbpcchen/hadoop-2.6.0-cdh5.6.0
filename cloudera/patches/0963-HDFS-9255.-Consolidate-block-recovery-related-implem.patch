@@ -1,0 +1,930 @@
+From 2ee19c9c9a4c3ef048b9f0efe673c45b66bc865c Mon Sep 17 00:00:00 2001
+From: Zhe Zhang <zhz@apache.org>
+Date: Wed, 28 Oct 2015 07:40:47 -0700
+Subject: [PATCH 0963/1023] HDFS-9255. Consolidate block recovery related
+ implementation into a single class. Contributed
+ by Walter Su.
+
+(cherry picked from commit 5a7b407929008e94550c5dc754b028b923c2d8b4)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocolPB/PBHelper.java
+	hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/DatanodeManager.java
+	hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java
+	hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestBlockRecovery.java
+
+Change-Id: I7a1c03f50123d79ac0a78c981d9721617e3229d1
+(cherry picked from commit 82ce60381b6785c7f0d95bd56ea20b33fc2a792a)
+---
+ .../hdfs/server/datanode/BPOfferService.java       |    3 +-
+ .../hdfs/server/datanode/BlockRecoveryWorker.java  |  322 ++++++++++++++++++++
+ .../hadoop/hdfs/server/datanode/DataNode.java      |  277 +----------------
+ .../hdfs/server/datanode/TestBlockRecovery.java    |   80 +++--
+ 4 files changed, 393 insertions(+), 289 deletions(-)
+ create mode 100644 hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BlockRecoveryWorker.java
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BPOfferService.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BPOfferService.java
+index f7dd3ef..c846d4f 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BPOfferService.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BPOfferService.java
+@@ -700,7 +700,8 @@ assert getBlockPoolId().equals(bp) :
+       break;
+     case DatanodeProtocol.DNA_RECOVERBLOCK:
+       String who = "NameNode at " + actor.getNNSocketAddress();
+-      dn.recoverBlocks(who, ((BlockRecoveryCommand)cmd).getRecoveringBlocks());
++      dn.getBlockRecoveryWorker().recoverBlocks(who,
++          ((BlockRecoveryCommand)cmd).getRecoveringBlocks());
+       break;
+     case DatanodeProtocol.DNA_ACCESSKEYUPDATE:
+       LOG.info("DatanodeCommand action: DNA_ACCESSKEYUPDATE");
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BlockRecoveryWorker.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BlockRecoveryWorker.java
+new file mode 100644
+index 0000000..d8669ec
+--- /dev/null
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BlockRecoveryWorker.java
+@@ -0,0 +1,322 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.apache.hadoop.hdfs.server.datanode;
++
++import com.google.common.base.Joiner;
++import org.apache.commons.logging.Log;
++import org.apache.hadoop.classification.InterfaceAudience;
++import org.apache.hadoop.conf.Configuration;
++import org.apache.hadoop.hdfs.protocol.DatanodeID;
++import org.apache.hadoop.hdfs.protocol.DatanodeInfo;
++import org.apache.hadoop.hdfs.protocol.ExtendedBlock;
++import org.apache.hadoop.hdfs.protocol.RecoveryInProgressException;
++import org.apache.hadoop.hdfs.protocolPB.DatanodeProtocolClientSideTranslatorPB;
++import org.apache.hadoop.hdfs.server.common.HdfsServerConstants.ReplicaState;
++import org.apache.hadoop.hdfs.server.protocol.BlockRecoveryCommand.RecoveringBlock;
++import org.apache.hadoop.hdfs.server.protocol.InterDatanodeProtocol;
++import org.apache.hadoop.hdfs.server.protocol.ReplicaRecoveryInfo;
++import org.apache.hadoop.ipc.RemoteException;
++import org.apache.hadoop.util.Daemon;
++
++import java.io.IOException;
++import java.util.ArrayList;
++import java.util.Arrays;
++import java.util.Collection;
++import java.util.List;
++
++/**
++ * This class handles the block recovery work commands.
++ */
++@InterfaceAudience.Private
++public class BlockRecoveryWorker {
++  public static final Log LOG = DataNode.LOG;
++
++  private final DataNode datanode;
++  private final Configuration conf;
++  private final DNConf dnConf;
++
++  BlockRecoveryWorker(DataNode datanode) {
++    this.datanode = datanode;
++    conf = datanode.getConf();
++    dnConf = datanode.getDnConf();
++  }
++
++  /** A convenient class used in block recovery. */
++  static class BlockRecord {
++    private final DatanodeID id;
++    private final InterDatanodeProtocol datanode;
++    private final ReplicaRecoveryInfo rInfo;
++
++    private String storageID;
++
++    BlockRecord(DatanodeID id, InterDatanodeProtocol datanode,
++        ReplicaRecoveryInfo rInfo) {
++      this.id = id;
++      this.datanode = datanode;
++      this.rInfo = rInfo;
++    }
++
++    private void updateReplicaUnderRecovery(String bpid, long recoveryId,
++        long newLength) throws IOException {
++      final ExtendedBlock b = new ExtendedBlock(bpid, rInfo);
++      storageID = datanode.updateReplicaUnderRecovery(b, recoveryId, newLength);
++    }
++
++    @Override
++    public String toString() {
++      return "block:" + rInfo + " node:" + id;
++    }
++  }
++
++  /** A block recovery task for a contiguous block. */
++  class RecoveryTaskContiguous {
++    private final RecoveringBlock rBlock;
++    private final ExtendedBlock block;
++    private final String bpid;
++    private final DatanodeInfo[] locs;
++    private final long recoveryId;
++
++    RecoveryTaskContiguous(RecoveringBlock rBlock) {
++      this.rBlock = rBlock;
++      block = rBlock.getBlock();
++      bpid = block.getBlockPoolId();
++      locs = rBlock.getLocations();
++      recoveryId = rBlock.getNewGenerationStamp();
++    }
++
++    protected void recover() throws IOException {
++      List<BlockRecord> syncList = new ArrayList<>(locs.length);
++      int errorCount = 0;
++
++      //check generation stamps
++      for(DatanodeID id : locs) {
++        try {
++          DatanodeID bpReg =datanode.getBPOfferService(bpid).bpRegistration;
++          InterDatanodeProtocol proxyDN = bpReg.equals(id)?
++              datanode: DataNode.createInterDataNodeProtocolProxy(id, conf,
++              dnConf.socketTimeout, dnConf.connectToDnViaHostname);
++          ReplicaRecoveryInfo info = callInitReplicaRecovery(proxyDN, rBlock);
++          if (info != null &&
++              info.getGenerationStamp() >= block.getGenerationStamp() &&
++              info.getNumBytes() > 0) {
++            syncList.add(new BlockRecord(id, proxyDN, info));
++          }
++        } catch (RecoveryInProgressException ripE) {
++          InterDatanodeProtocol.LOG.warn(
++              "Recovery for replica " + block + " on data-node " + id
++                  + " is already in progress. Recovery id = "
++                  + rBlock.getNewGenerationStamp() + " is aborted.", ripE);
++          return;
++        } catch (IOException e) {
++          ++errorCount;
++          InterDatanodeProtocol.LOG.warn(
++              "Failed to obtain replica info for block (=" + block
++                  + ") from datanode (=" + id + ")", e);
++        }
++      }
++
++      if (errorCount == locs.length) {
++        throw new IOException("All datanodes failed: block=" + block
++            + ", datanodeids=" + Arrays.asList(locs));
++      }
++
++      syncBlock(syncList);
++    }
++
++    /** Block synchronization. */
++    void syncBlock(List<BlockRecord> syncList) throws IOException {
++      ExtendedBlock block = rBlock.getBlock();
++      final String bpid = block.getBlockPoolId();
++      DatanodeProtocolClientSideTranslatorPB nn =
++          getActiveNamenodeForBP(block.getBlockPoolId());
++
++      long recoveryId = rBlock.getNewGenerationStamp();
++      if (LOG.isDebugEnabled()) {
++        LOG.debug("block=" + block + ", (length=" + block.getNumBytes()
++            + "), syncList=" + syncList);
++      }
++
++      // syncList.isEmpty() means that all data-nodes do not have the block
++      // or their replicas have 0 length.
++      // The block can be deleted.
++      if (syncList.isEmpty()) {
++        nn.commitBlockSynchronization(block, recoveryId, 0,
++            true, true, DatanodeID.EMPTY_ARRAY, null);
++        return;
++      }
++
++      // Calculate the best available replica state.
++      ReplicaState bestState = ReplicaState.RWR;
++      long finalizedLength = -1;
++      for (BlockRecord r : syncList) {
++        assert r.rInfo.getNumBytes() > 0 : "zero length replica";
++        ReplicaState rState = r.rInfo.getOriginalReplicaState();
++        if (rState.getValue() < bestState.getValue()) {
++          bestState = rState;
++        }
++        if(rState == ReplicaState.FINALIZED) {
++          if (finalizedLength > 0 && finalizedLength != r.rInfo.getNumBytes()) {
++            throw new IOException("Inconsistent size of finalized replicas. " +
++                "Replica " + r.rInfo + " expected size: " + finalizedLength);
++          }
++          finalizedLength = r.rInfo.getNumBytes();
++        }
++      }
++
++      // Calculate list of nodes that will participate in the recovery
++      // and the new block size
++      List<BlockRecord> participatingList = new ArrayList<>();
++      final ExtendedBlock newBlock = new ExtendedBlock(bpid, block.getBlockId(),
++          -1, recoveryId);
++      switch(bestState) {
++      case FINALIZED:
++        assert finalizedLength > 0 : "finalizedLength is not positive";
++        for(BlockRecord r : syncList) {
++          ReplicaState rState = r.rInfo.getOriginalReplicaState();
++          if (rState == ReplicaState.FINALIZED ||
++              rState == ReplicaState.RBW &&
++                  r.rInfo.getNumBytes() == finalizedLength) {
++            participatingList.add(r);
++          }
++        }
++        newBlock.setNumBytes(finalizedLength);
++        break;
++      case RBW:
++      case RWR:
++        long minLength = Long.MAX_VALUE;
++        for(BlockRecord r : syncList) {
++          ReplicaState rState = r.rInfo.getOriginalReplicaState();
++          if(rState == bestState) {
++            minLength = Math.min(minLength, r.rInfo.getNumBytes());
++            participatingList.add(r);
++          }
++        }
++        newBlock.setNumBytes(minLength);
++        break;
++      case RUR:
++      case TEMPORARY:
++        assert false : "bad replica state: " + bestState;
++      default:
++        break; // we have 'case' all enum values
++      }
++
++      List<DatanodeID> failedList = new ArrayList<>();
++      final List<BlockRecord> successList = new ArrayList<>();
++      for (BlockRecord r : participatingList) {
++        try {
++          r.updateReplicaUnderRecovery(bpid, recoveryId, newBlock.getNumBytes());
++          successList.add(r);
++        } catch (IOException e) {
++          InterDatanodeProtocol.LOG.warn("Failed to updateBlock (newblock="
++              + newBlock + ", datanode=" + r.id + ")", e);
++          failedList.add(r.id);
++        }
++      }
++
++      // If any of the data-nodes failed, the recovery fails, because
++      // we never know the actual state of the replica on failed data-nodes.
++      // The recovery should be started over.
++      if (!failedList.isEmpty()) {
++        StringBuilder b = new StringBuilder();
++        for(DatanodeID id : failedList) {
++          b.append("\n  " + id);
++        }
++        throw new IOException("Cannot recover " + block + ", the following "
++            + failedList.size() + " data-nodes failed {" + b + "\n}");
++      }
++
++      // Notify the name-node about successfully recovered replicas.
++      final DatanodeID[] datanodes = new DatanodeID[successList.size()];
++      final String[] storages = new String[datanodes.length];
++      for (int i = 0; i < datanodes.length; i++) {
++        final BlockRecord r = successList.get(i);
++        datanodes[i] = r.id;
++        storages[i] = r.storageID;
++      }
++      nn.commitBlockSynchronization(block,
++          newBlock.getGenerationStamp(), newBlock.getNumBytes(), true, false,
++          datanodes, storages);
++    }
++  }
++
++  private static void logRecoverBlock(String who, RecoveringBlock rb) {
++    ExtendedBlock block = rb.getBlock();
++    DatanodeInfo[] targets = rb.getLocations();
++
++    LOG.info(who + " calls recoverBlock(" + block
++        + ", targets=[" + Joiner.on(", ").join(targets) + "]"
++        + ", newGenerationStamp=" + rb.getNewGenerationStamp()
++        + ")");
++  }
++
++  /**
++   * Convenience method, which unwraps RemoteException.
++   * @throws IOException not a RemoteException.
++   */
++  private static ReplicaRecoveryInfo callInitReplicaRecovery(
++      InterDatanodeProtocol datanode, RecoveringBlock rBlock)
++      throws IOException {
++    try {
++      return datanode.initReplicaRecovery(rBlock);
++    } catch(RemoteException re) {
++      throw re.unwrapRemoteException();
++    }
++  }
++
++  /**
++   * Get the NameNode corresponding to the given block pool.
++   *
++   * @param bpid Block pool Id
++   * @return Namenode corresponding to the bpid
++   * @throws IOException if unable to get the corresponding NameNode
++   */
++  DatanodeProtocolClientSideTranslatorPB getActiveNamenodeForBP(
++      String bpid) throws IOException {
++    BPOfferService bpos = datanode.getBPOfferService(bpid);
++    if (bpos == null) {
++      throw new IOException("No block pool offer service for bpid=" + bpid);
++    }
++
++    DatanodeProtocolClientSideTranslatorPB activeNN = bpos.getActiveNN();
++    if (activeNN == null) {
++      throw new IOException(
++          "Block pool " + bpid + " has not recognized an active NN");
++    }
++    return activeNN;
++  }
++
++  public Daemon recoverBlocks(final String who,
++      final Collection<RecoveringBlock> blocks) {
++    Daemon d = new Daemon(datanode.threadGroup, new Runnable() {
++      @Override
++      public void run() {
++        for(RecoveringBlock b : blocks) {
++          try {
++            logRecoverBlock(who, b);
++            RecoveryTaskContiguous task = new RecoveryTaskContiguous(b);
++            task.recover();
++          } catch (IOException e) {
++            LOG.warn("recoverBlocks FAILED: " + b, e);
++          }
++        }
++      }
++    });
++    d.start();
++    return d;
++  }
++}
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java
+index 07cebe7..3306a47 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java
+@@ -123,7 +123,6 @@
+ import org.apache.hadoop.hdfs.protocol.ExtendedBlock;
+ import org.apache.hadoop.hdfs.protocol.HdfsBlocksMetadata;
+ import org.apache.hadoop.hdfs.protocol.HdfsConstants;
+-import org.apache.hadoop.hdfs.protocol.RecoveryInProgressException;
+ import org.apache.hadoop.hdfs.protocol.datatransfer.BlockConstructionStage;
+ import org.apache.hadoop.hdfs.protocol.datatransfer.DataTransferProtocol;
+ import org.apache.hadoop.hdfs.protocol.datatransfer.IOStreamPair;
+@@ -173,7 +172,6 @@
+ import org.apache.hadoop.io.nativeio.NativeIO;
+ import org.apache.hadoop.ipc.ProtobufRpcEngine;
+ import org.apache.hadoop.ipc.RPC;
+-import org.apache.hadoop.ipc.RemoteException;
+ import org.apache.hadoop.metrics2.lib.DefaultMetricsSystem;
+ import org.apache.hadoop.metrics2.util.MBeans;
+ import org.apache.hadoop.net.DNS;
+@@ -362,7 +360,7 @@ public static InetSocketAddress createSocketAddr(String target) {
+   private String supergroup;
+   private boolean isPermissionEnabled;
+   private String dnUserName = null;
+-
++  private BlockRecoveryWorker blockRecoveryWorker;
+   final Tracer tracer;
+   private final TracerConfigurationManager tracerConfigurationManager;
+ 
+@@ -667,7 +665,7 @@ public IOException call() {
+ 
+   /**
+    * Remove volumes from DataNode.
+-   * See {@link removeVolumes(final Set<File>, boolean)} for details.
++   * See {@link #removeVolumes(Set, boolean)} for details.
+    *
+    * @param locations the StorageLocations of the volumes to be removed.
+    * @throws IOException
+@@ -691,7 +689,7 @@ private void removeVolumes(final Collection<StorageLocation> locations)
+    * <li>
+    *   <ul>Remove volumes and block info from FsDataset.</ul>
+    *   <ul>Remove volumes from DataStorage.</ul>
+-   *   <ul>Reset configuration DATA_DIR and {@link dataDirs} to represent
++   *   <ul>Reset configuration DATA_DIR and {@link #dataDirs} to represent
+    *   active volumes.</ul>
+    * </li>
+    * @param absoluteVolumePaths the absolute path of volumes.
+@@ -805,7 +803,6 @@ private void startPlugins(Configuration conf) {
+       }
+     }
+   }
+-  
+ 
+   private void initIpcServer(Configuration conf) throws IOException {
+     InetSocketAddress ipcAddr = NetUtils.createSocketAddr(
+@@ -1046,8 +1043,6 @@ void trySendErrorReport(String bpid, int errCode, String errMsg) {
+     bpos.trySendErrorReport(errCode, errMsg);
+   }
+ 
+-
+-  
+   /**
+    * Return the BPOfferService instance corresponding to the given block.
+    * @return the BPOS
+@@ -1064,8 +1059,6 @@ private BPOfferService getBPOSForBlock(ExtendedBlock block)
+     return bpos;
+   }
+ 
+-
+-  
+   // used only for testing
+   @VisibleForTesting
+   void setHeartbeatsDisabledForTests(
+@@ -1157,7 +1150,9 @@ void startDataNode(Configuration conf,
+ 
+     metrics = DataNodeMetrics.create(conf, getDisplayName());
+     metrics.getJvmMetrics().setPauseMonitor(pauseMonitor);
+-    
++
++    blockRecoveryWorker = new BlockRecoveryWorker(this);
++
+     blockPoolManager = new BlockPoolManager(this);
+     blockPoolManager.refreshNamenodes(conf);
+ 
+@@ -1371,6 +1366,10 @@ void initBlockPool(BPOfferService bpos) throws IOException {
+   BPOfferService[] getAllBpOs() {
+     return blockPoolManager.getAllNamenodeThreads();
+   }
++
++  BPOfferService getBPOfferService(String bpid){
++    return blockPoolManager.get(bpid);
++  }
+   
+   int getBpOsCount() {
+     return blockPoolManager.getAllNamenodeThreads().length;
+@@ -2542,50 +2541,14 @@ public static void main(String args[]) {
+     secureMain(args, null);
+   }
+ 
+-  public Daemon recoverBlocks(
+-      final String who,
+-      final Collection<RecoveringBlock> blocks) {
+-    
+-    Daemon d = new Daemon(threadGroup, new Runnable() {
+-      /** Recover a list of blocks. It is run by the primary datanode. */
+-      @Override
+-      public void run() {
+-        for(RecoveringBlock b : blocks) {
+-          try {
+-            logRecoverBlock(who, b);
+-            recoverBlock(b);
+-          } catch (IOException e) {
+-            LOG.warn("recoverBlocks FAILED: " + b, e);
+-          }
+-        }
+-      }
+-    });
+-    d.start();
+-    return d;
+-  }
+-
+   // InterDataNodeProtocol implementation
+   @Override // InterDatanodeProtocol
+   public ReplicaRecoveryInfo initReplicaRecovery(RecoveringBlock rBlock)
+-  throws IOException {
++      throws IOException {
+     return data.initReplicaRecovery(rBlock);
+   }
+ 
+   /**
+-   * Convenience method, which unwraps RemoteException.
+-   * @throws IOException not a RemoteException.
+-   */
+-  private static ReplicaRecoveryInfo callInitReplicaRecovery(
+-      InterDatanodeProtocol datanode,
+-      RecoveringBlock rBlock) throws IOException {
+-    try {
+-      return datanode.initReplicaRecovery(rBlock);
+-    } catch(RemoteException re) {
+-      throw re.unwrapRemoteException();
+-    }
+-  }
+-
+-  /**
+    * Update replica with the new generation stamp and length.  
+    */
+   @Override // InterDatanodeProtocol
+@@ -2603,220 +2566,6 @@ public String updateReplicaUnderRecovery(final ExtendedBlock oldBlock,
+     return storageID;
+   }
+ 
+-  /** A convenient class used in block recovery */
+-  static class BlockRecord { 
+-    final DatanodeID id;
+-    final InterDatanodeProtocol datanode;
+-    final ReplicaRecoveryInfo rInfo;
+-    
+-    private String storageID;
+-
+-    BlockRecord(DatanodeID id,
+-                InterDatanodeProtocol datanode,
+-                ReplicaRecoveryInfo rInfo) {
+-      this.id = id;
+-      this.datanode = datanode;
+-      this.rInfo = rInfo;
+-    }
+-
+-    void updateReplicaUnderRecovery(String bpid, long recoveryId, long newLength 
+-        ) throws IOException {
+-      final ExtendedBlock b = new ExtendedBlock(bpid, rInfo);
+-      storageID = datanode.updateReplicaUnderRecovery(b, recoveryId, newLength);
+-    }
+-
+-    @Override
+-    public String toString() {
+-      return "block:" + rInfo + " node:" + id;
+-    }
+-  }
+-
+-  /** Recover a block */
+-  private void recoverBlock(RecoveringBlock rBlock) throws IOException {
+-    ExtendedBlock block = rBlock.getBlock();
+-    String blookPoolId = block.getBlockPoolId();
+-    DatanodeID[] datanodeids = rBlock.getLocations();
+-    List<BlockRecord> syncList = new ArrayList<BlockRecord>(datanodeids.length);
+-    int errorCount = 0;
+-
+-    //check generation stamps
+-    for(DatanodeID id : datanodeids) {
+-      try {
+-        BPOfferService bpos = blockPoolManager.get(blookPoolId);
+-        DatanodeRegistration bpReg = bpos.bpRegistration;
+-        InterDatanodeProtocol datanode = bpReg.equals(id)?
+-            this: DataNode.createInterDataNodeProtocolProxy(id, getConf(),
+-                dnConf.socketTimeout, dnConf.connectToDnViaHostname);
+-        ReplicaRecoveryInfo info = callInitReplicaRecovery(datanode, rBlock);
+-        if (info != null &&
+-            info.getGenerationStamp() >= block.getGenerationStamp() &&
+-            info.getNumBytes() > 0) {
+-          syncList.add(new BlockRecord(id, datanode, info));
+-        }
+-      } catch (RecoveryInProgressException ripE) {
+-        InterDatanodeProtocol.LOG.warn(
+-            "Recovery for replica " + block + " on data-node " + id
+-            + " is already in progress. Recovery id = "
+-            + rBlock.getNewGenerationStamp() + " is aborted.", ripE);
+-        return;
+-      } catch (IOException e) {
+-        ++errorCount;
+-        InterDatanodeProtocol.LOG.warn(
+-            "Failed to obtain replica info for block (=" + block 
+-            + ") from datanode (=" + id + ")", e);
+-      }
+-    }
+-
+-    if (errorCount == datanodeids.length) {
+-      throw new IOException("All datanodes failed: block=" + block
+-          + ", datanodeids=" + Arrays.asList(datanodeids));
+-    }
+-
+-    syncBlock(rBlock, syncList);
+-  }
+-
+-  /**
+-   * Get the NameNode corresponding to the given block pool.
+-   *
+-   * @param bpid Block pool Id
+-   * @return Namenode corresponding to the bpid
+-   * @throws IOException if unable to get the corresponding NameNode
+-   */
+-  public DatanodeProtocolClientSideTranslatorPB getActiveNamenodeForBP(String bpid)
+-      throws IOException {
+-    BPOfferService bpos = blockPoolManager.get(bpid);
+-    if (bpos == null) {
+-      throw new IOException("No block pool offer service for bpid=" + bpid);
+-    }
+-    
+-    DatanodeProtocolClientSideTranslatorPB activeNN = bpos.getActiveNN();
+-    if (activeNN == null) {
+-      throw new IOException(
+-          "Block pool " + bpid + " has not recognized an active NN");
+-    }
+-    return activeNN;
+-  }
+-
+-  /** Block synchronization */
+-  void syncBlock(RecoveringBlock rBlock,
+-                         List<BlockRecord> syncList) throws IOException {
+-    ExtendedBlock block = rBlock.getBlock();
+-    final String bpid = block.getBlockPoolId();
+-    DatanodeProtocolClientSideTranslatorPB nn =
+-      getActiveNamenodeForBP(block.getBlockPoolId());
+-    
+-    long recoveryId = rBlock.getNewGenerationStamp();
+-    if (LOG.isDebugEnabled()) {
+-      LOG.debug("block=" + block + ", (length=" + block.getNumBytes()
+-          + "), syncList=" + syncList);
+-    }
+-
+-    // syncList.isEmpty() means that all data-nodes do not have the block
+-    // or their replicas have 0 length.
+-    // The block can be deleted.
+-    if (syncList.isEmpty()) {
+-      nn.commitBlockSynchronization(block, recoveryId, 0,
+-          true, true, DatanodeID.EMPTY_ARRAY, null);
+-      return;
+-    }
+-
+-    // Calculate the best available replica state.
+-    ReplicaState bestState = ReplicaState.RWR;
+-    long finalizedLength = -1;
+-    for(BlockRecord r : syncList) {
+-      assert r.rInfo.getNumBytes() > 0 : "zero length replica";
+-      ReplicaState rState = r.rInfo.getOriginalReplicaState(); 
+-      if(rState.getValue() < bestState.getValue())
+-        bestState = rState;
+-      if(rState == ReplicaState.FINALIZED) {
+-        if(finalizedLength > 0 && finalizedLength != r.rInfo.getNumBytes())
+-          throw new IOException("Inconsistent size of finalized replicas. " +
+-              "Replica " + r.rInfo + " expected size: " + finalizedLength);
+-        finalizedLength = r.rInfo.getNumBytes();
+-      }
+-    }
+-
+-    // Calculate list of nodes that will participate in the recovery
+-    // and the new block size
+-    List<BlockRecord> participatingList = new ArrayList<BlockRecord>();
+-    final ExtendedBlock newBlock = new ExtendedBlock(bpid, block.getBlockId(),
+-        -1, recoveryId);
+-    switch(bestState) {
+-    case FINALIZED:
+-      assert finalizedLength > 0 : "finalizedLength is not positive";
+-      for(BlockRecord r : syncList) {
+-        ReplicaState rState = r.rInfo.getOriginalReplicaState();
+-        if(rState == ReplicaState.FINALIZED ||
+-           rState == ReplicaState.RBW &&
+-                      r.rInfo.getNumBytes() == finalizedLength)
+-          participatingList.add(r);
+-      }
+-      newBlock.setNumBytes(finalizedLength);
+-      break;
+-    case RBW:
+-    case RWR:
+-      long minLength = Long.MAX_VALUE;
+-      for(BlockRecord r : syncList) {
+-        ReplicaState rState = r.rInfo.getOriginalReplicaState();
+-        if(rState == bestState) {
+-          minLength = Math.min(minLength, r.rInfo.getNumBytes());
+-          participatingList.add(r);
+-        }
+-      }
+-      newBlock.setNumBytes(minLength);
+-      break;
+-    case RUR:
+-    case TEMPORARY:
+-      assert false : "bad replica state: " + bestState;
+-    }
+-
+-    List<DatanodeID> failedList = new ArrayList<DatanodeID>();
+-    final List<BlockRecord> successList = new ArrayList<BlockRecord>();
+-    for(BlockRecord r : participatingList) {
+-      try {
+-        r.updateReplicaUnderRecovery(bpid, recoveryId, newBlock.getNumBytes());
+-        successList.add(r);
+-      } catch (IOException e) {
+-        InterDatanodeProtocol.LOG.warn("Failed to updateBlock (newblock="
+-            + newBlock + ", datanode=" + r.id + ")", e);
+-        failedList.add(r.id);
+-      }
+-    }
+-
+-    // If any of the data-nodes failed, the recovery fails, because
+-    // we never know the actual state of the replica on failed data-nodes.
+-    // The recovery should be started over.
+-    if(!failedList.isEmpty()) {
+-      StringBuilder b = new StringBuilder();
+-      for(DatanodeID id : failedList) {
+-        b.append("\n  " + id);
+-      }
+-      throw new IOException("Cannot recover " + block + ", the following "
+-          + failedList.size() + " data-nodes failed {" + b + "\n}");
+-    }
+-
+-    // Notify the name-node about successfully recovered replicas.
+-    final DatanodeID[] datanodes = new DatanodeID[successList.size()];
+-    final String[] storages = new String[datanodes.length];
+-    for(int i = 0; i < datanodes.length; i++) {
+-      final BlockRecord r = successList.get(i);
+-      datanodes[i] = r.id;
+-      storages[i] = r.storageID;
+-    }
+-    nn.commitBlockSynchronization(block,
+-        newBlock.getGenerationStamp(), newBlock.getNumBytes(), true, false,
+-        datanodes, storages);
+-  }
+-  
+-  private static void logRecoverBlock(String who, RecoveringBlock rb) {
+-    ExtendedBlock block = rb.getBlock();
+-    DatanodeInfo[] targets = rb.getLocations();
+-    
+-    LOG.info(who + " calls recoverBlock(" + block
+-        + ", targets=[" + Joiner.on(", ").join(targets) + "]"
+-        + ", newGenerationStamp=" + rb.getNewGenerationStamp() + ")");
+-  }
+-
+   @Override // ClientDataNodeProtocol
+   public long getReplicaVisibleLength(final ExtendedBlock block) throws IOException {
+     checkReadAccess(block);
+@@ -3235,4 +2984,8 @@ public void removeSpanReceiver(long id) throws IOException {
+     checkSuperuserPrivilege();
+     tracerConfigurationManager.removeSpanReceiver(id);
+   }
++
++  public BlockRecoveryWorker getBlockRecoveryWorker() {
++    return blockRecoveryWorker;
++  }
+ }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestBlockRecovery.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestBlockRecovery.java
+index 1d974f8..1c2c541 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestBlockRecovery.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestBlockRecovery.java
+@@ -66,7 +66,7 @@
+ import org.apache.hadoop.hdfs.protocol.RecoveryInProgressException;
+ import org.apache.hadoop.hdfs.protocolPB.DatanodeProtocolClientSideTranslatorPB;
+ import org.apache.hadoop.hdfs.server.common.HdfsServerConstants.ReplicaState;
+-import org.apache.hadoop.hdfs.server.datanode.DataNode.BlockRecord;
++import org.apache.hadoop.hdfs.server.datanode.BlockRecoveryWorker.BlockRecord;
+ import org.apache.hadoop.hdfs.server.datanode.fsdataset.ReplicaOutputStreams;
+ import org.apache.hadoop.hdfs.server.namenode.FSNamesystem;
+ import org.apache.hadoop.hdfs.server.protocol.BlockRecoveryCommand.RecoveringBlock;
+@@ -81,7 +81,6 @@
+ import org.apache.hadoop.hdfs.server.protocol.StorageReport;
+ import org.apache.hadoop.hdfs.server.protocol.VolumeFailureSummary;
+ import org.apache.hadoop.test.GenericTestUtils;
+-import org.apache.hadoop.util.Daemon;
+ import org.apache.hadoop.util.DataChecksum;
+ import org.apache.log4j.Level;
+ import org.junit.After;
+@@ -100,6 +99,8 @@
+   private static final String DATA_DIR =
+     MiniDFSCluster.getBaseDirectory() + "data";
+   private DataNode dn;
++  private DataNode spyDN;
++  private BlockRecoveryWorker recoveryWorker;
+   private Configuration conf;
+   private final static long RECOVERY_ID = 3000L;
+   private final static String CLUSTER_ID = "testClusterID";
+@@ -179,6 +180,8 @@ DatanodeProtocolClientSideTranslatorPB connectToNN(
+     };
+     // Trigger a heartbeat so that it acknowledges the NN as active.
+     dn.getAllBpOs()[0].triggerHeartbeatForTests();
++    spyDN = spy(dn);
++    recoveryWorker = new BlockRecoveryWorker(spyDN);
+   }
+ 
+   /**
+@@ -219,12 +222,15 @@ private void testSyncReplicas(ReplicaRecoveryInfo replica1,
+         DFSTestUtil.getDatanodeInfo("1.2.3.4", "bogus", 1234), dn2, replica2);
+     syncList.add(record1);
+     syncList.add(record2);
+-    
+-    when(dn1.updateReplicaUnderRecovery((ExtendedBlock)anyObject(), anyLong(), 
++
++    when(dn1.updateReplicaUnderRecovery((ExtendedBlock)anyObject(), anyLong(),
+         anyLong())).thenReturn("storage1");
+-    when(dn2.updateReplicaUnderRecovery((ExtendedBlock)anyObject(), anyLong(), 
++    when(dn2.updateReplicaUnderRecovery((ExtendedBlock)anyObject(), anyLong(),
+         anyLong())).thenReturn("storage2");
+-    dn.syncBlock(rBlock, syncList);
++
++    BlockRecoveryWorker.RecoveryTaskContiguous RecoveryTaskContiguous =
++        recoveryWorker.new RecoveryTaskContiguous(rBlock);
++    RecoveryTaskContiguous.syncBlock(syncList);
+   }
+   
+   /**
+@@ -438,13 +444,17 @@ public void testRecoveryInProgressException()
+     if(LOG.isDebugEnabled()) {
+       LOG.debug("Running " + GenericTestUtils.getMethodName());
+     }
+-    DataNode spyDN = spy(dn);
+     doThrow(new RecoveryInProgressException("Replica recovery is in progress")).
+        when(spyDN).initReplicaRecovery(any(RecoveringBlock.class));
+-    Daemon d = spyDN.recoverBlocks("fake NN", initRecoveringBlocks());
+-    d.join();
+-    verify(spyDN, never()).syncBlock(
+-        any(RecoveringBlock.class), anyListOf(BlockRecord.class));
++
++    for(RecoveringBlock rBlock: initRecoveringBlocks()){
++      BlockRecoveryWorker.RecoveryTaskContiguous RecoveryTaskContiguous =
++          recoveryWorker.new RecoveryTaskContiguous(rBlock);
++      BlockRecoveryWorker.RecoveryTaskContiguous spyTask
++          = spy(RecoveryTaskContiguous);
++      spyTask.recover();
++      verify(spyTask, never()).syncBlock(anyListOf(BlockRecord.class));
++    }
+   }
+ 
+   /**
+@@ -458,13 +468,21 @@ public void testErrorReplicas() throws IOException, InterruptedException {
+     if(LOG.isDebugEnabled()) {
+       LOG.debug("Running " + GenericTestUtils.getMethodName());
+     }
+-    DataNode spyDN = spy(dn);
+     doThrow(new IOException()).
+        when(spyDN).initReplicaRecovery(any(RecoveringBlock.class));
+-    Daemon d = spyDN.recoverBlocks("fake NN", initRecoveringBlocks());
+-    d.join();
+-    verify(spyDN, never()).syncBlock(
+-        any(RecoveringBlock.class), anyListOf(BlockRecord.class));
++
++    for(RecoveringBlock rBlock: initRecoveringBlocks()){
++      BlockRecoveryWorker.RecoveryTaskContiguous RecoveryTaskContiguous =
++          recoveryWorker.new RecoveryTaskContiguous(rBlock);
++      BlockRecoveryWorker.RecoveryTaskContiguous spyTask = spy(RecoveryTaskContiguous);
++      try {
++        spyTask.recover();
++        fail();
++      } catch(IOException e){
++        GenericTestUtils.assertExceptionContains("All datanodes failed", e);
++      }
++      verify(spyTask, never()).syncBlock(anyListOf(BlockRecord.class));
++    }
+   }
+ 
+   /**
+@@ -477,13 +495,18 @@ public void testZeroLenReplicas() throws IOException, InterruptedException {
+     if(LOG.isDebugEnabled()) {
+       LOG.debug("Running " + GenericTestUtils.getMethodName());
+     }
+-    DataNode spyDN = spy(dn);
+     doReturn(new ReplicaRecoveryInfo(block.getBlockId(), 0,
+         block.getGenerationStamp(), ReplicaState.FINALIZED)).when(spyDN).
+         initReplicaRecovery(any(RecoveringBlock.class));
+-    Daemon d = spyDN.recoverBlocks("fake NN", initRecoveringBlocks());
+-    d.join();
+-    DatanodeProtocol dnP = dn.getActiveNamenodeForBP(POOL_ID);
++
++    for(RecoveringBlock rBlock: initRecoveringBlocks()){
++      BlockRecoveryWorker.RecoveryTaskContiguous RecoveryTaskContiguous =
++          recoveryWorker.new RecoveryTaskContiguous(rBlock);
++      BlockRecoveryWorker.RecoveryTaskContiguous spyTask
++          = spy(RecoveryTaskContiguous);
++      spyTask.recover();
++    }
++    DatanodeProtocol dnP = recoveryWorker.getActiveNamenodeForBP(POOL_ID);
+     verify(dnP).commitBlockSynchronization(
+         block, RECOVERY_ID, 0, true, true, DatanodeID.EMPTY_ARRAY, null);
+   }
+@@ -512,11 +535,12 @@ public void testFailedReplicaUpdate() throws IOException {
+     if(LOG.isDebugEnabled()) {
+       LOG.debug("Running " + GenericTestUtils.getMethodName());
+     }
+-    DataNode spyDN = spy(dn);
+     doThrow(new IOException()).when(spyDN).updateReplicaUnderRecovery(
+         block, RECOVERY_ID, block.getNumBytes());
+     try {
+-      spyDN.syncBlock(rBlock, initBlockRecords(spyDN));
++      BlockRecoveryWorker.RecoveryTaskContiguous RecoveryTaskContiguous =
++          recoveryWorker.new RecoveryTaskContiguous(rBlock);
++      RecoveryTaskContiguous.syncBlock(initBlockRecords(spyDN));
+       fail("Sync should fail");
+     } catch (IOException e) {
+       e.getMessage().startsWith("Cannot recover ");
+@@ -534,13 +558,15 @@ public void testNoReplicaUnderRecovery() throws IOException {
+       LOG.debug("Running " + GenericTestUtils.getMethodName());
+     }
+     dn.data.createRbw(StorageType.DEFAULT, block, false);
++    BlockRecoveryWorker.RecoveryTaskContiguous RecoveryTaskContiguous =
++        recoveryWorker.new RecoveryTaskContiguous(rBlock);
+     try {
+-      dn.syncBlock(rBlock, initBlockRecords(dn));
++      RecoveryTaskContiguous.syncBlock(initBlockRecords(dn));
+       fail("Sync should fail");
+     } catch (IOException e) {
+       e.getMessage().startsWith("Cannot recover ");
+     }
+-    DatanodeProtocol namenode = dn.getActiveNamenodeForBP(POOL_ID);
++    DatanodeProtocol namenode = recoveryWorker.getActiveNamenodeForBP(POOL_ID);
+     verify(namenode, never()).commitBlockSynchronization(
+         any(ExtendedBlock.class), anyLong(), anyLong(), anyBoolean(),
+         anyBoolean(), any(DatanodeID[].class), any(String[].class));
+@@ -564,13 +590,15 @@ public void testNotMatchedReplicaID() throws IOException {
+           DataChecksum.newDataChecksum(DataChecksum.Type.CRC32, 512));
+       streams.getChecksumOut().write('a');
+       dn.data.initReplicaRecovery(new RecoveringBlock(block, null, RECOVERY_ID+1));
++      BlockRecoveryWorker.RecoveryTaskContiguous RecoveryTaskContiguous =
++          recoveryWorker.new RecoveryTaskContiguous(rBlock);
+       try {
+-        dn.syncBlock(rBlock, initBlockRecords(dn));
++        RecoveryTaskContiguous.syncBlock(initBlockRecords(dn));
+         fail("Sync should fail");
+       } catch (IOException e) {
+         e.getMessage().startsWith("Cannot recover ");
+       }
+-      DatanodeProtocol namenode = dn.getActiveNamenodeForBP(POOL_ID);
++      DatanodeProtocol namenode = recoveryWorker.getActiveNamenodeForBP(POOL_ID);
+       verify(namenode, never()).commitBlockSynchronization(
+           any(ExtendedBlock.class), anyLong(), anyLong(), anyBoolean(),
+           anyBoolean(), any(DatanodeID[].class), any(String[].class));
+-- 
+1.7.9.5
+

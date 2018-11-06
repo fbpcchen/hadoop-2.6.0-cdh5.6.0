@@ -1,0 +1,38 @@
+From 256ab09aa6cc83a0c63229130381f7b77347d081 Mon Sep 17 00:00:00 2001
+From: Xuan <xgong@apache.org>
+Date: Fri, 8 May 2015 17:52:54 -0700
+Subject: [PATCH 0742/1023] YARN-3602.
+ TestResourceLocalizationService.testPublicResourceInitializesLocalDir
+ fails Intermittently due to IOException from
+ cleanup. Contributed by zhihai xu
+
+(cherry picked from commit 333f9a896d8a4407ce69cfd0dc8314587a339233)
+
+Conflicts:
+	hadoop-yarn-project/CHANGES.txt
+
+Change-Id: Ic21676097ab9c8eb3c7e2fb7f0a44201f6707d5b
+---
+ .../localizer/TestResourceLocalizationService.java |    6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/test/java/org/apache/hadoop/yarn/server/nodemanager/containermanager/localizer/TestResourceLocalizationService.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/test/java/org/apache/hadoop/yarn/server/nodemanager/containermanager/localizer/TestResourceLocalizationService.java
+index f7088ed..c5fbddc 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/test/java/org/apache/hadoop/yarn/server/nodemanager/containermanager/localizer/TestResourceLocalizationService.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/test/java/org/apache/hadoop/yarn/server/nodemanager/containermanager/localizer/TestResourceLocalizationService.java
+@@ -184,7 +184,11 @@ public void setup() throws IOException {
+   @After
+   public void cleanup() throws IOException {
+     conf = null;
+-    FileUtils.deleteDirectory(new File(basedir.toString()));
++    try {
++      FileUtils.deleteDirectory(new File(basedir.toString()));
++    } catch (IOException e) {
++      // ignore
++    }
+   }
+   
+   @Test
+-- 
+1.7.9.5
+

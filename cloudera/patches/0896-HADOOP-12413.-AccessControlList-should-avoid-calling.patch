@@ -1,0 +1,62 @@
+From 3bcb82b31e39124bb1ad462dcc4a072c8d4317bb Mon Sep 17 00:00:00 2001
+From: cnauroth <cnauroth@apache.org>
+Date: Tue, 15 Sep 2015 10:41:50 -0700
+Subject: [PATCH 0896/1023] HADOOP-12413. AccessControlList should avoid
+ calling getGroupNames in isUserInList with empty
+ groups. Contributed by Zhihai Xu.
+
+(cherry picked from commit b2017d9b032af20044fdf60ddbd1575a554ccb79)
+
+Conflicts:
+	hadoop-common-project/hadoop-common/CHANGES.txt
+
+Change-Id: Ie95b7c78c8bdaded6d0461b7273f8459f6579a29
+(cherry picked from commit c153d3171e84f73645cf932bc89989a241c76ab9)
+---
+ .../security/authorize/AccessControlList.java      |    2 +-
+ .../security/authorize/TestAccessControlList.java  |    9 +++++++++
+ 2 files changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/security/authorize/AccessControlList.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/security/authorize/AccessControlList.java
+index f19776f..b1b474b 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/security/authorize/AccessControlList.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/security/authorize/AccessControlList.java
+@@ -230,7 +230,7 @@ public void removeGroup(String group) {
+   public final boolean isUserInList(UserGroupInformation ugi) {
+     if (allAllowed || users.contains(ugi.getShortUserName())) {
+       return true;
+-    } else {
++    } else if (!groups.isEmpty()) {
+       for(String group: ugi.getGroupNames()) {
+         if (groups.contains(group)) {
+           return true;
+diff --git a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/security/authorize/TestAccessControlList.java b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/security/authorize/TestAccessControlList.java
+index 926e3b9..82942fc 100644
+--- a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/security/authorize/TestAccessControlList.java
++++ b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/security/authorize/TestAccessControlList.java
+@@ -37,6 +37,10 @@
+ import org.apache.hadoop.util.NativeCodeLoader;
+ import org.junit.Test;
+ 
++import static org.mockito.Mockito.never;
++import static org.mockito.Mockito.spy;
++import static org.mockito.Mockito.verify;
++
+ @InterfaceAudience.LimitedPrivate({"HDFS", "MapReduce"})
+ @InterfaceStability.Evolving
+ public class TestAccessControlList {
+@@ -449,6 +453,11 @@ public void testIsUserAllowed() {
+     assertUserAllowed(susan, acl);
+     assertUserAllowed(barbara, acl);
+     assertUserAllowed(ian, acl);
++
++    acl = new AccessControlList("");
++    UserGroupInformation spyUser = spy(drwho);
++    acl.isUserAllowed(spyUser);
++    verify(spyUser, never()).getGroupNames();
+   }
+ 
+   private void assertUserAllowed(UserGroupInformation ugi,
+-- 
+1.7.9.5
+

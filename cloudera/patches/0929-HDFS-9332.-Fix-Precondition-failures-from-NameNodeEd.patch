@@ -1,0 +1,35 @@
+From e4664d915a9d70e562a85c6f32bc8ec3c2fdcb19 Mon Sep 17 00:00:00 2001
+From: Andrew Wang <wang@apache.org>
+Date: Thu, 29 Oct 2015 11:30:47 -0700
+Subject: [PATCH 0929/1023] HDFS-9332. Fix Precondition failures from
+ NameNodeEditLogRoller while saving namespace.
+
+(cherry picked from commit 888c6245e20ba6bdaa57d16b5c62b4a9eda2cdaf)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt
+
+Change-Id: I4ac643a79008b4ebc279b5b5540aee7737159331
+(cherry picked from commit 83f7f9cb6ba1bcd5772600152aedf69d0bef4732)
+---
+ .../hadoop/hdfs/server/namenode/FSNamesystem.java  |    4 +---
+ 1 file changed, 1 insertion(+), 3 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSNamesystem.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSNamesystem.java
+index e8c302c..aba705c 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSNamesystem.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSNamesystem.java
+@@ -5291,9 +5291,7 @@ public NameNodeEditLogRoller(long rollThreshold, int sleepIntervalMs) {
+     public void run() {
+       while (fsRunning && shouldRun) {
+         try {
+-          FSEditLog editLog = getFSImage().getEditLog();
+-          long numEdits =
+-              editLog.getLastWrittenTxId() - editLog.getCurSegmentTxId();
++          long numEdits = getTransactionsSinceLastLogRoll();
+           if (numEdits > rollThreshold) {
+             FSNamesystem.LOG.info("NameNode rolling its own edit log because"
+                 + " number of edits in open segment exceeds threshold of "
+-- 
+1.7.9.5
+

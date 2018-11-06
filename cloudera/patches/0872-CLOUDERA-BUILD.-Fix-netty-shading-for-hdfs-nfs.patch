@@ -1,0 +1,87 @@
+From 5d8f980ff6a252df0ac5d3d8d716b7dad92f5e30 Mon Sep 17 00:00:00 2001
+From: Lei Xu <lei@cloudera.com>
+Date: Tue, 29 Sep 2015 13:30:58 -0700
+Subject: [PATCH 0872/1023] CLOUDERA-BUILD. Fix netty shading for hdfs-nfs.
+
+Change-Id: If4c87c172c3d6557fc11f98f400af00e9b1c5044
+---
+ .../resources/assemblies/hadoop-hdfs-nfs-dist.xml  |    2 +-
+ hadoop-hdfs-project/hadoop-hdfs-nfs/pom.xml        |   37 ++++++++++++++++----
+ 2 files changed, 32 insertions(+), 7 deletions(-)
+
+diff --git a/hadoop-assemblies/src/main/resources/assemblies/hadoop-hdfs-nfs-dist.xml b/hadoop-assemblies/src/main/resources/assemblies/hadoop-hdfs-nfs-dist.xml
+index 89e8771..cf7bf62 100644
+--- a/hadoop-assemblies/src/main/resources/assemblies/hadoop-hdfs-nfs-dist.xml
++++ b/hadoop-assemblies/src/main/resources/assemblies/hadoop-hdfs-nfs-dist.xml
+@@ -40,9 +40,9 @@
+         <exclude>org.slf4j:slf4j-api</exclude>
+         <exclude>org.slf4j:slf4j-log4j12</exclude>
+         <exclude>org.hsqldb:hsqldb</exclude>
++        <exclude>io.netty:netty-all:jar</exclude>
+       </excludes>
+     </dependencySet>
+   </dependencySets>
+ 
+ </assembly>
+-
+diff --git a/hadoop-hdfs-project/hadoop-hdfs-nfs/pom.xml b/hadoop-hdfs-project/hadoop-hdfs-nfs/pom.xml
+index cfb9bb0..ea59a0c 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs-nfs/pom.xml
++++ b/hadoop-hdfs-project/hadoop-hdfs-nfs/pom.xml
+@@ -52,15 +52,14 @@ http://maven.apache.org/xsd/maven-4.0.0.xsd">
+       <scope>compile</scope>
+     </dependency>
+     <dependency>
++      <groupId>io.netty</groupId>
++      <artifactId>netty-all</artifactId>
++      <scope>compile</scope>
++    </dependency>
++    <dependency>
+       <groupId>org.apache.hadoop</groupId>
+       <artifactId>hadoop-hdfs</artifactId>
+       <scope>compile</scope>
+-      <exclusions>
+-        <exclusion>
+-          <groupId>io.netty</groupId>
+-          <artifactId>netty-all</artifactId>
+-        </exclusion>
+-      </exclusions>
+     </dependency>
+     <dependency>
+       <groupId>org.apache.hadoop</groupId>
+@@ -247,6 +246,32 @@ http://maven.apache.org/xsd/maven-4.0.0.xsd">
+               </execution>
+             </executions>
+           </plugin>
++          <plugin>
++            <groupId>org.apache.maven.plugins</groupId>
++            <artifactId>maven-shade-plugin</artifactId>
++            <executions>
++              <execution>
++                <phase>package</phase>
++                <goals>
++                  <goal>shade</goal>
++                </goals>
++                <configuration>
++                  <createDependencyReducedPom>false</createDependencyReducedPom>
++                  <artifactSet>
++                    <includes>
++                      <include>io.netty:netty-all:jar:*</include>
++                    </includes>
++                  </artifactSet>
++                  <relocations>
++                    <relocation>
++                      <pattern>io.netty</pattern>
++                      <shadedPattern>com.cloudera.io.netty</shadedPattern>
++                    </relocation>
++                  </relocations>
++                </configuration>
++              </execution>
++            </executions>
++          </plugin>
+         </plugins>
+       </build>
+     </profile>
+-- 
+1.7.9.5
+

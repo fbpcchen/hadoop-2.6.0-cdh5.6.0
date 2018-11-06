@@ -1,0 +1,27 @@
+From fcf15a95d4239b8586012a01a8f98e4c635a2763 Mon Sep 17 00:00:00 2001
+From: Wei-Chiu Chuang <weichiu@cloudera.com>
+Date: Thu, 17 Dec 2015 14:54:19 -0800
+Subject: [PATCH 1007/1023] CLOUDERA-BUILD. CDH-35677. Update root pom for
+ CDH5.6.0 Hadoop
+
+Change-Id: Ib292f5a6f5c1ee5da7f22024af3bd4e2735a7e75
+---
+ pom.xml |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/pom.xml b/pom.xml
+index 20b3170..235b658 100644
+--- a/pom.xml
++++ b/pom.xml
+@@ -19,7 +19,7 @@ xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xs
+   <parent>
+     <groupId>com.cloudera.cdh</groupId>
+     <artifactId>cdh-root</artifactId>
+-    <version>5.6.1-SNAPSHOT</version>
++    <version>5.6.0</version>
+   </parent>
+   <groupId>org.apache.hadoop</groupId>
+   <artifactId>hadoop-main</artifactId>
+-- 
+1.7.9.5
+

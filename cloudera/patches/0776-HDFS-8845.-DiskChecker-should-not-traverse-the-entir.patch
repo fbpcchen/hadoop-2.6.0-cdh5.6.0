@@ -1,0 +1,28 @@
+From f3ba27ea1654249bc76393d8126763fd7eb9bcec Mon Sep 17 00:00:00 2001
+From: Colin Patrick Mccabe <cmccabe@cloudera.com>
+Date: Mon, 17 Aug 2015 15:24:56 -0700
+Subject: [PATCH 0776/1023] HDFS-8845. DiskChecker should not traverse the
+ entire tree (Chang Li via Colin P. McCabe)
+
+(cherry picked from commit 39326ba71ca619e04cef6ee2f23c1f430ce8b8d5)
+(cherry picked from commit dfab4cb3829a5e4e33656ce6e30d88fc4397e529)
+---
+ .../datanode/fsdataset/impl/BlockPoolSlice.java    |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/BlockPoolSlice.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/BlockPoolSlice.java
+index 766c509..907a839 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/BlockPoolSlice.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/BlockPoolSlice.java
+@@ -301,7 +301,7 @@ File activateSavedReplica(Block b, File metaFile, File blockFile)
+   }
+ 
+   void checkDirs() throws DiskErrorException {
+-    DiskChecker.checkDirs(finalizedDir);
++    DiskChecker.checkDir(finalizedDir);
+     DiskChecker.checkDir(tmpDir);
+     DiskChecker.checkDir(rbwDir);
+   }
+-- 
+1.7.9.5
+

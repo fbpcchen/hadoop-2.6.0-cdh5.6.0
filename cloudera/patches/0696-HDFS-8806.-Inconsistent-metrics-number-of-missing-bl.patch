@@ -1,0 +1,34 @@
+From 4d031287d9d0d0f3c06ecb2eb3894b6616ac1dc2 Mon Sep 17 00:00:00 2001
+From: Akira Ajisaka <aajisaka@apache.org>
+Date: Fri, 24 Jul 2015 18:28:44 +0900
+Subject: [PATCH 0696/1023] HDFS-8806. Inconsistent metrics: number of missing
+ blocks with replication factor 1 not properly
+ cleared. Contributed by Zhe Zhang.
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt
+	hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/UnderReplicatedBlocks.java
+---
+ .../blockmanagement/UnderReplicatedBlocks.java     |    3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/UnderReplicatedBlocks.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/UnderReplicatedBlocks.java
+index 0240805..1cc42da 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/UnderReplicatedBlocks.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/UnderReplicatedBlocks.java
+@@ -101,10 +101,11 @@
+   /**
+    * Empty the queues.
+    */
+-  void clear() {
++  synchronized void clear() {
+     for (int i = 0; i < LEVEL; i++) {
+       priorityQueues.get(i).clear();
+     }
++    corruptReplOneBlocks = 0;
+   }
+ 
+   /** Return the total number of under replication blocks */
+-- 
+1.7.9.5
+

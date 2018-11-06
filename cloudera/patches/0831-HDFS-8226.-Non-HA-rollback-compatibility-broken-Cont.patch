@@ -1,0 +1,33 @@
+From 8a6283c1a1973c38154debc832d9889977e9c9b1 Mon Sep 17 00:00:00 2001
+From: Vinayakumar B <vinayakumarb@apache.org>
+Date: Fri, 8 May 2015 15:39:47 +0530
+Subject: [PATCH 0831/1023] HDFS-8226. Non-HA rollback compatibility broken
+ (Contributed by J.Andreina) Added one missed
+ change, missed while resolving conflict
+
+(cherry picked from commit 3ee1b50dad9604bd959adbae472813f4bdf2fec7)
+(cherry picked from commit 1fbefe586b35e581f2c4610cd8e010e27e782bc3)
+
+Change-Id: I05e95de12f6edad8041281de25c1bb0c955b0157
+(cherry picked from commit b1f8dc6212266451d79937df449ce30926f2ba1a)
+---
+ .../hadoop-hdfs/src/main/bin/start-dfs.sh          |    3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/bin/start-dfs.sh b/hadoop-hdfs-project/hadoop-hdfs/src/main/bin/start-dfs.sh
+index c46e625..a8c2b98 100755
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/bin/start-dfs.sh
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/bin/start-dfs.sh
+@@ -41,7 +41,8 @@ if [[ $# -ge 1 ]]; then
+       dataStartOpt="$startOpt"
+     ;;
+     *)
+-      hadoop_exit_with_usage 1
++      echo $usage
++      exit 1
+     ;;
+   esac
+ fi
+-- 
+1.7.9.5
+

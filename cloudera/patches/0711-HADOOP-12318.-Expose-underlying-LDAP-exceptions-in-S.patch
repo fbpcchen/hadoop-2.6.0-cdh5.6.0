@@ -1,0 +1,45 @@
+From 828fa588e33748f62e21feadb7dd5e4a0f38688f Mon Sep 17 00:00:00 2001
+From: "Aaron T. Myers" <atm@apache.org>
+Date: Wed, 12 Aug 2015 15:16:05 -0700
+Subject: [PATCH 0711/1023] HADOOP-12318. Expose underlying LDAP exceptions in
+ SaslPlainServer. Contributed by Mike Yoder.
+
+(cherry picked from commit 820f864a26d90e9f4a3584577df581dcac20f9b6)
+
+Conflicts:
+	hadoop-common-project/hadoop-common/CHANGES.txt
+---
+ hadoop-common-project/hadoop-common/CHANGES.txt    |    3 +++
+ .../apache/hadoop/security/SaslPlainServer.java    |    2 +-
+ 2 files changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/hadoop-common-project/hadoop-common/CHANGES.txt b/hadoop-common-project/hadoop-common/CHANGES.txt
+index 230a403..51acf2d 100644
+--- a/hadoop-common-project/hadoop-common/CHANGES.txt
++++ b/hadoop-common-project/hadoop-common/CHANGES.txt
+@@ -245,6 +245,9 @@ Release 2.6.0 - 2014-11-18
+     issues with newer versions of guava in applications. (Christopher Tubbs
+     via acmurthy)
+ 
++    HADOOP-12318. Expose underlying LDAP exceptions in SaslPlainServer. (Mike
++    Yoder via atm)
++
+   OPTIMIZATIONS
+ 
+     HADOOP-10838. Byte array native checksumming. (James Thomas via todd)
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/security/SaslPlainServer.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/security/SaslPlainServer.java
+index 7d1b980..7c74f4a 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/security/SaslPlainServer.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/security/SaslPlainServer.java
+@@ -105,7 +105,7 @@ public String getMechanismName() {
+         authz = ac.getAuthorizedID();
+       }
+     } catch (Exception e) {
+-      throw new SaslException("PLAIN auth failed: " + e.getMessage());
++      throw new SaslException("PLAIN auth failed: " + e.getMessage(), e);
+     } finally {
+       completed = true;
+     }
+-- 
+1.7.9.5
+

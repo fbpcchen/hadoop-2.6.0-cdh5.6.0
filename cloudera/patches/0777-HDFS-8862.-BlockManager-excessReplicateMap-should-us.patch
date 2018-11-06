@@ -1,0 +1,36 @@
+From 5ac4d88b2060f322828076f30078c1c3a84e6f5a Mon Sep 17 00:00:00 2001
+From: yliu <yliu@apache.org>
+Date: Tue, 18 Aug 2015 09:25:03 +0800
+Subject: [PATCH 0777/1023] HDFS-8862. BlockManager#excessReplicateMap should
+ use a HashMap. (yliu)
+
+(cherry picked from commit 076c688780ecf66b0f593d7c19ce8944dc4451d4)
+(cherry picked from commit 401816618edcc94f307d72bda18dc5fdb6c7229e)
+---
+ .../hdfs/server/blockmanagement/BlockManager.java  |    3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlockManager.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlockManager.java
+index 4f5281a..9b23bfb 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlockManager.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlockManager.java
+@@ -33,7 +33,6 @@
+ import java.util.Map;
+ import java.util.Queue;
+ import java.util.Set;
+-import java.util.TreeMap;
+ import java.util.TreeSet;
+ import java.util.concurrent.atomic.AtomicLong;
+ 
+@@ -197,7 +196,7 @@ public int getPendingDataNodeMessageCount() {
+    * DataNode. We'll eventually remove these extras.
+    */
+   public final Map<String, LightWeightLinkedSet<Block>> excessReplicateMap =
+-    new TreeMap<String, LightWeightLinkedSet<Block>>();
++    new HashMap<>();
+ 
+   /**
+    * Store set of Blocks that need to be replicated 1 or more times.
+-- 
+1.7.9.5
+

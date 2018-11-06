@@ -1,0 +1,29 @@
+From 798a81fc86b36e5ae13215e72252356d979c27ec Mon Sep 17 00:00:00 2001
+From: Steve Loughran <stevel@apache.org>
+Date: Wed, 16 Sep 2015 10:11:59 +0100
+Subject: [PATCH 0988/1023] HDFS-9073. Fix failures in
+ TestLazyPersistLockedMemory  
+ testReleaseOnEviction(). (J.Andreina via stevel)
+
+(cherry picked from commit 9a8d09dada4d6c1b903bcf8adec9a94e43f4428f)
+
+Change-Id: I9474c3401dbff590ad6435ea0b559b7591b766a5
+---
+ .../fsdataset/impl/LazyPersistTestCase.java        |    1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/LazyPersistTestCase.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/LazyPersistTestCase.java
+index b37f58a..9ce263e 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/LazyPersistTestCase.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/LazyPersistTestCase.java
+@@ -383,6 +383,7 @@ protected final boolean verifyDeletedBlocks(LocatedBlocks locatedBlocks)
+ 
+   protected final void verifyRamDiskJMXMetric(String metricName,
+       long expectedValue) throws Exception {
++    waitForMetric(metricName, (int)expectedValue);
+     assertEquals(expectedValue, Integer.parseInt(jmx.getValue(metricName)));
+   }
+ 
+-- 
+1.7.9.5
+

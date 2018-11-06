@@ -1,0 +1,258 @@
+From 6667121ed721b0749ae701ece7f1eb2268f2ce7a Mon Sep 17 00:00:00 2001
+From: Vinod Kumar Vavilapalli <vinodkv@apache.org>
+Date: Wed, 6 May 2015 17:51:17 -0700
+Subject: [PATCH 0942/1023] YARN-3385. Fixed a race-condition in
+ ResourceManager's ZooKeeper based state-store to
+ avoid crashing on duplicate deletes. Contributed
+ by Zhihai Xu.
+
+(cherry picked from commit 4c7b9b6abe2452c9752a11214762be2e7665fb32)
+
+Conflicts:
+	hadoop-yarn-project/CHANGES.txt
+	hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/recovery/ZKRMStateStore.java
+	hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/recovery/TestZKRMStateStore.java
+
+Change-Id: I9a673dfd0e6695bb145bb6c3798dfefae44932b8
+(cherry picked from commit 88945c136fa4632653fcb9042443cd9bf25398be)
+(cherry picked from commit 8862c30b3a1e8d5232afff4417fad2855c0d5b53)
+---
+ .../resourcemanager/recovery/ZKRMStateStore.java   |   64 ++++++++++++++++----
+ .../recovery/TestZKRMStateStore.java               |   40 ++++++++++++
+ 2 files changed, 91 insertions(+), 13 deletions(-)
+
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/recovery/ZKRMStateStore.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/recovery/ZKRMStateStore.java
+index 0e7007e..55e0e72 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/recovery/ZKRMStateStore.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/recovery/ZKRMStateStore.java
+@@ -681,7 +681,7 @@ public synchronized void removeApplicationStateInternal(
+       LOG.debug("Removing info for app: " + appId + " at: " + appIdRemovePath
+           + " and its attempts.");
+     }
+-    doMultiWithRetries(opList);
++    doDeleteMultiWithRetries(opList);
+   }
+ 
+   @Override
+@@ -690,13 +690,12 @@ protected synchronized void storeRMDelegationTokenState(
+       throws Exception {
+     ArrayList<Op> opList = new ArrayList<Op>();
+     addStoreOrUpdateOps(opList, rmDTIdentifier, renewDate, false);
+-    doMultiWithRetries(opList);
++    doStoreMultiWithRetries(opList);
+   }
+ 
+   @Override
+   protected synchronized void removeRMDelegationTokenState(
+       RMDelegationTokenIdentifier rmDTIdentifier) throws Exception {
+-    ArrayList<Op> opList = new ArrayList<Op>();
+     String nodeRemovePath =
+         getNodePath(delegationTokensRootPath, DELEGATION_TOKEN_PREFIX
+             + rmDTIdentifier.getSequenceNumber());
+@@ -705,11 +704,12 @@ protected synchronized void removeRMDelegationTokenState(
+           + rmDTIdentifier.getSequenceNumber());
+     }
+     if (existsWithRetries(nodeRemovePath, false) != null) {
++      ArrayList<Op> opList = new ArrayList<Op>();
+       opList.add(Op.delete(nodeRemovePath, -1));
++      doDeleteMultiWithRetries(opList);
+     } else {
+       LOG.debug("Attempted to delete a non-existing znode " + nodeRemovePath);
+     }
+-    doMultiWithRetries(opList);
+   }
+ 
+   @Override
+@@ -728,7 +728,7 @@ protected synchronized void updateRMDelegationTokenState(
+       // in case znode exists
+       addStoreOrUpdateOps(opList, rmDTIdentifier, renewDate, true);
+     }
+-    doMultiWithRetries(opList);
++    doStoreMultiWithRetries(opList);
+   }
+ 
+   private void addStoreOrUpdateOps(ArrayList<Op> opList,
+@@ -801,7 +801,7 @@ protected synchronized void removeRMDTMasterKeyState(
+       LOG.debug("Removing RMDelegationKey_" + delegationKey.getKeyId());
+     }
+     if (existsWithRetries(nodeRemovePath, false) != null) {
+-      doMultiWithRetries(Op.delete(nodeRemovePath, -1));
++      doDeleteMultiWithRetries(Op.delete(nodeRemovePath, -1));
+     } else {
+       LOG.debug("Attempted to delete a non-existing znode " + nodeRemovePath);
+     }
+@@ -896,7 +896,7 @@ String getNodePath(String root, String nodeName) {
+    * Helper method that creates fencing node, executes the passed operations,
+    * and deletes the fencing node.
+    */
+-  private synchronized void doMultiWithRetries(
++  private synchronized void doStoreMultiWithRetries(
+       final List<Op> opList) throws Exception {
+     final List<Op> execOpList = new ArrayList<Op>(opList.size() + 2);
+     execOpList.add(createFencingNodePathOp);
+@@ -915,8 +915,32 @@ public Void run() throws KeeperException, InterruptedException {
+    * Helper method that creates fencing node, executes the passed operation,
+    * and deletes the fencing node.
+    */
+-  private void doMultiWithRetries(final Op op) throws Exception {
+-    doMultiWithRetries(Collections.singletonList(op));
++  private void doStoreMultiWithRetries(final Op op) throws Exception {
++    doStoreMultiWithRetries(Collections.singletonList(op));
++  }
++
++  /**
++   * Helper method that creates fencing node, executes the passed
++   * delete related operations and deletes the fencing node.
++   */
++  private synchronized void doDeleteMultiWithRetries(
++      final List<Op> opList) throws Exception {
++    final List<Op> execOpList = new ArrayList<Op>(opList.size() + 2);
++    execOpList.add(createFencingNodePathOp);
++    execOpList.addAll(opList);
++    execOpList.add(deleteFencingNodePathOp);
++    new ZKAction<Void>() {
++      @Override
++      public Void run() throws KeeperException, InterruptedException {
++        setHasDeleteNodeOp(true);
++        zkClient.multi(execOpList);
++        return null;
++      }
++    }.runWithRetries();
++  }
++
++  private void doDeleteMultiWithRetries(final Op op) throws Exception {
++    doDeleteMultiWithRetries(Collections.singletonList(op));
+   }
+ 
+   @VisibleForTesting
+@@ -925,7 +949,7 @@ private void doMultiWithRetries(final Op op) throws Exception {
+   public void createWithRetries(
+       final String path, final byte[] data, final List<ACL> acl,
+       final CreateMode mode) throws Exception {
+-    doMultiWithRetries(Op.create(path, data, acl, mode));
++    doStoreMultiWithRetries(Op.create(path, data, acl, mode));
+   }
+ 
+   @VisibleForTesting
+@@ -933,7 +957,7 @@ public void createWithRetries(
+   @Unstable
+   public void setDataWithRetries(final String path, final byte[] data,
+                                  final int version) throws Exception {
+-    doMultiWithRetries(Op.setData(path, data, version));
++    doStoreMultiWithRetries(Op.setData(path, data, version));
+   }
+ 
+   @VisibleForTesting
+@@ -999,7 +1023,12 @@ private void recursiveDeleteWithRetriesHelper(String path, boolean watch)
+     for (String child : children) {
+       recursiveDeleteWithRetriesHelper(path + "/" + child, false);
+     }
+-    zkClient.delete(path, -1);
++
++    try {
++      zkClient.delete(path, -1);
++    } catch (KeeperException.NoNodeException nne) {
++      LOG.info("Node " + path + " doesn't exist to delete");
++    }
+   }
+ 
+   /**
+@@ -1016,7 +1045,7 @@ private void recursiveDeleteWithRetriesHelper(String path, boolean watch)
+     public void run() {
+       try {
+         while (true) {
+-          doMultiWithRetries(emptyOpList);
++          doStoreMultiWithRetries(emptyOpList);
+           Thread.sleep(zkSessionTimeout);
+         }
+       } catch (InterruptedException ie) {
+@@ -1029,6 +1058,10 @@ public void run() {
+   }
+ 
+   private abstract class ZKAction<T> {
++    private boolean hasDeleteNodeOp = false;
++    void setHasDeleteNodeOp(boolean hasDeleteOp) {
++      this.hasDeleteNodeOp = hasDeleteOp;
++    }
+     // run() expects synchronization on ZKRMStateStore.this
+     abstract T run() throws KeeperException, InterruptedException;
+ 
+@@ -1078,6 +1111,11 @@ T runWithRetries() throws Exception {
+             LOG.info("znode already exists!");
+             return null;
+           }
++          if (hasDeleteNodeOp && ke.code() == Code.NONODE) {
++            LOG.info("znode has already been deleted!");
++            return null;
++          }
++
+           LOG.info("Exception while executing a ZK operation.", ke);
+           if (shouldRetry(ke.code()) && ++retry < numRetries) {
+             LOG.info("Retrying operation on ZK. Retry no. " + retry);
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/recovery/TestZKRMStateStore.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/recovery/TestZKRMStateStore.java
+index 3c7170a..d6df5d5 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/recovery/TestZKRMStateStore.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/recovery/TestZKRMStateStore.java
+@@ -30,14 +30,22 @@
+ import org.apache.hadoop.ha.HAServiceProtocol;
+ import org.apache.hadoop.ha.HAServiceProtocol.StateChangeRequestInfo;
+ import org.apache.hadoop.service.Service;
++import org.apache.hadoop.yarn.api.records.ApplicationAttemptId;
++import org.apache.hadoop.yarn.api.records.ApplicationId;
++import org.apache.hadoop.yarn.api.records.ApplicationSubmissionContext;
++import org.apache.hadoop.yarn.api.records.impl.pb.ApplicationSubmissionContextPBImpl;
+ import org.apache.hadoop.yarn.conf.HAUtil;
+ import org.apache.hadoop.yarn.conf.YarnConfiguration;
+ import org.apache.hadoop.yarn.server.records.Version;
+ import org.apache.hadoop.yarn.server.records.impl.pb.VersionPBImpl;
+ import org.apache.hadoop.yarn.server.resourcemanager.ResourceManager;
++import org.apache.hadoop.yarn.server.resourcemanager.recovery.records.ApplicationStateData;
+ import org.apache.hadoop.yarn.server.resourcemanager.rmapp.RMApp;
++import org.apache.hadoop.yarn.util.ConverterUtils;
++import org.apache.zookeeper.KeeperException;
+ import org.apache.zookeeper.ZooKeeper;
+ import org.apache.zookeeper.data.Stat;
++import org.junit.Assert;
+ import org.junit.Test;
+ 
+ public class TestZKRMStateStore extends RMStateStoreTestBase {
+@@ -191,4 +199,36 @@ public void testFencing() throws Exception {
+         HAServiceProtocol.HAServiceState.ACTIVE,
+         rm2.getRMContext().getRMAdminService().getServiceStatus().getState());
+   }
++
++  @Test
++  public void testDuplicateRMAppDeletion() throws Exception {
++    TestZKRMStateStoreTester zkTester = new TestZKRMStateStoreTester();
++    long submitTime = System.currentTimeMillis();
++    long startTime = System.currentTimeMillis() + 1234;
++    RMStateStore store = zkTester.getRMStateStore();
++    TestDispatcher dispatcher = new TestDispatcher();
++    store.setRMDispatcher(dispatcher);
++
++    ApplicationAttemptId attemptIdRemoved = ConverterUtils
++        .toApplicationAttemptId("appattempt_1352994193343_0002_000001");
++    ApplicationId appIdRemoved = attemptIdRemoved.getApplicationId();
++    storeApp(store, appIdRemoved, submitTime, startTime);
++    storeAttempt(store, attemptIdRemoved,
++        "container_1352994193343_0002_01_000001", null, null, dispatcher);
++
++    ApplicationSubmissionContext context =
++        new ApplicationSubmissionContextPBImpl();
++    context.setApplicationId(appIdRemoved);
++    ApplicationStateData appStateRemoved =
++        ApplicationStateData.newInstance(
++            submitTime, startTime, context, "user1");
++    appStateRemoved.attempts.put(attemptIdRemoved, null);
++    store.removeApplicationStateInternal(appStateRemoved);
++    try {
++      store.removeApplicationStateInternal(appStateRemoved);
++    } catch (KeeperException.NoNodeException nne) {
++      Assert.fail("NoNodeException should not happen.");
++    }
++    store.close();
++  }
+ }
+-- 
+1.7.9.5
+

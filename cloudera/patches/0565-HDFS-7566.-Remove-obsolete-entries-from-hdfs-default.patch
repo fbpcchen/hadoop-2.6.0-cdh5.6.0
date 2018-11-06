@@ -1,0 +1,142 @@
+From f13a103c41eaeab358d475206d4c060e4efdb73b Mon Sep 17 00:00:00 2001
+From: Allen Wittenauer <aw@apache.org>
+Date: Tue, 27 Jan 2015 14:31:27 -0800
+Subject: [PATCH 0565/1023] HDFS-7566. Remove obsolete entries from
+ hdfs-default.xml (Ray Chiang via aw)
+
+(cherry picked from commit 0a05ae1782488597cbf8667866f98f0df341abc0)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt
+---
+ .../src/main/resources/hdfs-default.xml            |   26 --------------------
+ .../test/resources/job_1329348432655_0001_conf.xml |    2 --
+ .../src/main/data/2jobs2min-rumen-jh.json          |    6 -----
+ 3 files changed, 34 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/resources/hdfs-default.xml b/hadoop-hdfs-project/hadoop-hdfs/src/main/resources/hdfs-default.xml
+index d36578d..1d48ed6 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/resources/hdfs-default.xml
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/resources/hdfs-default.xml
+@@ -31,16 +31,6 @@
+ </property>
+ 
+ <property>
+-  <name>dfs.namenode.logging.level</name>
+-  <value>info</value>
+-  <description>
+-    The logging level for dfs namenode. Other values are "dir" (trace
+-    namespace mutations), "block" (trace block under/over replications
+-    and block creations/deletions), or "all".
+-  </description>
+-</property>
+-
+-<property>
+   <name>dfs.namenode.rpc-address</name>
+   <value></value>
+   <description>
+@@ -155,14 +145,6 @@
+ </property>
+ 
+ <property>
+-  <name>dfs.https.enable</name>
+-  <value>false</value>
+-  <description>
+-    Deprecated. Use "dfs.http.policy" instead.
+-  </description>
+-</property>
+-
+-<property>
+   <name>dfs.http.policy</name>
+   <value>HTTP_ONLY</value>
+   <description>Decide if HTTPS(SSL) is supported on HDFS
+@@ -1244,14 +1226,6 @@
+ </property>
+ 
+ <property>
+-  <name>dfs.support.append</name>
+-  <value>true</value>
+-  <description>
+-    Does HDFS allow appends to files?
+-  </description>
+-</property>
+-
+-<property>
+   <name>dfs.client.use.datanode.hostname</name>
+   <value>false</value>
+   <description>Whether clients should use datanode hostnames when
+diff --git a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-hs/src/test/resources/job_1329348432655_0001_conf.xml b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-hs/src/test/resources/job_1329348432655_0001_conf.xml
+index d9411fb..8caabc1 100644
+--- a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-hs/src/test/resources/job_1329348432655_0001_conf.xml
++++ b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-hs/src/test/resources/job_1329348432655_0001_conf.xml
+@@ -112,7 +112,6 @@
+ <property><!--Loaded from job.xml--><name>hadoop.proxyuser.user.groups</name><value>users</value></property>
+ <property><!--Loaded from job.xml--><name>dfs.namenode.name.dir.restore</name><value>false</value></property>
+ <property><!--Loaded from job.xml--><name>io.seqfile.lazydecompress</name><value>true</value></property>
+-<property><!--Loaded from job.xml--><name>dfs.https.enable</name><value>false</value></property>
+ <property><!--Loaded from job.xml--><name>mapreduce.reduce.merge.inmem.threshold</name><value>1000</value></property>
+ <property><!--Loaded from job.xml--><name>mapreduce.input.fileinputformat.split.minsize</name><value>0</value></property>
+ <property><!--Loaded from job.xml--><name>dfs.replication</name><value>3</value></property>
+@@ -209,7 +208,6 @@
+ <property><!--Loaded from job.xml--><name>mapreduce.job.dir</name><value>/tmp/hadoop-yarn/staging/user/.staging/job_1329348432655_0001</value></property>
+ <property><!--Loaded from job.xml--><name>io.map.index.skip</name><value>0</value></property>
+ <property><!--Loaded from job.xml--><name>net.topology.node.switch.mapping.impl</name><value>org.apache.hadoop.net.ScriptBasedMapping</value></property>
+-<property><!--Loaded from job.xml--><name>dfs.namenode.logging.level</name><value>info</value></property>
+ <property><!--Loaded from job.xml--><name>fs.s3.maxRetries</name><value>4</value></property>
+ <property><!--Loaded from job.xml--><name>s3native.client-write-packet-size</name><value>65536</value></property>
+ <property><!--Loaded from job.xml--><name>yarn.resourcemanager.amliveliness-monitor.interval-ms</name><value>1000</value></property>
+diff --git a/hadoop-tools/hadoop-sls/src/main/data/2jobs2min-rumen-jh.json b/hadoop-tools/hadoop-sls/src/main/data/2jobs2min-rumen-jh.json
+index bf36e58..fde3b7c 100644
+--- a/hadoop-tools/hadoop-sls/src/main/data/2jobs2min-rumen-jh.json
++++ b/hadoop-tools/hadoop-sls/src/main/data/2jobs2min-rumen-jh.json
+@@ -4656,7 +4656,6 @@
+     "mapreduce.tasktracker.taskcontroller" : "org.apache.hadoop.mapred.DefaultTaskController",
+     "yarn.scheduler.fair.preemption" : "true",
+     "mapreduce.reduce.shuffle.parallelcopies" : "5",
+-    "dfs.support.append" : "true",
+     "yarn.nodemanager.env-whitelist" : "JAVA_HOME,HADOOP_COMMON_HOME,HADOOP_HDFS_HOME,HADOOP_CONF_DIR,YARN_HOME",
+     "mapreduce.jobtracker.heartbeats.in.second" : "100",
+     "mapreduce.job.maxtaskfailures.per.tracker" : "3",
+@@ -4673,7 +4672,6 @@
+     "dfs.datanode.hdfs-blocks-metadata.enabled" : "true",
+     "ha.zookeeper.parent-znode" : "/hadoop-ha",
+     "io.seqfile.lazydecompress" : "true",
+-    "dfs.https.enable" : "false",
+     "mapreduce.reduce.merge.inmem.threshold" : "1000",
+     "mapreduce.input.fileinputformat.split.minsize" : "0",
+     "dfs.replication" : "3",
+@@ -4781,7 +4779,6 @@
+     "io.map.index.skip" : "0",
+     "net.topology.node.switch.mapping.impl" : "org.apache.hadoop.net.ScriptBasedMapping",
+     "fs.s3.maxRetries" : "4",
+-    "dfs.namenode.logging.level" : "info",
+     "ha.failover-controller.new-active.rpc-timeout.ms" : "60000",
+     "s3native.client-write-packet-size" : "65536",
+     "yarn.resourcemanager.amliveliness-monitor.interval-ms" : "1000",
+@@ -9766,7 +9763,6 @@
+     "mapreduce.tasktracker.taskcontroller" : "org.apache.hadoop.mapred.DefaultTaskController",
+     "yarn.scheduler.fair.preemption" : "true",
+     "mapreduce.reduce.shuffle.parallelcopies" : "5",
+-    "dfs.support.append" : "true",
+     "yarn.nodemanager.env-whitelist" : "JAVA_HOME,HADOOP_COMMON_HOME,HADOOP_HDFS_HOME,HADOOP_CONF_DIR,YARN_HOME",
+     "mapreduce.jobtracker.heartbeats.in.second" : "100",
+     "mapreduce.job.maxtaskfailures.per.tracker" : "3",
+@@ -9783,7 +9779,6 @@
+     "dfs.datanode.hdfs-blocks-metadata.enabled" : "true",
+     "ha.zookeeper.parent-znode" : "/hadoop-ha",
+     "io.seqfile.lazydecompress" : "true",
+-    "dfs.https.enable" : "false",
+     "mapreduce.reduce.merge.inmem.threshold" : "1000",
+     "mapreduce.input.fileinputformat.split.minsize" : "0",
+     "dfs.replication" : "3",
+@@ -9891,7 +9886,6 @@
+     "io.map.index.skip" : "0",
+     "net.topology.node.switch.mapping.impl" : "org.apache.hadoop.net.ScriptBasedMapping",
+     "fs.s3.maxRetries" : "4",
+-    "dfs.namenode.logging.level" : "info",
+     "ha.failover-controller.new-active.rpc-timeout.ms" : "60000",
+     "s3native.client-write-packet-size" : "65536",
+     "yarn.resourcemanager.amliveliness-monitor.interval-ms" : "1000",
+-- 
+1.7.9.5
+

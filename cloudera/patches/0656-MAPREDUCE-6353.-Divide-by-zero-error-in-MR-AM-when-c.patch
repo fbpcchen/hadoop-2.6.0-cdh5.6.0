@@ -1,0 +1,135 @@
+From 594109b0ae04333c5e8bc80e426488bffc4a786f Mon Sep 17 00:00:00 2001
+From: Karthik Kambatla <kasha@apache.org>
+Date: Sat, 9 May 2015 14:43:18 -0700
+Subject: [PATCH 0656/1023] MAPREDUCE-6353. Divide by zero error in MR AM when
+ calculating available containers. (Anubhav Dhoot
+ via kasha)
+
+(cherry picked from commit 1773aac780585871072960a5863af461e112a030)
+(cherry picked from commit 52469b10dd40cc2a645a3b91cec9d0ccc5cc85ff)
+
+Conflicts:
+	hadoop-mapreduce-project/CHANGES.txt
+---
+ .../v2/app/rm/ResourceCalculatorUtils.java         |   16 ++++-
+ .../v2/app/rm/TestResourceCalculatorUtils.java     |   75 ++++++++++++++++++++
+ 2 files changed, 88 insertions(+), 3 deletions(-)
+ create mode 100644 hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/test/java/org/apache/hadoop/mapreduce/v2/app/rm/TestResourceCalculatorUtils.java
+
+diff --git a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/main/java/org/apache/hadoop/mapreduce/v2/app/rm/ResourceCalculatorUtils.java b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/main/java/org/apache/hadoop/mapreduce/v2/app/rm/ResourceCalculatorUtils.java
+index b9bc8b5..39cb22e 100644
+--- a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/main/java/org/apache/hadoop/mapreduce/v2/app/rm/ResourceCalculatorUtils.java
++++ b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/main/java/org/apache/hadoop/mapreduce/v2/app/rm/ResourceCalculatorUtils.java
+@@ -35,10 +35,13 @@ public static int divideAndCeil(int a, int b) {
+   public static int computeAvailableContainers(Resource available,
+       Resource required, EnumSet<SchedulerResourceTypes> resourceTypes) {
+     if (resourceTypes.contains(SchedulerResourceTypes.CPU)) {
+-      return Math.min(available.getMemory() / required.getMemory(),
+-        available.getVirtualCores() / required.getVirtualCores());
++      return Math.min(
++        calculateRatioOrMaxValue(available.getMemory(), required.getMemory()),
++        calculateRatioOrMaxValue(available.getVirtualCores(), required
++            .getVirtualCores()));
+     }
+-    return available.getMemory() / required.getMemory();
++    return calculateRatioOrMaxValue(
++      available.getMemory(), required.getMemory());
+   }
+ 
+   public static int divideAndCeilContainers(Resource required, Resource factor,
+@@ -49,4 +52,11 @@ public static int divideAndCeilContainers(Resource required, Resource factor,
+     }
+     return divideAndCeil(required.getMemory(), factor.getMemory());
+   }
++
++  private static int calculateRatioOrMaxValue(int numerator, int denominator) {
++    if (denominator == 0) {
++      return Integer.MAX_VALUE;
++    }
++    return numerator / denominator;
++  }
+ }
+diff --git a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/test/java/org/apache/hadoop/mapreduce/v2/app/rm/TestResourceCalculatorUtils.java b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/test/java/org/apache/hadoop/mapreduce/v2/app/rm/TestResourceCalculatorUtils.java
+new file mode 100644
+index 0000000..d87f6db
+--- /dev/null
++++ b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/test/java/org/apache/hadoop/mapreduce/v2/app/rm/TestResourceCalculatorUtils.java
+@@ -0,0 +1,75 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package org.apache.hadoop.mapreduce.v2.app.rm;
++
++import org.apache.hadoop.yarn.api.records.Resource;
++import org.junit.Assert;
++import org.junit.Test;
++
++import java.util.EnumSet;
++
++import static org.apache.hadoop.yarn.proto.YarnServiceProtos.*;
++
++public class TestResourceCalculatorUtils {
++  @Test
++  public void testComputeAvailableContainers() throws Exception {
++    Resource clusterAvailableResources = Resource.newInstance(81920, 40);
++
++    Resource nonZeroResource = Resource.newInstance(1024, 2);
++
++    int expectedNumberOfContainersForMemory = 80;
++    int expectedNumberOfContainersForCPU = 20;
++
++    verifyDifferentResourceTypes(clusterAvailableResources, nonZeroResource,
++        expectedNumberOfContainersForMemory,
++        expectedNumberOfContainersForCPU);
++
++    Resource zeroMemoryResource = Resource.newInstance(0,
++        nonZeroResource.getVirtualCores());
++
++    verifyDifferentResourceTypes(clusterAvailableResources, zeroMemoryResource,
++        Integer.MAX_VALUE,
++        expectedNumberOfContainersForCPU);
++
++    Resource zeroCpuResource = Resource.newInstance(nonZeroResource.getMemory(),
++        0);
++
++    verifyDifferentResourceTypes(clusterAvailableResources, zeroCpuResource,
++        expectedNumberOfContainersForMemory,
++        expectedNumberOfContainersForMemory);
++  }
++
++  private void verifyDifferentResourceTypes(Resource clusterAvailableResources,
++      Resource nonZeroResource, int expectedNumberOfContainersForMemoryOnly,
++      int expectedNumberOfContainersOverall) {
++
++    Assert.assertEquals("Incorrect number of available containers for Memory",
++        expectedNumberOfContainersForMemoryOnly,
++        ResourceCalculatorUtils.computeAvailableContainers(
++            clusterAvailableResources, nonZeroResource,
++            EnumSet.of(SchedulerResourceTypes.MEMORY)));
++
++    Assert.assertEquals("Incorrect number of available containers overall",
++        expectedNumberOfContainersOverall,
++        ResourceCalculatorUtils.computeAvailableContainers(
++            clusterAvailableResources, nonZeroResource,
++            EnumSet.of(SchedulerResourceTypes.CPU,
++                SchedulerResourceTypes.MEMORY)));
++  }
++}
+-- 
+1.7.9.5
+

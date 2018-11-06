@@ -1,0 +1,49 @@
+From 59033bde58e2f9808b9d5f35c86dd706ba75f35b Mon Sep 17 00:00:00 2001
+From: Zhe Zhang <zhz@apache.org>
+Date: Thu, 3 Dec 2015 10:29:48 -0800
+Subject: [PATCH 0998/1023] HDFS-8647. Abstract BlockManager's rack policy
+ into BlockPlacementPolicy. Contributed by Brahma
+ Reddy Battula. Branch-2.7 patch contributed by
+ Xiao Chen. (The part of the fix that's in
+ Branch-2.7 but not Branch-2.6)
+
+Change-Id: I1b32627bc2a2f30f5debeaba7663fb2777958079
+(cherry picked from commit 1ae8a8342edc18fa40ad1170a7cc4d41e7adeaf7)
+---
+ .../hadoop/hdfs/server/balancer/TestBalancer.java  |    9 ++++++---
+ 1 file changed, 6 insertions(+), 3 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/balancer/TestBalancer.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/balancer/TestBalancer.java
+index 06d3851..2090741 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/balancer/TestBalancer.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/balancer/TestBalancer.java
+@@ -317,12 +317,12 @@ public void testBalancerWithPinnedBlocks() throws Exception {
+     conf.setBoolean(DFS_DATANODE_BLOCK_PINNING_ENABLED, true);
+     
+     long[] capacities =  new long[] { CAPACITY, CAPACITY };
++    String[] hosts = {"host0", "host1"};
+     String[] racks = { RACK0, RACK1 };
+     int numOfDatanodes = capacities.length;
+ 
+     cluster = new MiniDFSCluster.Builder(conf).numDataNodes(capacities.length)
+-      .hosts(new String[]{"localhost", "localhost"})
+-      .racks(racks).simulatedCapacities(capacities).build();
++        .hosts(hosts).racks(racks).simulatedCapacities(capacities).build();
+ 
+     try {
+       cluster.waitActive();
+@@ -334,7 +334,10 @@ public void testBalancerWithPinnedBlocks() throws Exception {
+       long totalUsedSpace = totalCapacity * 8 / 10;
+       InetSocketAddress[] favoredNodes = new InetSocketAddress[numOfDatanodes];
+       for (int i = 0; i < favoredNodes.length; i++) {
+-        favoredNodes[i] = cluster.getDataNodes().get(i).getXferAddress();
++        // DFSClient will attempt reverse lookup. In case it resolves
++        // "127.0.0.1" to "localhost", we manually specify the hostname.
++        int port = cluster.getDataNodes().get(i).getXferAddress().getPort();
++        favoredNodes[i] = new InetSocketAddress(hosts[i], port);
+       }
+ 
+       DFSTestUtil.createFile(cluster.getFileSystem(0), filePath, false, 1024,
+-- 
+1.7.9.5
+

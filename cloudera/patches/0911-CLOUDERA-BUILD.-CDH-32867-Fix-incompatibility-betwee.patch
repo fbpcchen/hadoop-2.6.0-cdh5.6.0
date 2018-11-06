@@ -1,0 +1,78 @@
+From dae101bed5c95f16e6f785e5924444b833dba650 Mon Sep 17 00:00:00 2001
+From: Robert Kanter <rkanter@cloudera.com>
+Date: Tue, 20 Oct 2015 13:39:19 -0700
+Subject: [PATCH 0911/1023] CLOUDERA-BUILD. CDH-32867: Fix incompatibility
+ between MR2 and previous versions of Common by
+ un-deduping method that was moved to Common
+
+Change-Id: If2a5114190ceac62052ec71fbcc47214333b572f
+(cherry picked from commit 8eae6f14d43418475da49103cfc5abbafbfdd45e)
+---
+ .../hadoop/mapreduce/JobResourceUploader.java      |   44 +++++++++++++++++++-
+ 1 file changed, 43 insertions(+), 1 deletion(-)
+
+diff --git a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/java/org/apache/hadoop/mapreduce/JobResourceUploader.java b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/java/org/apache/hadoop/mapreduce/JobResourceUploader.java
+index f3e4d2f..3a6a8fd 100644
+--- a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/java/org/apache/hadoop/mapreduce/JobResourceUploader.java
++++ b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/java/org/apache/hadoop/mapreduce/JobResourceUploader.java
+@@ -194,7 +194,7 @@ private Path copyRemoteFiles(Path parentDir, Path originalPath,
+ 
+     FileSystem remoteFs = null;
+     remoteFs = originalPath.getFileSystem(conf);
+-    if (FileUtil.compareFs(remoteFs, jtFs)) {
++    if (compareFs(remoteFs, jtFs)) {
+       return originalPath;
+     }
+     // this might have name collisions. copy will throw an exception
+@@ -205,6 +205,48 @@ private Path copyRemoteFiles(Path parentDir, Path originalPath,
+     return newPath;
+   }
+ 
++  // CLOUDERA-BUILD. This was moved to FileUtil in Common, but we had to put it
++  // back due to a NoSuchMethodError during a rolling upgrade, because we have
++  // a newer MR2 with an older Common, which doesn't have the method.
++  private boolean compareFs(FileSystem srcFs, FileSystem destFs) {
++    if (srcFs==null || destFs==null) {
++      return false;
++    }
++    URI srcUri = srcFs.getUri();
++    URI dstUri = destFs.getUri();
++    if (srcUri.getScheme()==null) {
++      return false;
++    }
++    if (!srcUri.getScheme().equals(dstUri.getScheme())) {
++      return false;
++    }
++    String srcHost = srcUri.getHost();
++    String dstHost = dstUri.getHost();
++    if ((srcHost!=null) && (dstHost!=null)) {
++      if (srcHost.equals(dstHost)) {
++        return srcUri.getPort()==dstUri.getPort();
++      }
++      try {
++        srcHost = InetAddress.getByName(srcHost).getCanonicalHostName();
++        dstHost = InetAddress.getByName(dstHost).getCanonicalHostName();
++      } catch (UnknownHostException ue) {
++        if (LOG.isDebugEnabled()) {
++          LOG.debug("Could not compare file-systems. Unknown host: ", ue);
++        }
++        return false;
++      }
++      if (!srcHost.equals(dstHost)) {
++        return false;
++      }
++    } else if (srcHost==null && dstHost!=null) {
++      return false;
++    } else if (srcHost!=null) {
++      return false;
++    }
++    // check for ports
++    return srcUri.getPort()==dstUri.getPort();
++  }
++
+   private void copyJar(Path originalJarPath, Path submitJarFile,
+       short replication) throws IOException {
+     jtFs.copyFromLocalFile(originalJarPath, submitJarFile);
+-- 
+1.7.9.5
+

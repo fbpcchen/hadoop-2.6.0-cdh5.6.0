@@ -1,0 +1,33 @@
+From c1d0a700677d86a6a10a83b70b10f5998930d50a Mon Sep 17 00:00:00 2001
+From: Harsh J <harsh@cloudera.com>
+Date: Fri, 31 Jul 2015 08:58:22 +0530
+Subject: [PATCH 0720/1023] HDFS-8821. Explain message "Operation category X
+ is not supported in state standby". Contributed
+ by Gautam Gopalakrishnan.
+
+(cherry picked from commit c5caa25b8f2953e2b7a9d2c9dcbdbf1fed95c10b)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt
+---
+ .../hdfs/server/namenode/ha/StandbyState.java      |    3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/ha/StandbyState.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/ha/StandbyState.java
+index 60e8371..d782bdf 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/ha/StandbyState.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/ha/StandbyState.java
+@@ -82,8 +82,9 @@ public void checkOperation(HAContext context, OperationCategory op)
+         (op == OperationCategory.READ && context.allowStaleReads())) {
+       return;
+     }
++    String faq = ". Visit https://s.apache.org/sbnn-error";
+     String msg = "Operation category " + op + " is not supported in state "
+-        + context.getState();
++        + context.getState() + faq;
+     throw new StandbyException(msg);
+   }
+ 
+-- 
+1.7.9.5
+

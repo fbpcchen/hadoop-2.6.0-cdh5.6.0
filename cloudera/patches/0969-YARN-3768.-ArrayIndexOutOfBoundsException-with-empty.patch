@@ -1,0 +1,151 @@
+From fef3bde7feec6c019b7f50c6d6ecf69fdb7142fb Mon Sep 17 00:00:00 2001
+From: Gera Shegalov <gera@apache.org>
+Date: Tue, 30 Jun 2015 14:44:48 -0700
+Subject: [PATCH 0969/1023] YARN-3768. ArrayIndexOutOfBoundsException with
+ empty environment variables. (Zhihai Xu via gera)
+
+(cherry picked from commit 6f2a41e37d0b36cdafcfff75125165f212c612a6)
+
+Change-Id: I841c5032c6c77fa3a7bb04b109a39bbdd156beea
+(cherry picked from commit 939849e7fa22f29e6349e3c9291acb63594765da)
+(cherry picked from commit 5ed72c3778daeef3d9fc9a2c124c7362396acda0)
+---
+ .../main/java/org/apache/hadoop/util/Shell.java    |    6 +-
+ .../java/org/apache/hadoop/yarn/util/Apps.java     |   19 ++++--
+ .../java/org/apache/hadoop/yarn/util/TestApps.java |   61 ++++++++++++++++++++
+ 3 files changed, 78 insertions(+), 8 deletions(-)
+ create mode 100644 hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/test/java/org/apache/hadoop/yarn/util/TestApps.java
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/util/Shell.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/util/Shell.java
+index acf9e48..2fb52f6 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/util/Shell.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/util/Shell.java
+@@ -224,10 +224,12 @@ static private OSType getOSType() {
+         new String[] { "kill", "-" + code, pid };
+   }
+ 
++  public static final String ENV_NAME_REGEX = "[A-Za-z_][A-Za-z0-9_]*";
+   /** Return a regular expression string that match environment variables */
+   public static String getEnvironmentVariableRegex() {
+-    return (WINDOWS) ? "%([A-Za-z_][A-Za-z0-9_]*?)%" :
+-      "\\$([A-Za-z_][A-Za-z0-9_]*)";
++    return (WINDOWS)
++        ? "%(" + ENV_NAME_REGEX + "?)%"
++        : "\\$(" + ENV_NAME_REGEX + ")";
+   }
+   
+   /**
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/main/java/org/apache/hadoop/yarn/util/Apps.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/main/java/org/apache/hadoop/yarn/util/Apps.java
+index cf3940f..9235e7d 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/main/java/org/apache/hadoop/yarn/util/Apps.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/main/java/org/apache/hadoop/yarn/util/Apps.java
+@@ -44,6 +44,14 @@
+ public class Apps {
+   public static final String APP = "application";
+   public static final String ID = "ID";
++  private static final Pattern VAR_SUBBER =
++      Pattern.compile(Shell.getEnvironmentVariableRegex());
++  private static final Pattern VARVAL_SPLITTER = Pattern.compile(
++        "(?<=^|,)"                            // preceded by ',' or line begin
++      + '(' + Shell.ENV_NAME_REGEX + ')'      // var group
++      + '='
++      + "([^,]*)"                             // val group
++      );
+ 
+   public static ApplicationId toAppID(String aid) {
+     Iterator<String> it = _split(aid).iterator();
+@@ -73,11 +81,10 @@ public static void throwParseException(String name, String s) {
+   public static void setEnvFromInputString(Map<String, String> env,
+       String envString,  String classPathSeparator) {
+     if (envString != null && envString.length() > 0) {
+-      String childEnvs[] = envString.split(",");
+-      Pattern p = Pattern.compile(Shell.getEnvironmentVariableRegex());
+-      for (String cEnv : childEnvs) {
+-        String[] parts = cEnv.split("="); // split on '='
+-        Matcher m = p.matcher(parts[1]);
++      Matcher varValMatcher = VARVAL_SPLITTER.matcher(envString);
++      while (varValMatcher.find()) {
++        String envVar = varValMatcher.group(1);
++        Matcher m = VAR_SUBBER.matcher(varValMatcher.group(2));
+         StringBuffer sb = new StringBuffer();
+         while (m.find()) {
+           String var = m.group(1);
+@@ -93,7 +100,7 @@ public static void setEnvFromInputString(Map<String, String> env,
+           m.appendReplacement(sb, Matcher.quoteReplacement(replace));
+         }
+         m.appendTail(sb);
+-        addToEnvironment(env, parts[0], sb.toString(), classPathSeparator);
++        addToEnvironment(env, envVar, sb.toString(), classPathSeparator);
+       }
+     }
+   }
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/test/java/org/apache/hadoop/yarn/util/TestApps.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/test/java/org/apache/hadoop/yarn/util/TestApps.java
+new file mode 100644
+index 0000000..66d2d23
+--- /dev/null
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/test/java/org/apache/hadoop/yarn/util/TestApps.java
+@@ -0,0 +1,61 @@
++/**
++* Licensed to the Apache Software Foundation (ASF) under one
++* or more contributor license agreements.  See the NOTICE file
++* distributed with this work for additional information
++* regarding copyright ownership.  The ASF licenses this file
++* to you under the Apache License, Version 2.0 (the
++* "License"); you may not use this file except in compliance
++* with the License.  You may obtain a copy of the License at
++*
++*     http://www.apache.org/licenses/LICENSE-2.0
++*
++* Unless required by applicable law or agreed to in writing, software
++* distributed under the License is distributed on an "AS IS" BASIS,
++* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++* See the License for the specific language governing permissions and
++* limitations under the License.
++*/
++package org.apache.hadoop.yarn.util;
++
++import org.apache.hadoop.util.Shell;
++import org.junit.Test;
++
++import java.io.File;
++import java.util.HashMap;
++import java.util.Map;
++
++import static org.junit.Assert.assertEquals;
++
++public class TestApps {
++  @Test
++  public void testSetEnvFromInputString() {
++    Map<String, String> environment = new HashMap<String, String>();
++    environment.put("JAVA_HOME", "/path/jdk");
++    String goodEnv = "a1=1,b_2=2,_c=3,d=4,e=,f_win=%JAVA_HOME%"
++        + ",g_nix=$JAVA_HOME";
++    Apps.setEnvFromInputString(environment, goodEnv, File.pathSeparator);
++    assertEquals("1", environment.get("a1"));
++    assertEquals("2", environment.get("b_2"));
++    assertEquals("3", environment.get("_c"));
++    assertEquals("4", environment.get("d"));
++    assertEquals("", environment.get("e"));
++    if (Shell.WINDOWS) {
++      assertEquals("$JAVA_HOME", environment.get("g_nix"));
++      assertEquals("/path/jdk", environment.get("f_win"));
++    } else {
++      assertEquals("/path/jdk", environment.get("g_nix"));
++      assertEquals("%JAVA_HOME%", environment.get("f_win"));
++    }
++    String badEnv = "1,,2=a=b,3=a=,4==,5==a,==,c-3=3,=";
++    environment.clear();
++    Apps.setEnvFromInputString(environment, badEnv, File.pathSeparator);
++    assertEquals(environment.size(), 0);
++
++    // Test "=" in the value part
++    environment.clear();
++    Apps.setEnvFromInputString(environment, "b1,e1==,e2=a1=a2,b2",
++        File.pathSeparator);
++    assertEquals("=", environment.get("e1"));
++    assertEquals("a1=a2", environment.get("e2"));
++  }
++}
+-- 
+1.7.9.5
+

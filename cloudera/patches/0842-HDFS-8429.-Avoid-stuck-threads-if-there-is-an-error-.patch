@@ -1,0 +1,176 @@
+From 887158216fc31cb0fc2255ee84da48e2caadb49a Mon Sep 17 00:00:00 2001
+From: Colin Patrick Mccabe <cmccabe@cloudera.com>
+Date: Thu, 28 May 2015 11:52:28 -0700
+Subject: [PATCH 0842/1023] HDFS-8429. Avoid stuck threads if there is an
+ error in DomainSocketWatcher that stops the
+ thread.  (zhouyingchao via cmccabe)
+
+(cherry picked from commit 246cefa089156a50bf086b8b1e4d4324d66dc58c)
+(cherry picked from commit 2a56adc55037c67ad0769d0de2f53bf095aee8b7)
+
+Conflicts:
+	hadoop-common-project/hadoop-common/CHANGES.txt
+	hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/net/unix/TestDomainSocketWatcher.java
+
+Change-Id: I13ec6d8372072127f0eb61b6b132f0e4168617be
+(cherry picked from commit 1263c60403e58ae57cc81596ee3f7923d7024cd4)
+(cherry picked from commit 41fdeba67f3519167c44a7f69e4d2eb4bde0075e)
+---
+ .../hadoop/net/unix/DomainSocketWatcher.java       |   21 +++++-
+ .../apache/hadoop/net/unix/DomainSocketWatcher.c   |    2 +-
+ .../hadoop/net/unix/TestDomainSocketWatcher.java   |   75 ++++++++++++++++++++
+ 3 files changed, 96 insertions(+), 2 deletions(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/net/unix/DomainSocketWatcher.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/net/unix/DomainSocketWatcher.java
+index dfd76ea..f64670d 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/net/unix/DomainSocketWatcher.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/net/unix/DomainSocketWatcher.java
+@@ -468,6 +468,7 @@ public void run() {
+               // Handle pending additions (before pending removes).
+               for (Iterator<Entry> iter = toAdd.iterator(); iter.hasNext(); ) {
+                 Entry entry = iter.next();
++                iter.remove();
+                 DomainSocket sock = entry.getDomainSocket();
+                 Entry prevEntry = entries.put(sock.fd, entry);
+                 Preconditions.checkState(prevEntry == null,
+@@ -477,7 +478,6 @@ public void run() {
+                   LOG.trace(this + ": adding fd " + sock.fd);
+                 }
+                 fdSet.add(sock.fd);
+-                iter.remove();
+               }
+               // Handle pending removals
+               while (true) {
+@@ -523,6 +523,25 @@ public void run() {
+           }
+           entries.clear();
+           fdSet.close();
++          closed = true;
++          if (!(toAdd.isEmpty() && toRemove.isEmpty())) {
++            // Items in toAdd might not be added to entries, handle it here
++            for (Iterator<Entry> iter = toAdd.iterator(); iter.hasNext();) {
++              Entry entry = iter.next();
++              entry.getDomainSocket().refCount.unreference();
++              entry.getHandler().handle(entry.getDomainSocket());
++              IOUtils.cleanup(LOG, entry.getDomainSocket());
++              iter.remove();
++            }
++            // Items in toRemove might not be really removed, handle it here
++            while (true) {
++              Map.Entry<Integer, DomainSocket> entry = toRemove.firstEntry();
++              if (entry == null)
++                break;
++              sendCallback("close", entries, fdSet, entry.getValue().fd);
++            }
++          }
++          processedCond.signalAll();
+         } finally {
+           lock.unlock();
+         }
+diff --git a/hadoop-common-project/hadoop-common/src/main/native/src/org/apache/hadoop/net/unix/DomainSocketWatcher.c b/hadoop-common-project/hadoop-common/src/main/native/src/org/apache/hadoop/net/unix/DomainSocketWatcher.c
+index 596601b..82e6af5 100644
+--- a/hadoop-common-project/hadoop-common/src/main/native/src/org/apache/hadoop/net/unix/DomainSocketWatcher.c
++++ b/hadoop-common-project/hadoop-common/src/main/native/src/org/apache/hadoop/net/unix/DomainSocketWatcher.c
+@@ -212,7 +212,7 @@ done:
+   free(carr);
+   if (jthr) {
+     (*env)->DeleteLocalRef(env, jarr);
+-    jarr = NULL;
++    (*env)->Throw(env, jthr);
+   }
+   return jarr;
+ }
+diff --git a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/net/unix/TestDomainSocketWatcher.java b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/net/unix/TestDomainSocketWatcher.java
+index e85e414..076a1cb 100644
+--- a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/net/unix/TestDomainSocketWatcher.java
++++ b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/net/unix/TestDomainSocketWatcher.java
+@@ -22,6 +22,7 @@
+ import java.util.ArrayList;
+ import java.util.Random;
+ import java.util.concurrent.CountDownLatch;
++import java.util.concurrent.TimeUnit;
+ import java.util.concurrent.atomic.AtomicInteger;
+ import java.util.concurrent.locks.ReentrantLock;
+ 
+@@ -205,4 +206,78 @@ public void uncaughtException(Thread thread, Throwable t) {
+         });
+     return watcher;
+   }
++
++  @Test(timeout = 300000)
++  public void testStressInterruption() throws Exception {
++    final int SOCKET_NUM = 250;
++    final ReentrantLock lock = new ReentrantLock();
++    final DomainSocketWatcher watcher = new DomainSocketWatcher(10);
++    final ArrayList<DomainSocket[]> pairs = new ArrayList<DomainSocket[]>();
++    final AtomicInteger handled = new AtomicInteger(0);
++
++    final Thread adderThread = new Thread(new Runnable() {
++      @Override
++      public void run() {
++        try {
++          for (int i = 0; i < SOCKET_NUM; i++) {
++            DomainSocket pair[] = DomainSocket.socketpair();
++            watcher.add(pair[1], new DomainSocketWatcher.Handler() {
++              @Override
++              public boolean handle(DomainSocket sock) {
++                handled.incrementAndGet();
++                return true;
++              }
++            });
++            lock.lock();
++            try {
++              pairs.add(pair);
++            } finally {
++              lock.unlock();
++            }
++            TimeUnit.MILLISECONDS.sleep(1);
++          }
++        } catch (Throwable e) {
++          LOG.error(e);
++          throw new RuntimeException(e);
++        }
++      }
++    });
++
++    final Thread removerThread = new Thread(new Runnable() {
++      @Override
++      public void run() {
++        final Random random = new Random();
++        try {
++          while (handled.get() != SOCKET_NUM) {
++            lock.lock();
++            try {
++              if (!pairs.isEmpty()) {
++                int idx = random.nextInt(pairs.size());
++                DomainSocket pair[] = pairs.remove(idx);
++                if (random.nextBoolean()) {
++                  pair[0].close();
++                } else {
++                  watcher.remove(pair[1]);
++                }
++                TimeUnit.MILLISECONDS.sleep(1);
++              }
++            } finally {
++              lock.unlock();
++            }
++          }
++        } catch (Throwable e) {
++          LOG.error(e);
++          throw new RuntimeException(e);
++        }
++      }
++    });
++
++    adderThread.start();
++    removerThread.start();
++    TimeUnit.MILLISECONDS.sleep(100);
++    watcher.watcherThread.interrupt();
++    Uninterruptibles.joinUninterruptibly(adderThread);
++    Uninterruptibles.joinUninterruptibly(removerThread);
++    Uninterruptibles.joinUninterruptibly(watcher.watcherThread);
++  }
+ }
+-- 
+1.7.9.5
+

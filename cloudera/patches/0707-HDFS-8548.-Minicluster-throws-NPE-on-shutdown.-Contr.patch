@@ -1,0 +1,34 @@
+From a863d02e25f19c0f1eca294ef27b59b871a20429 Mon Sep 17 00:00:00 2001
+From: Xiaoyu Yao <xyao@apache.org>
+Date: Tue, 16 Jun 2015 13:52:50 -0700
+Subject: [PATCH 0707/1023] HDFS-8548. Minicluster throws NPE on shutdown.
+ Contributed by surendra singh lilhore.
+
+(cherry picked from commit 6a76250b39f33466bdc8dabab33070c90aa1a389)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt
+---
+ .../hdfs/server/blockmanagement/BlocksMap.java     |    6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlocksMap.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlocksMap.java
+index d06d503..f90f020 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlocksMap.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlocksMap.java
+@@ -200,7 +200,11 @@ boolean removeNode(Block b, DatanodeDescriptor node) {
+   }
+ 
+   int size() {
+-    return blocks.size();
++    if (blocks != null) {
++      return blocks.size();
++    } else {
++      return 0;
++    }
+   }
+ 
+   Iterable<BlockInfo> getBlocks() {
+-- 
+1.7.9.5
+

@@ -1,0 +1,101 @@
+From 682f35abcd732120d57dad61105ab67b1fa647e7 Mon Sep 17 00:00:00 2001
+From: Colin Patrick Mccabe <cmccabe@cloudera.com>
+Date: Fri, 3 Apr 2015 14:08:25 -0700
+Subject: [PATCH 0669/1023] HADOOP-11785. Reduce the number of listStatus
+ operation in distcp buildListing (Zoran
+ Dimitrijevic via Colin P. McCabe)
+
+(cherry picked from commit 932730df7d62077f7356464ad27f69469965d77a)
+(cherry picked from commit 386b90a70044e895460de9896288473ac4cc4621)
+---
+ .../org/apache/hadoop/tools/SimpleCopyListing.java |   41 +++++++++-----------
+ 1 file changed, 18 insertions(+), 23 deletions(-)
+
+diff --git a/hadoop-tools/hadoop-distcp/src/main/java/org/apache/hadoop/tools/SimpleCopyListing.java b/hadoop-tools/hadoop-distcp/src/main/java/org/apache/hadoop/tools/SimpleCopyListing.java
+index f9cfc86..c28b6bf 100644
+--- a/hadoop-tools/hadoop-distcp/src/main/java/org/apache/hadoop/tools/SimpleCopyListing.java
++++ b/hadoop-tools/hadoop-distcp/src/main/java/org/apache/hadoop/tools/SimpleCopyListing.java
+@@ -193,12 +193,12 @@ public void doBuildListing(SequenceFile.Writer fileListWriter,
+             writeToFileListing(fileListWriter, sourceCopyListingStatus,
+                 sourcePathRoot, options);
+ 
+-            if (isDirectoryAndNotEmpty(sourceFS, sourceStatus)) {
++            if (sourceStatus.isDirectory()) {
+               if (LOG.isDebugEnabled()) {
+-                LOG.debug("Traversing non-empty source dir: " + sourceStatus.getPath());
++                LOG.debug("Traversing source dir: " + sourceStatus.getPath());
+               }
+-              traverseNonEmptyDirectory(fileListWriter, sourceStatus, sourcePathRoot,
+-                  options);
++              traverseDirectory(fileListWriter, sourceFS, sourceStatus,
++                                sourcePathRoot, options);
+             }
+           }
+         }
+@@ -275,22 +275,17 @@ private Path makeQualified(Path path) throws IOException {
+             SequenceFile.Writer.compression(SequenceFile.CompressionType.NONE));
+   }
+ 
+-  private static boolean isDirectoryAndNotEmpty(FileSystem fileSystem,
+-                                    FileStatus fileStatus) throws IOException {
+-    return fileStatus.isDirectory() && getChildren(fileSystem, fileStatus).length > 0;
+-  }
+-
+   private static FileStatus[] getChildren(FileSystem fileSystem,
+                                          FileStatus parent) throws IOException {
+     return fileSystem.listStatus(parent.getPath());
+   }
+ 
+-  private void traverseNonEmptyDirectory(SequenceFile.Writer fileListWriter,
+-                                         FileStatus sourceStatus,
+-                                         Path sourcePathRoot,
+-                                         DistCpOptions options)
+-                                         throws IOException {
+-    FileSystem sourceFS = sourcePathRoot.getFileSystem(getConf());
++  private void traverseDirectory(SequenceFile.Writer fileListWriter,
++                                 FileSystem sourceFS,
++                                 FileStatus sourceStatus,
++                                 Path sourcePathRoot,
++                                 DistCpOptions options)
++                                 throws IOException {
+     final boolean preserveAcls = options.shouldPreserve(FileAttribute.ACL);
+     final boolean preserveXAttrs = options.shouldPreserve(FileAttribute.XATTR);
+     final boolean preserveRawXattrs = options.shouldPreserveRawXattrs();
+@@ -299,9 +294,9 @@ private void traverseNonEmptyDirectory(SequenceFile.Writer fileListWriter,
+ 
+     while (!pathStack.isEmpty()) {
+       for (FileStatus child: getChildren(sourceFS, pathStack.pop())) {
+-        if (LOG.isDebugEnabled())
+-          LOG.debug("Recording source-path: "
+-                    + sourceStatus.getPath() + " for copy.");
++        if (LOG.isDebugEnabled()) {
++          LOG.debug("Recording source-path: " + child.getPath() + " for copy.");
++        }
+         CopyListingFileStatus childCopyListingStatus =
+           DistCpUtils.toCopyListingFileStatus(sourceFS, child,
+             preserveAcls && child.isDirectory(),
+@@ -309,16 +304,16 @@ private void traverseNonEmptyDirectory(SequenceFile.Writer fileListWriter,
+             preserveRawXattrs && child.isDirectory());
+         writeToFileListing(fileListWriter, childCopyListingStatus,
+              sourcePathRoot, options);
+-        if (isDirectoryAndNotEmpty(sourceFS, child)) {
+-          if (LOG.isDebugEnabled())
+-            LOG.debug("Traversing non-empty source dir: "
+-                       + sourceStatus.getPath());
++        if (child.isDirectory()) {
++          if (LOG.isDebugEnabled()) {
++            LOG.debug("Traversing into source dir: " + child.getPath());
++          }
+           pathStack.push(child);
+         }
+       }
+     }
+   }
+-  
++
+   private void writeToFileListingRoot(SequenceFile.Writer fileListWriter,
+       CopyListingFileStatus fileStatus, Path sourcePathRoot,
+       DistCpOptions options) throws IOException {
+-- 
+1.7.9.5
+

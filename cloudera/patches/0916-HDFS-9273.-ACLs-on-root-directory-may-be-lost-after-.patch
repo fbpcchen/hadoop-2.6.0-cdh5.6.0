@@ -1,0 +1,72 @@
+From 1bdb6fe51e8048309425ec8637e26eb09ae099c6 Mon Sep 17 00:00:00 2001
+From: cnauroth <cnauroth@apache.org>
+Date: Wed, 21 Oct 2015 16:39:02 -0700
+Subject: [PATCH 0916/1023] HDFS-9273. ACLs on root directory may be lost
+ after NN restart. Contributed by Xiao Chen.
+
+(cherry picked from commit 1b525a9c32fabd8919c80717a58afbfa7fdce27e)
+
+Change-Id: I42627bacd1678c4939d6cf14a9dc22bd26062c0e
+---
+ .../hdfs/server/namenode/FSImageFormatPBINode.java |    4 +++
+ .../hdfs/server/namenode/TestFSImageWithAcl.java   |   29 ++++++++++++++++++++
+ 2 files changed, 33 insertions(+)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSImageFormatPBINode.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSImageFormatPBINode.java
+index 5631b2b..846b8c6 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSImageFormatPBINode.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSImageFormatPBINode.java
+@@ -338,6 +338,10 @@ private void loadRootINode(INodeSection.INode p) {
+       }
+       dir.rootDir.cloneModificationTime(root);
+       dir.rootDir.clonePermissionStatus(root);
++      final AclFeature af = root.getFeature(AclFeature.class);
++      if (af != null) {
++        dir.rootDir.addAclFeature(af);
++      }
+       // root dir supports having extended attributes according to POSIX
+       final XAttrFeature f = root.getXAttrFeature();
+       if (f != null) {
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestFSImageWithAcl.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestFSImageWithAcl.java
+index bd88478..690fec6 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestFSImageWithAcl.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestFSImageWithAcl.java
+@@ -206,6 +206,35 @@ public void testEditLogDefaultAclNewChildren() throws IOException {
+     doTestDefaultAclNewChildren(false);
+   }
+ 
++  @Test
++  public void testRootACLAfterLoadingFsImage() throws IOException {
++    DistributedFileSystem fs = cluster.getFileSystem();
++    Path rootdir = new Path("/");
++    AclEntry e1 = new AclEntry.Builder().setName("foo")
++        .setPermission(ALL).setScope(ACCESS).setType(GROUP).build();
++    AclEntry e2 = new AclEntry.Builder().setName("bar")
++        .setPermission(READ).setScope(ACCESS).setType(GROUP).build();
++    fs.modifyAclEntries(rootdir, Lists.newArrayList(e1, e2));
++
++    AclStatus s = cluster.getNamesystem().getAclStatus(rootdir.toString());
++    AclEntry[] returned =
++        Lists.newArrayList(s.getEntries()).toArray(new AclEntry[0]);
++    Assert.assertArrayEquals(
++        new AclEntry[] { aclEntry(ACCESS, GROUP, READ_EXECUTE),
++            aclEntry(ACCESS, GROUP, "bar", READ),
++            aclEntry(ACCESS, GROUP, "foo", ALL) }, returned);
++
++    // restart - hence save and load from fsimage
++    restart(fs, true);
++
++    s = cluster.getNamesystem().getAclStatus(rootdir.toString());
++    returned = Lists.newArrayList(s.getEntries()).toArray(new AclEntry[0]);
++    Assert.assertArrayEquals(
++        new AclEntry[] { aclEntry(ACCESS, GROUP, READ_EXECUTE),
++            aclEntry(ACCESS, GROUP, "bar", READ),
++            aclEntry(ACCESS, GROUP, "foo", ALL) }, returned);
++  }
++
+   /**
+    * Restart the NameNode, optionally saving a new checkpoint.
+    *
+-- 
+1.7.9.5
+

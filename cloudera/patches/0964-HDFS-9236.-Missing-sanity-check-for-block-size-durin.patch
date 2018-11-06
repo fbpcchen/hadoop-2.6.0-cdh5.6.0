@@ -1,0 +1,210 @@
+From e970ad9d0ee763f93babb055ecb200269ade88e9 Mon Sep 17 00:00:00 2001
+From: Yongjun Zhang <yzhang@cloudera.com>
+Date: Fri, 6 Nov 2015 11:15:54 -0800
+Subject: [PATCH 0964/1023] HDFS-9236. Missing sanity check for block size
+ during block recovery. (Tony Wu via Yongjun
+ Zhang)
+
+(cherry picked from commit b64242c0d2cabd225a8fb7d25fed449d252e4fa1)
+(cherry picked from commit 41d0d9a32c880785a679e3dc5f066d5737aaef59)
+
+Change-Id: Ie03297bd84369698959b89f90b3bfd2d72d3f5be
+(cherry picked from commit 24870a695e15a5c47e5144b9855f5379fda054f3)
+---
+ .../hdfs/server/datanode/BlockRecoveryWorker.java  |   66 +++++++++++++++++++-
+ .../hdfs/server/protocol/ReplicaRecoveryInfo.java  |    6 ++
+ .../hdfs/server/datanode/TestBlockRecovery.java    |   37 +++++++++++
+ 3 files changed, 107 insertions(+), 2 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BlockRecoveryWorker.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BlockRecoveryWorker.java
+index d8669ec..0fbe2a3 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BlockRecoveryWorker.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BlockRecoveryWorker.java
+@@ -102,8 +102,13 @@ public String toString() {
+     protected void recover() throws IOException {
+       List<BlockRecord> syncList = new ArrayList<>(locs.length);
+       int errorCount = 0;
++      int candidateReplicaCnt = 0;
+ 
+-      //check generation stamps
++      // Check generation stamps, replica size and state. Replica must satisfy
++      // the following criteria to be included in syncList for recovery:
++      // - Valid generation stamp
++      // - Non-zero length
++      // - Original state is RWR or better
+       for(DatanodeID id : locs) {
+         try {
+           DatanodeID bpReg =datanode.getBPOfferService(bpid).bpRegistration;
+@@ -114,7 +119,28 @@ protected void recover() throws IOException {
+           if (info != null &&
+               info.getGenerationStamp() >= block.getGenerationStamp() &&
+               info.getNumBytes() > 0) {
+-            syncList.add(new BlockRecord(id, proxyDN, info));
++            // Count the number of candidate replicas received.
++            ++candidateReplicaCnt;
++            if (info.getOriginalReplicaState().getValue() <=
++                ReplicaState.RWR.getValue()) {
++              syncList.add(new BlockRecord(id, proxyDN, info));
++            } else {
++              if (LOG.isDebugEnabled()) {
++                LOG.debug("Block recovery: Ignored replica with invalid " +
++                    "original state: " + info + " from DataNode: " + id);
++              }
++            }
++          } else {
++            if (LOG.isDebugEnabled()) {
++              if (info == null) {
++                LOG.debug("Block recovery: DataNode: " + id + " does not have "
++                    + "replica for block: " + block);
++              } else {
++                LOG.debug("Block recovery: Ignored replica with invalid "
++                    + "generation stamp or length: " + info + " from " +
++                    "DataNode: " + id);
++              }
++            }
+           }
+         } catch (RecoveryInProgressException ripE) {
+           InterDatanodeProtocol.LOG.warn(
+@@ -135,6 +161,15 @@ protected void recover() throws IOException {
+             + ", datanodeids=" + Arrays.asList(locs));
+       }
+ 
++      // None of the replicas reported by DataNodes has the required original
++      // state, report the error.
++      if (candidateReplicaCnt > 0 && syncList.isEmpty()) {
++        throw new IOException("Found " + candidateReplicaCnt +
++            " replica(s) for block " + block + " but none is in " +
++            ReplicaState.RWR.name() + " or better state. datanodeids=" +
++            Arrays.asList(locs));
++      }
++
+       syncBlock(syncList);
+     }
+ 
+@@ -155,6 +190,11 @@ void syncBlock(List<BlockRecord> syncList) throws IOException {
+       // or their replicas have 0 length.
+       // The block can be deleted.
+       if (syncList.isEmpty()) {
++        if (LOG.isDebugEnabled()) {
++          LOG.debug("syncBlock for block " + block + ", all datanodes don't " +
++              "have the block or their replicas have 0 length. The block can " +
++              "be deleted.");
++        }
+         nn.commitBlockSynchronization(block, recoveryId, 0,
+             true, true, DatanodeID.EMPTY_ARRAY, null);
+         return;
+@@ -193,6 +233,12 @@ void syncBlock(List<BlockRecord> syncList) throws IOException {
+                   r.rInfo.getNumBytes() == finalizedLength) {
+             participatingList.add(r);
+           }
++          if (LOG.isDebugEnabled()) {
++            LOG.debug("syncBlock replicaInfo: block=" + block +
++                ", from datanode " + r.id + ", receivedState=" + rState.name() +
++                ", receivedLength=" + r.rInfo.getNumBytes() +
++                ", bestState=FINALIZED, finalizedLength=" + finalizedLength);
++          }
+         }
+         newBlock.setNumBytes(finalizedLength);
+         break;
+@@ -205,7 +251,16 @@ void syncBlock(List<BlockRecord> syncList) throws IOException {
+             minLength = Math.min(minLength, r.rInfo.getNumBytes());
+             participatingList.add(r);
+           }
++          if (LOG.isDebugEnabled()) {
++            LOG.debug("syncBlock replicaInfo: block=" + block +
++                ", from datanode " + r.id + ", receivedState=" + rState.name() +
++                ", receivedLength=" + r.rInfo.getNumBytes() + ", bestState=" +
++                bestState.name());
++          }
+         }
++        // recover() guarantees syncList will have at least one replica with RWR
++        // or better state.
++        assert minLength != Long.MAX_VALUE : "wrong minLength";
+         newBlock.setNumBytes(minLength);
+         break;
+       case RUR:
+@@ -248,6 +303,13 @@ void syncBlock(List<BlockRecord> syncList) throws IOException {
+         datanodes[i] = r.id;
+         storages[i] = r.storageID;
+       }
++
++      if (LOG.isDebugEnabled()) {
++        LOG.debug("Datanode triggering commitBlockSynchronization, block=" +
++            block + ", newGs=" + newBlock.getGenerationStamp() +
++            ", newLength=" + newBlock.getNumBytes());
++      }
++
+       nn.commitBlockSynchronization(block,
+           newBlock.getGenerationStamp(), newBlock.getNumBytes(), true, false,
+           datanodes, storages);
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/protocol/ReplicaRecoveryInfo.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/protocol/ReplicaRecoveryInfo.java
+index ee1fa1b..86bfc28 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/protocol/ReplicaRecoveryInfo.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/protocol/ReplicaRecoveryInfo.java
+@@ -49,4 +49,10 @@ public boolean equals(Object o) {
+   public int hashCode() {
+     return super.hashCode();
+   }
++
++  @Override
++  public String toString() {
++    return super.toString() + "[numBytes=" + this.getNumBytes() +
++        ",originalReplicaState=" + this.originalState.name() + "]";
++  }
+ }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestBlockRecovery.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestBlockRecovery.java
+index 1c2c541..271afe9 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestBlockRecovery.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestBlockRecovery.java
+@@ -18,6 +18,7 @@
+ 
+ package org.apache.hadoop.hdfs.server.datanode;
+ 
++import static org.junit.Assert.assertTrue;
+ import static org.junit.Assert.fail;
+ import static org.mockito.Matchers.any;
+ import static org.mockito.Matchers.anyBoolean;
+@@ -671,4 +672,40 @@ public void run() {
+       }
+     }
+   }
++
++  /**
++   * DNs report RUR instead of RBW, RWR or FINALIZED. Primary DN expected to
++   * throw an exception.
++   * @throws Exception
++   */
++  @Test
++  public void testRURReplicas() throws Exception {
++    if (LOG.isDebugEnabled()) {
++      LOG.debug("Running " + GenericTestUtils.getMethodName());
++    }
++
++    doReturn(new ReplicaRecoveryInfo(block.getBlockId(), block.getNumBytes(),
++        block.getGenerationStamp(), ReplicaState.RUR)).when(spyDN).
++        initReplicaRecovery(any(RecoveringBlock.class));
++
++    boolean exceptionThrown = false;
++    try {
++      for (RecoveringBlock rBlock : initRecoveringBlocks()) {
++        BlockRecoveryWorker.RecoveryTaskContiguous RecoveryTaskContiguous =
++            recoveryWorker.new RecoveryTaskContiguous(rBlock);
++        BlockRecoveryWorker.RecoveryTaskContiguous spyTask =
++            spy(RecoveryTaskContiguous);
++        spyTask.recover();
++      }
++    } catch (IOException e) {
++      // expect IOException to be thrown here
++      e.printStackTrace();
++      assertTrue("Wrong exception was thrown: " + e.getMessage(),
++          e.getMessage().contains("Found 1 replica(s) for block " + block +
++          " but none is in RWR or better state"));
++      exceptionThrown = true;
++    } finally {
++      assertTrue(exceptionThrown);
++    }
++  }
+ }
+-- 
+1.7.9.5
+

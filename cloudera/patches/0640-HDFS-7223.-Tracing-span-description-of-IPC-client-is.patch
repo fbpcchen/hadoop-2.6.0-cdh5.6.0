@@ -1,0 +1,111 @@
+From e992e9847d26c2e17585b072c8b167197dffac3a Mon Sep 17 00:00:00 2001
+From: Colin Patrick Mccabe <cmccabe@cloudera.com>
+Date: Thu, 23 Oct 2014 19:14:00 -0700
+Subject: [PATCH 0640/1023] HDFS-7223. Tracing span description of IPC client
+ is too long (iwasakims via cmccabe)
+
+(cherry picked from commit 5b56ac4c72d69d1b3d6feec9d96c9d62eb02d28c)
+(cherry picked from commit caa658a015e22938c345451bd4de46b0e0f08507)
+---
+ .../org/apache/hadoop/ipc/ProtobufRpcEngine.java   |    4 +---
+ .../java/org/apache/hadoop/ipc/RpcClientUtil.java  |   21 ++++++++++++++++++++
+ .../org/apache/hadoop/ipc/WritableRpcEngine.java   |    4 +---
+ .../org/apache/hadoop/tracing/TestTracing.java     |   10 +++++-----
+ 4 files changed, 28 insertions(+), 11 deletions(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/ProtobufRpcEngine.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/ProtobufRpcEngine.java
+index 1df281a..76be837 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/ProtobufRpcEngine.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/ProtobufRpcEngine.java
+@@ -211,9 +211,7 @@ public Object invoke(Object proxy, Method method, Object[] args)
+       // guard it in the if statement to make sure there isn't
+       // any extra string manipulation.
+       if (Trace.isTracing()) {
+-        traceScope = Trace.startSpan(
+-            method.getDeclaringClass().getCanonicalName() +
+-            "." + method.getName());
++        traceScope = Trace.startSpan(RpcClientUtil.methodToTraceString(method));
+       }
+ 
+       RequestHeaderProto rpcRequestHeader = constructRpcRequestHeader(method);
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/RpcClientUtil.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/RpcClientUtil.java
+index 2623f9e..d9bd71b 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/RpcClientUtil.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/RpcClientUtil.java
+@@ -189,4 +189,25 @@ private static ProtocolMetaInfoPB getProtocolMetaInfoProxy(Object proxy,
+         .getProtocolMetaInfoProxy(inv.getConnectionId(), conf,
+             NetUtils.getDefaultSocketFactory(conf)).getProxy();
+   }
++
++  /**
++   * Convert an RPC method to a string.
++   * The format we want is 'MethodOuterClassShortName#methodName'.
++   *
++   * For example, if the method is:
++   *   org.apache.hadoop.hdfs.protocol.proto.ClientNamenodeProtocolProtos.
++   *     ClientNamenodeProtocol.BlockingInterface.getServerDefaults
++   *
++   * the format we want is:
++   *   ClientNamenodeProtocol#getServerDefaults
++   */
++  public static String methodToTraceString(Method method) {
++    Class<?> clazz = method.getDeclaringClass();
++    while (true) {
++      Class<?> next = clazz.getEnclosingClass();
++      if (next == null || next.getEnclosingClass() == null) break;
++      clazz = next;
++    }
++    return clazz.getSimpleName() + "#" + method.getName();
++  }
+ }
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/WritableRpcEngine.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/WritableRpcEngine.java
+index 786e281..fa13631 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/WritableRpcEngine.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/WritableRpcEngine.java
+@@ -235,9 +235,7 @@ public Object invoke(Object proxy, Method method, Object[] args)
+       }
+       TraceScope traceScope = null;
+       if (Trace.isTracing()) {
+-        traceScope = Trace.startSpan(
+-            method.getDeclaringClass().getCanonicalName() +
+-            "." + method.getName());
++        traceScope = Trace.startSpan(RpcClientUtil.methodToTraceString(method));
+       }
+       ObjectWritable value;
+       try {
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracing.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracing.java
+index 66a2d7e..0bbd5b4 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracing.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracing.java
+@@ -83,15 +83,15 @@ public void testWriteTraceHooks() throws Exception {
+     String[] expectedSpanNames = {
+       "testWriteTraceHooks",
+       "org.apache.hadoop.hdfs.protocol.ClientProtocol.create",
+-      "org.apache.hadoop.hdfs.protocol.proto.ClientNamenodeProtocolProtos.ClientNamenodeProtocol.BlockingInterface.create",
++      "ClientNamenodeProtocol#create",
+       "org.apache.hadoop.hdfs.protocol.ClientProtocol.fsync",
+-      "org.apache.hadoop.hdfs.protocol.proto.ClientNamenodeProtocolProtos.ClientNamenodeProtocol.BlockingInterface.fsync",
++      "ClientNamenodeProtocol#fsync",
+       "org.apache.hadoop.hdfs.protocol.ClientProtocol.complete",
+-      "org.apache.hadoop.hdfs.protocol.proto.ClientNamenodeProtocolProtos.ClientNamenodeProtocol.BlockingInterface.complete",
++      "ClientNamenodeProtocol#complete",
+       "DFSOutputStream",
+       "OpWriteBlockProto",
+       "org.apache.hadoop.hdfs.protocol.ClientProtocol.addBlock",
+-      "org.apache.hadoop.hdfs.protocol.proto.ClientNamenodeProtocolProtos.ClientNamenodeProtocol.BlockingInterface.addBlock"
++      "ClientNamenodeProtocol#addBlock"
+     };
+     assertSpanNamesFound(expectedSpanNames);
+ 
+@@ -160,7 +160,7 @@ public void testReadTraceHooks() throws Exception {
+     String[] expectedSpanNames = {
+       "testReadTraceHooks",
+       "org.apache.hadoop.hdfs.protocol.ClientProtocol.getBlockLocations",
+-      "org.apache.hadoop.hdfs.protocol.proto.ClientNamenodeProtocolProtos.ClientNamenodeProtocol.BlockingInterface.getBlockLocations",
++      "ClientNamenodeProtocol#getBlockLocations",
+       "OpReadBlockProto"
+     };
+     assertSpanNamesFound(expectedSpanNames);
+-- 
+1.7.9.5
+

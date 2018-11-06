@@ -1,0 +1,60 @@
+From 3ccb3d13f749fa6ac3755f89d7710aa7f1907ad8 Mon Sep 17 00:00:00 2001
+From: Lei Xu <lei@cloudera.com>
+Date: Tue, 29 Sep 2015 16:46:28 -0700
+Subject: [PATCH 0873/1023]  HDFS-8273. FSNamesystem#Delete() should not call
+ logSync() when holding the lock. Contributed by
+ Haohui Mai.
+
+Change-Id: I34de6b96ca73856e1565b9381dcd7f15dfc8a924
+---
+ .../hadoop/hdfs/server/namenode/FSNamesystem.java  |    9 ++++++---
+ 1 file changed, 6 insertions(+), 3 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSNamesystem.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSNamesystem.java
+index 123241f..7ee7138 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSNamesystem.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSNamesystem.java
+@@ -4007,6 +4007,7 @@ private boolean deleteInt(String src, boolean recursive, boolean logRetryCache)
+       NameNode.stateChangeLog.debug("DIR* NameSystem.delete: " + src);
+     }
+     boolean status = deleteInternal(src, recursive, true, logRetryCache);
++    getEditLog().logSync();
+     if (status) {
+       logAuditEvent(true, "delete", src);
+     }
+@@ -4072,7 +4073,6 @@ private boolean deleteInternal(String src, boolean recursive,
+     } finally {
+       writeUnlock();
+     }
+-    getEditLog().logSync(); 
+     removeBlocks(collectedBlocks); // Incremental deletion of blocks
+     collectedBlocks.clear();
+ 
+@@ -5333,7 +5333,7 @@ private void clearCorruptLazyPersistFiles()
+       BlockStoragePolicy lpPolicy = blockManager.getStoragePolicy("LAZY_PERSIST");
+ 
+       List<BlockCollection> filesToDelete = new ArrayList<BlockCollection>();
+-
++      boolean changed = false;
+       writeLock();
+ 
+       try {
+@@ -5349,11 +5349,14 @@ private void clearCorruptLazyPersistFiles()
+ 
+         for (BlockCollection bc : filesToDelete) {
+           LOG.warn("Removing lazyPersist file " + bc.getName() + " with no replicas.");
+-          deleteInternal(bc.getName(), false, false, false);
++          changed |= deleteInternal(bc.getName(), false, false, false);
+         }
+       } finally {
+         writeUnlock();
+       }
++      if (changed) {
++        getEditLog().logSync();
++      }
+     }
+ 
+     @Override
+-- 
+1.7.9.5
+

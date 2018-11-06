@@ -1,0 +1,922 @@
+From e0be40de8e223821a8d7d9294fc9ad6118121dcc Mon Sep 17 00:00:00 2001
+From: Colin Patrick Mccabe <cmccabe@cloudera.com>
+Date: Fri, 30 Jan 2015 16:01:59 -0800
+Subject: [PATCH 0639/1023] HADOOP-11498. Bump the version of HTrace to
+ 3.1.0-incubating (Masatake Iwasaki via Colin P.
+ McCabe)
+
+(cherry picked from commit 09ad9a868a89922e9b55b3e7c5b9f41fa54d3770)
+(cherry picked from commit 80381b62aa4ffb84cc1e0bf8fbc4496548160299)
+---
+ hadoop-common-project/hadoop-common/pom.xml        |    2 +-
+ .../main/java/org/apache/hadoop/ipc/Client.java    |    2 +-
+ .../org/apache/hadoop/ipc/ProtobufRpcEngine.java   |    5 +-
+ .../main/java/org/apache/hadoop/ipc/Server.java    |    8 +--
+ .../org/apache/hadoop/ipc/WritableRpcEngine.java   |    4 +-
+ .../apache/hadoop/tracing/SpanReceiverHost.java    |   67 +++-----------------
+ .../apache/hadoop/tracing/TraceSamplerFactory.java |   53 ----------------
+ .../java/org/apache/hadoop/tracing/TraceUtils.java |   65 +++++++++++++++++++
+ .../java/org/apache/hadoop/util/ProtoUtil.java     |    4 +-
+ .../hadoop-common/src/site/apt/Tracing.apt.vm      |   20 +++---
+ .../org/apache/hadoop/tracing/TestTraceUtils.java  |   51 +++++++++++++++
+ hadoop-hdfs-project/hadoop-hdfs/pom.xml            |    2 +-
+ .../org/apache/hadoop/hdfs/BlockReaderLocal.java   |    6 +-
+ .../apache/hadoop/hdfs/BlockReaderLocalLegacy.java |    6 +-
+ .../hadoop/hdfs/BlockStorageLocationUtil.java      |    8 +--
+ .../java/org/apache/hadoop/hdfs/DFSClient.java     |   18 ++----
+ .../hadoop/hdfs/DFSInotifyEventInputStream.java    |    6 +-
+ .../org/apache/hadoop/hdfs/DFSInputStream.java     |    6 +-
+ .../org/apache/hadoop/hdfs/DFSOutputStream.java    |    6 +-
+ .../org/apache/hadoop/hdfs/RemoteBlockReader.java  |    6 +-
+ .../org/apache/hadoop/hdfs/RemoteBlockReader2.java |    6 +-
+ .../hdfs/protocol/CacheDirectiveIterator.java      |    6 +-
+ .../hadoop/hdfs/protocol/CachePoolIterator.java    |    6 +-
+ .../hdfs/protocol/EncryptionZoneIterator.java      |    6 +-
+ .../datatransfer/DataTransferProtoUtil.java        |    8 +--
+ .../hdfs/protocol/datatransfer/Receiver.java       |    2 +-
+ .../hadoop/hdfs/protocol/datatransfer/Sender.java  |    4 +-
+ .../hadoop/hdfs/server/datanode/BlockSender.java   |    6 +-
+ .../hdfs/server/namenode/TestCacheDirectives.java  |    2 +-
+ .../org/apache/hadoop/tracing/TestTraceAdmin.java  |    4 +-
+ .../org/apache/hadoop/tracing/TestTracing.java     |   16 ++---
+ .../tracing/TestTracingShortCircuitLocalRead.java  |    8 +--
+ hadoop-project/pom.xml                             |    4 +-
+ 33 files changed, 216 insertions(+), 207 deletions(-)
+ delete mode 100644 hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/tracing/TraceSamplerFactory.java
+ create mode 100644 hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/tracing/TraceUtils.java
+ create mode 100644 hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/tracing/TestTraceUtils.java
+
+diff --git a/hadoop-common-project/hadoop-common/pom.xml b/hadoop-common-project/hadoop-common/pom.xml
+index a6302c1..9a84a51 100644
+--- a/hadoop-common-project/hadoop-common/pom.xml
++++ b/hadoop-common-project/hadoop-common/pom.xml
+@@ -255,7 +255,7 @@
+     </dependency>
+ 
+     <dependency>
+-      <groupId>org.htrace</groupId>
++      <groupId>org.apache.htrace</groupId>
+       <artifactId>htrace-core</artifactId>
+     </dependency>
+     <dependency>
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/Client.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/Client.java
+index d9385fb..b9e0472 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/Client.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/Client.java
+@@ -88,7 +88,7 @@
+ import org.apache.hadoop.util.ReflectionUtils;
+ import org.apache.hadoop.util.StringUtils;
+ import org.apache.hadoop.util.Time;
+-import org.htrace.Trace;
++import org.apache.htrace.Trace;
+ 
+ import com.google.common.annotations.VisibleForTesting;
+ import com.google.common.base.Preconditions;
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/ProtobufRpcEngine.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/ProtobufRpcEngine.java
+index f8c35d9..1df281a 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/ProtobufRpcEngine.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/ProtobufRpcEngine.java
+@@ -49,9 +49,8 @@
+ import org.apache.hadoop.security.token.TokenIdentifier;
+ import org.apache.hadoop.util.ProtoUtil;
+ import org.apache.hadoop.util.Time;
+-import org.htrace.Sampler;
+-import org.htrace.Trace;
+-import org.htrace.TraceScope;
++import org.apache.htrace.Trace;
++import org.apache.htrace.TraceScope;
+ 
+ import com.google.common.annotations.VisibleForTesting;
+ import com.google.protobuf.BlockingService;
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/Server.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/Server.java
+index 16cb232..36466ce 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/Server.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/Server.java
+@@ -115,10 +115,10 @@
+ import org.apache.hadoop.util.ReflectionUtils;
+ import org.apache.hadoop.util.StringUtils;
+ import org.apache.hadoop.util.Time;
+-import org.htrace.Span;
+-import org.htrace.Trace;
+-import org.htrace.TraceInfo;
+-import org.htrace.TraceScope;
++import org.apache.htrace.Span;
++import org.apache.htrace.Trace;
++import org.apache.htrace.TraceInfo;
++import org.apache.htrace.TraceScope;
+ 
+ import com.google.common.annotations.VisibleForTesting;
+ import com.google.protobuf.ByteString;
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/WritableRpcEngine.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/WritableRpcEngine.java
+index 037f006..786e281 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/WritableRpcEngine.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/WritableRpcEngine.java
+@@ -42,8 +42,8 @@
+ import org.apache.hadoop.classification.InterfaceAudience;
+ import org.apache.hadoop.classification.InterfaceStability;
+ import org.apache.hadoop.conf.*;
+-import org.htrace.Trace;
+-import org.htrace.TraceScope;
++import org.apache.htrace.Trace;
++import org.apache.htrace.TraceScope;
+ 
+ /** An RpcEngine implementation for Writable data. */
+ @InterfaceStability.Evolving
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/tracing/SpanReceiverHost.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/tracing/SpanReceiverHost.java
+index 81993e9..9ec99a9 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/tracing/SpanReceiverHost.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/tracing/SpanReceiverHost.java
+@@ -25,7 +25,6 @@
+ import java.io.IOException;
+ import java.io.InputStreamReader;
+ import java.util.Collections;
+-import java.util.HashMap;
+ import java.util.List;
+ import java.util.Map;
+ import java.util.TreeMap;
+@@ -37,11 +36,12 @@
+ import org.apache.hadoop.conf.Configuration;
+ import org.apache.hadoop.io.IOUtils;
+ import org.apache.hadoop.tracing.SpanReceiverInfo.ConfigurationPair;
++import org.apache.hadoop.tracing.TraceUtils;
+ import org.apache.hadoop.util.ReflectionUtils;
+ import org.apache.hadoop.util.ShutdownHookManager;
+-import org.htrace.HTraceConfiguration;
+-import org.htrace.SpanReceiver;
+-import org.htrace.Trace;
++import org.apache.htrace.SpanReceiver;
++import org.apache.htrace.SpanReceiverBuilder;
++import org.apache.htrace.Trace;
+ 
+ /**
+  * This class provides functions for reading the names of SpanReceivers from
+@@ -154,60 +154,13 @@ public synchronized void loadSpanReceivers(Configuration conf) {
+ 
+   private synchronized SpanReceiver loadInstance(String className,
+       List<ConfigurationPair> extraConfig) throws IOException {
+-    className = className.trim();
+-    if (!className.contains(".")) {
+-      className = "org.htrace.impl." + className;
+-    }
+-    Class<?> implClass = null;
+-    SpanReceiver impl;
+-    try {
+-      implClass = Class.forName(className);
+-      Object o = ReflectionUtils.newInstance(implClass, config);
+-      impl = (SpanReceiver)o;
+-      impl.configure(wrapHadoopConf(config, extraConfig));
+-    } catch (ClassCastException e) {
+-      throw new IOException("Class " + className +
+-          " does not implement SpanReceiver.");
+-    } catch (ClassNotFoundException e) {
+-      throw new IOException("Class " + className + " cannot be found.");
+-    } catch (SecurityException e) {
+-      throw new IOException("Got SecurityException while loading " +
+-          "SpanReceiver " + className);
+-    } catch (IllegalArgumentException e) {
+-      throw new IOException("Got IllegalArgumentException while loading " +
+-          "SpanReceiver " + className, e);
+-    } catch (RuntimeException e) {
+-      throw new IOException("Got RuntimeException while loading " +
+-          "SpanReceiver " + className, e);
+-    }
+-    return impl;
+-  }
+-
+-  private static HTraceConfiguration wrapHadoopConf(final Configuration conf,
+-          List<ConfigurationPair> extraConfig) {
+-    final HashMap<String, String> extraMap = new HashMap<String, String>();
+-    for (ConfigurationPair pair : extraConfig) {
+-      extraMap.put(pair.getKey(), pair.getValue());
++    SpanReceiverBuilder builder =
++        new SpanReceiverBuilder(TraceUtils.wrapHadoopConf(config, extraConfig));
++    SpanReceiver rcvr = builder.spanReceiverClass(className.trim()).build();
++    if (rcvr == null) {
++      throw new IOException("Failed to load SpanReceiver " + className);
+     }
+-    return new HTraceConfiguration() {
+-      public static final String HTRACE_CONF_PREFIX = "hadoop.htrace.";
+-
+-      @Override
+-      public String get(String key) {
+-        if (extraMap.containsKey(key)) {
+-          return extraMap.get(key);
+-        }
+-        return conf.get(HTRACE_CONF_PREFIX + key);
+-      }
+-
+-      @Override
+-      public String get(String key, String defaultValue) {
+-        if (extraMap.containsKey(key)) {
+-          return extraMap.get(key);
+-        }
+-        return conf.get(HTRACE_CONF_PREFIX + key, defaultValue);
+-      }
+-    };
++    return rcvr;
+   }
+ 
+   /**
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/tracing/TraceSamplerFactory.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/tracing/TraceSamplerFactory.java
+deleted file mode 100644
+index 54bcb81..0000000
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/tracing/TraceSamplerFactory.java
++++ /dev/null
+@@ -1,53 +0,0 @@
+-/**
+- * Licensed to the Apache Software Foundation (ASF) under one
+- * or more contributor license agreements.  See the NOTICE file
+- * distributed with this work for additional information
+- * regarding copyright ownership.  The ASF licenses this file
+- * to you under the Apache License, Version 2.0 (the
+- * "License"); you may not use this file except in compliance
+- * with the License.  You may obtain a copy of the License at
+- *
+- *     http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-package org.apache.hadoop.tracing;
+-
+-import org.apache.hadoop.classification.InterfaceAudience;
+-import org.apache.hadoop.conf.Configuration;
+-import org.apache.hadoop.fs.CommonConfigurationKeys;
+-import org.htrace.Sampler;
+-import org.htrace.impl.ProbabilitySampler;
+-import org.slf4j.Logger;
+-import org.slf4j.LoggerFactory;
+-
+-@InterfaceAudience.Private
+-public class TraceSamplerFactory {
+-  private static final Logger LOG =
+-      LoggerFactory.getLogger(TraceSamplerFactory.class);
+-
+-  public static Sampler<?> createSampler(Configuration conf) {
+-    String samplerStr = conf.get(CommonConfigurationKeys.HADOOP_TRACE_SAMPLER,
+-        CommonConfigurationKeys.HADOOP_TRACE_SAMPLER_DEFAULT);
+-    if (samplerStr.equals("NeverSampler")) {
+-      LOG.debug("HTrace is OFF for all spans.");
+-      return Sampler.NEVER;
+-    } else if (samplerStr.equals("AlwaysSampler")) {
+-      LOG.info("HTrace is ON for all spans.");
+-      return Sampler.ALWAYS;
+-    } else if (samplerStr.equals("ProbabilitySampler")) {
+-      double percentage =
+-          conf.getDouble("htrace.probability.sampler.percentage", 0.01d);
+-      LOG.info("HTrace is ON for " + percentage + "% of top-level spans.");
+-      return new ProbabilitySampler(percentage / 100.0d);
+-    } else {
+-      throw new RuntimeException("Can't create sampler " + samplerStr +
+-          ".  Available samplers are NeverSampler, AlwaysSampler, " +
+-          "and ProbabilitySampler.");
+-    }
+-  }
+-}
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/tracing/TraceUtils.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/tracing/TraceUtils.java
+new file mode 100644
+index 0000000..11797e6
+--- /dev/null
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/tracing/TraceUtils.java
+@@ -0,0 +1,65 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.apache.hadoop.tracing;
++
++import java.util.Collections;
++import java.util.HashMap;
++import java.util.List;
++
++import org.apache.hadoop.classification.InterfaceAudience;
++import org.apache.hadoop.conf.Configuration;
++import org.apache.hadoop.tracing.SpanReceiverInfo.ConfigurationPair;
++import org.apache.htrace.HTraceConfiguration;
++
++/**
++ * This class provides utility functions for tracing.
++ */
++@InterfaceAudience.Private
++public class TraceUtils {
++  public static final String HTRACE_CONF_PREFIX = "hadoop.htrace.";
++  private static List<ConfigurationPair> EMPTY = Collections.emptyList();
++
++  public static HTraceConfiguration wrapHadoopConf(final Configuration conf) {
++    return wrapHadoopConf(conf, EMPTY);
++  }
++
++  public static HTraceConfiguration wrapHadoopConf(final Configuration conf,
++          List<ConfigurationPair> extraConfig) {
++    final HashMap<String, String> extraMap = new HashMap<String, String>();
++    for (ConfigurationPair pair : extraConfig) {
++      extraMap.put(pair.getKey(), pair.getValue());
++    }
++    return new HTraceConfiguration() {
++      @Override
++      public String get(String key) {
++        if (extraMap.containsKey(key)) {
++          return extraMap.get(key);
++        }
++        return conf.get(HTRACE_CONF_PREFIX + key, "");
++      }
++
++      @Override
++      public String get(String key, String defaultValue) {
++        if (extraMap.containsKey(key)) {
++          return extraMap.get(key);
++        }
++        return conf.get(HTRACE_CONF_PREFIX + key, defaultValue);
++      }
++    };
++  }
++}
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/util/ProtoUtil.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/util/ProtoUtil.java
+index 36b5ff1..4b3b7ef 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/util/ProtoUtil.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/util/ProtoUtil.java
+@@ -27,8 +27,8 @@
+ import org.apache.hadoop.ipc.protobuf.RpcHeaderProtos.*;
+ import org.apache.hadoop.security.SaslRpcServer.AuthMethod;
+ import org.apache.hadoop.security.UserGroupInformation;
+-import org.htrace.Span;
+-import org.htrace.Trace;
++import org.apache.htrace.Span;
++import org.apache.htrace.Trace;
+ 
+ import com.google.protobuf.ByteString;
+ 
+diff --git a/hadoop-common-project/hadoop-common/src/site/apt/Tracing.apt.vm b/hadoop-common-project/hadoop-common/src/site/apt/Tracing.apt.vm
+index f04da33..c51037b 100644
+--- a/hadoop-common-project/hadoop-common/src/site/apt/Tracing.apt.vm
++++ b/hadoop-common-project/hadoop-common/src/site/apt/Tracing.apt.vm
+@@ -60,7 +60,7 @@ public void receiveSpan(Span span);
+ +----
+   <property>
+     <name>hadoop.htrace.spanreceiver.classes</name>
+-    <value>org.htrace.impl.LocalFileSpanReceiver</value>
++    <value>org.apache.htrace.impl.LocalFileSpanReceiver</value>
+   </property>
+   <property>
+     <name>hadoop.htrace.local-file-span-receiver.path</name>
+@@ -131,11 +131,11 @@ public void receiveSpan(Span span);
+ +----
+   $ hadoop trace -list -host 192.168.56.2:9000
+   ID  CLASS
+-  1   org.htrace.impl.LocalFileSpanReceiver
++  1   org.apache.htrace.impl.LocalFileSpanReceiver
+ 
+   $ hadoop trace -list -host 192.168.56.2:50020
+   ID  CLASS
+-  1   org.htrace.impl.LocalFileSpanReceiver
++  1   org.apache.htrace.impl.LocalFileSpanReceiver
+ +----
+ 
+   <<<hadoop trace -remove>>> removes span receiver from server.
+@@ -156,7 +156,7 @@ public void receiveSpan(Span span);
+ 
+   $ hadoop trace -list -host 192.168.56.2:9000
+   ID  CLASS
+-  2   org.htrace.impl.LocalFileSpanReceiver
++  2   org.apache.htrace.impl.LocalFileSpanReceiver
+ +----
+ 
+ 
+@@ -172,9 +172,9 @@ public void receiveSpan(Span span);
+ +----
+ import org.apache.hadoop.hdfs.HdfsConfiguration;
+ import org.apache.hadoop.tracing.SpanReceiverHost;
+-import org.htrace.Sampler;
+-import org.htrace.Trace;
+-import org.htrace.TraceScope;
++import org.apache.htrace.Sampler;
++import org.apache.htrace.Trace;
++import org.apache.htrace.TraceScope;
+ 
+ ...
+ 
+@@ -200,9 +200,9 @@ import org.apache.hadoop.conf.Configuration;
+ import org.apache.hadoop.fs.FsShell;
+ import org.apache.hadoop.tracing.SpanReceiverHost;
+ import org.apache.hadoop.util.ToolRunner;
+-import org.htrace.Sampler;
+-import org.htrace.Trace;
+-import org.htrace.TraceScope;
++import org.apache.htrace.Sampler;
++import org.apache.htrace.Trace;
++import org.apache.htrace.TraceScope;
+ 
+ public class TracingFsShell {
+   public static void main(String argv[]) throws Exception {
+diff --git a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/tracing/TestTraceUtils.java b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/tracing/TestTraceUtils.java
+new file mode 100644
+index 0000000..9ef3483
+--- /dev/null
++++ b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/tracing/TestTraceUtils.java
+@@ -0,0 +1,51 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.apache.hadoop.tracing;
++
++import static org.junit.Assert.assertEquals;
++import java.util.LinkedList;
++import org.apache.hadoop.conf.Configuration;
++import org.apache.hadoop.tracing.SpanReceiverInfo.ConfigurationPair;
++import org.apache.htrace.HTraceConfiguration;
++import org.junit.Test;
++
++public class TestTraceUtils {
++  @Test
++  public void testWrappedHadoopConf() {
++    String key = "sampler";
++    String value = "ProbabilitySampler";
++    Configuration conf = new Configuration();
++    conf.set(TraceUtils.HTRACE_CONF_PREFIX + key, value);
++    HTraceConfiguration wrapped = TraceUtils.wrapHadoopConf(conf);
++    assertEquals(value, wrapped.get(key));
++  }
++
++  @Test
++  public void testExtraConfig() {
++    String key = "test.extra.config";
++    String oldValue = "old value";
++    String newValue = "new value";
++    Configuration conf = new Configuration();
++    conf.set(TraceUtils.HTRACE_CONF_PREFIX + key, oldValue);
++    LinkedList<ConfigurationPair> extraConfig =
++        new LinkedList<ConfigurationPair>();
++    extraConfig.add(new ConfigurationPair(key, newValue));
++    HTraceConfiguration wrapped = TraceUtils.wrapHadoopConf(conf, extraConfig);
++    assertEquals(newValue, wrapped.get(key));
++  }
++}
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/pom.xml b/hadoop-hdfs-project/hadoop-hdfs/pom.xml
+index 34caeb5..e0baa3c 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/pom.xml
++++ b/hadoop-hdfs-project/hadoop-hdfs/pom.xml
+@@ -191,7 +191,7 @@ http://maven.apache.org/xsd/maven-4.0.0.xsd">
+       <scope>compile</scope>
+     </dependency>
+     <dependency>
+-      <groupId>org.htrace</groupId>
++      <groupId>org.apache.htrace</groupId>
+       <artifactId>htrace-core</artifactId>
+     </dependency>
+     <dependency>
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/BlockReaderLocal.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/BlockReaderLocal.java
+index 2a9ce96..5b697e0 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/BlockReaderLocal.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/BlockReaderLocal.java
+@@ -33,12 +33,12 @@
+ import org.apache.hadoop.hdfs.shortcircuit.ShortCircuitReplica;
+ import org.apache.hadoop.util.DirectBufferPool;
+ import org.apache.hadoop.util.DataChecksum;
++import org.apache.htrace.Sampler;
++import org.apache.htrace.Trace;
++import org.apache.htrace.TraceScope;
+ 
+ import com.google.common.annotations.VisibleForTesting;
+ import com.google.common.base.Preconditions;
+-import org.htrace.Sampler;
+-import org.htrace.Trace;
+-import org.htrace.TraceScope;
+ 
+ /**
+  * BlockReaderLocal enables local short circuited reads. If the DFS client is on
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/BlockReaderLocalLegacy.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/BlockReaderLocalLegacy.java
+index f7ff94a..3582f67 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/BlockReaderLocalLegacy.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/BlockReaderLocalLegacy.java
+@@ -46,9 +46,9 @@
+ import org.apache.hadoop.security.UserGroupInformation;
+ import org.apache.hadoop.security.token.Token;
+ import org.apache.hadoop.util.DataChecksum;
+-import org.htrace.Sampler;
+-import org.htrace.Trace;
+-import org.htrace.TraceScope;
++import org.apache.htrace.Sampler;
++import org.apache.htrace.Trace;
++import org.apache.htrace.TraceScope;
+ 
+ /**
+  * BlockReaderLocalLegacy enables local short circuited reads. If the DFS client is on
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/BlockStorageLocationUtil.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/BlockStorageLocationUtil.java
+index 7f992c1..c809017 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/BlockStorageLocationUtil.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/BlockStorageLocationUtil.java
+@@ -48,13 +48,13 @@
+ import org.apache.hadoop.hdfs.security.token.block.InvalidBlockTokenException;
+ import org.apache.hadoop.ipc.RPC;
+ import org.apache.hadoop.security.token.Token;
++import org.apache.htrace.Sampler;
++import org.apache.htrace.Span;
++import org.apache.htrace.Trace;
++import org.apache.htrace.TraceScope;
+ 
+ import com.google.common.collect.Lists;
+ import com.google.common.collect.Maps;
+-import org.htrace.Sampler;
+-import org.htrace.Span;
+-import org.htrace.Trace;
+-import org.htrace.TraceScope;
+ 
+ @InterfaceAudience.Private
+ @InterfaceStability.Unstable
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSClient.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSClient.java
+index 12d43ca..3e1e626 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSClient.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSClient.java
+@@ -212,27 +212,23 @@
+ import org.apache.hadoop.security.token.Token;
+ import org.apache.hadoop.security.token.TokenRenewer;
+ import org.apache.hadoop.tracing.SpanReceiverHost;
+-import org.apache.hadoop.tracing.TraceSamplerFactory;
++import org.apache.hadoop.tracing.TraceUtils;
+ import org.apache.hadoop.util.Daemon;
+ import org.apache.hadoop.util.DataChecksum;
+ import org.apache.hadoop.util.DataChecksum.Type;
+ import org.apache.hadoop.util.Progressable;
+ import org.apache.hadoop.util.Time;
+-import org.htrace.Sampler;
+-import org.htrace.Span;
+-import org.htrace.Trace;
+-import org.htrace.TraceScope;
++import org.apache.htrace.Sampler;
++import org.apache.htrace.SamplerBuilder;
++import org.apache.htrace.Span;
++import org.apache.htrace.Trace;
++import org.apache.htrace.TraceScope;
+ 
+ import com.google.common.annotations.VisibleForTesting;
+ import com.google.common.base.Joiner;
+ import com.google.common.base.Preconditions;
+ import com.google.common.collect.Lists;
+ import com.google.common.net.InetAddresses;
+-import org.htrace.Sampler;
+-import org.htrace.Span;
+-import org.htrace.Trace;
+-import org.htrace.TraceScope;
+-import org.htrace.impl.ProbabilitySampler;
+ 
+ /********************************************************
+  * DFSClient can connect to a Hadoop Filesystem and 
+@@ -635,7 +631,7 @@ public DFSClient(URI nameNodeUri, ClientProtocol rpcNamenode,
+       Configuration conf, FileSystem.Statistics stats)
+     throws IOException {
+     SpanReceiverHost.getInstance(conf);
+-    traceSampler = TraceSamplerFactory.createSampler(conf);
++    traceSampler = new SamplerBuilder(TraceUtils.wrapHadoopConf(conf)).build();
+     // Copy only the required DFSClient configuration
+     this.dfsClientConf = new Conf(conf);
+     if (this.dfsClientConf.useLegacyBlockReaderLocal) {
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSInotifyEventInputStream.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSInotifyEventInputStream.java
+index 803e4f2..1f9e3e9 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSInotifyEventInputStream.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSInotifyEventInputStream.java
+@@ -26,9 +26,9 @@
+ import org.apache.hadoop.hdfs.inotify.MissingEventsException;
+ import org.apache.hadoop.hdfs.protocol.ClientProtocol;
+ import org.apache.hadoop.util.Time;
+-import org.htrace.Sampler;
+-import org.htrace.Trace;
+-import org.htrace.TraceScope;
++import org.apache.htrace.Sampler;
++import org.apache.htrace.Trace;
++import org.apache.htrace.TraceScope;
+ import org.slf4j.Logger;
+ import org.slf4j.LoggerFactory;
+ 
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSInputStream.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSInputStream.java
+index e437dc7..625a1df 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSInputStream.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSInputStream.java
+@@ -74,11 +74,11 @@
+ import org.apache.hadoop.security.token.SecretManager.InvalidToken;
+ import org.apache.hadoop.security.token.Token;
+ import org.apache.hadoop.util.IdentityHashStore;
++import org.apache.htrace.Span;
++import org.apache.htrace.Trace;
++import org.apache.htrace.TraceScope;
+ 
+ import com.google.common.annotations.VisibleForTesting;
+-import org.htrace.Span;
+-import org.htrace.Trace;
+-import org.htrace.TraceScope;
+ 
+ /****************************************************************
+  * DFSInputStream provides bytes from a named file.  It handles 
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSOutputStream.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSOutputStream.java
+index 58f91bc..176a40a 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSOutputStream.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSOutputStream.java
+@@ -93,9 +93,9 @@
+ import org.apache.hadoop.util.DataChecksum.Type;
+ import org.apache.hadoop.util.Progressable;
+ import org.apache.hadoop.util.Time;
+-import org.htrace.Span;
+-import org.htrace.Trace;
+-import org.htrace.TraceScope;
++import org.apache.htrace.Span;
++import org.apache.htrace.Trace;
++import org.apache.htrace.TraceScope;
+ 
+ import com.google.common.annotations.VisibleForTesting;
+ import com.google.common.base.Preconditions;
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/RemoteBlockReader.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/RemoteBlockReader.java
+index f2d3395..628c610 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/RemoteBlockReader.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/RemoteBlockReader.java
+@@ -46,9 +46,9 @@
+ import org.apache.hadoop.net.NetUtils;
+ import org.apache.hadoop.security.token.Token;
+ import org.apache.hadoop.util.DataChecksum;
+-import org.htrace.Sampler;
+-import org.htrace.Trace;
+-import org.htrace.TraceScope;
++import org.apache.htrace.Sampler;
++import org.apache.htrace.Trace;
++import org.apache.htrace.TraceScope;
+ 
+ 
+ /**
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/RemoteBlockReader2.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/RemoteBlockReader2.java
+index bc0db56..3f133b6 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/RemoteBlockReader2.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/RemoteBlockReader2.java
+@@ -51,11 +51,11 @@
+ import org.apache.hadoop.net.NetUtils;
+ import org.apache.hadoop.security.token.Token;
+ import org.apache.hadoop.util.DataChecksum;
++import org.apache.htrace.Sampler;
++import org.apache.htrace.Trace;
++import org.apache.htrace.TraceScope;
+ 
+ import com.google.common.annotations.VisibleForTesting;
+-import org.htrace.Sampler;
+-import org.htrace.Trace;
+-import org.htrace.TraceScope;
+ 
+ /**
+  * This is a wrapper around connection to datanode
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/CacheDirectiveIterator.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/CacheDirectiveIterator.java
+index d28b771..923cdb4 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/CacheDirectiveIterator.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/CacheDirectiveIterator.java
+@@ -25,11 +25,11 @@
+ import org.apache.hadoop.fs.BatchedRemoteIterator;
+ import org.apache.hadoop.fs.InvalidRequestException;
+ import org.apache.hadoop.ipc.RemoteException;
++import org.apache.htrace.Sampler;
++import org.apache.htrace.Trace;
++import org.apache.htrace.TraceScope;
+ 
+ import com.google.common.base.Preconditions;
+-import org.htrace.Sampler;
+-import org.htrace.Trace;
+-import org.htrace.TraceScope;
+ 
+ /**
+  * CacheDirectiveIterator is a remote iterator that iterates cache directives.
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/CachePoolIterator.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/CachePoolIterator.java
+index 1f17c8e..e9481f7 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/CachePoolIterator.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/CachePoolIterator.java
+@@ -23,9 +23,9 @@
+ import org.apache.hadoop.classification.InterfaceAudience;
+ import org.apache.hadoop.classification.InterfaceStability;
+ import org.apache.hadoop.fs.BatchedRemoteIterator;
+-import org.htrace.Sampler;
+-import org.htrace.Trace;
+-import org.htrace.TraceScope;
++import org.apache.htrace.Sampler;
++import org.apache.htrace.Trace;
++import org.apache.htrace.TraceScope;
+ 
+ /**
+  * CachePoolIterator is a remote iterator that iterates cache pools.
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/EncryptionZoneIterator.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/EncryptionZoneIterator.java
+index 8a648e8..0141215 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/EncryptionZoneIterator.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/EncryptionZoneIterator.java
+@@ -23,9 +23,9 @@
+ import org.apache.hadoop.classification.InterfaceAudience;
+ import org.apache.hadoop.classification.InterfaceStability;
+ import org.apache.hadoop.fs.BatchedRemoteIterator;
+-import org.htrace.Sampler;
+-import org.htrace.Trace;
+-import org.htrace.TraceScope;
++import org.apache.htrace.Sampler;
++import org.apache.htrace.Trace;
++import org.apache.htrace.TraceScope;
+ 
+ /**
+  * EncryptionZoneIterator is a remote iterator that iterates over encryption
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/datatransfer/DataTransferProtoUtil.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/datatransfer/DataTransferProtoUtil.java
+index b91e17a..2ef3c3f 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/datatransfer/DataTransferProtoUtil.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/datatransfer/DataTransferProtoUtil.java
+@@ -31,10 +31,10 @@
+ import org.apache.hadoop.hdfs.security.token.block.BlockTokenIdentifier;
+ import org.apache.hadoop.security.token.Token;
+ import org.apache.hadoop.util.DataChecksum;
+-import org.htrace.Span;
+-import org.htrace.Trace;
+-import org.htrace.TraceInfo;
+-import org.htrace.TraceScope;
++import org.apache.htrace.Span;
++import org.apache.htrace.Trace;
++import org.apache.htrace.TraceInfo;
++import org.apache.htrace.TraceScope;
+ 
+ /**
+  * Static utilities for dealing with the protocol buffers used by the
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/datatransfer/Receiver.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/datatransfer/Receiver.java
+index 16d4dda..41c0c47 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/datatransfer/Receiver.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/datatransfer/Receiver.java
+@@ -40,7 +40,7 @@
+ import org.apache.hadoop.hdfs.protocolPB.PBHelper;
+ import org.apache.hadoop.hdfs.server.datanode.CachingStrategy;
+ import org.apache.hadoop.hdfs.shortcircuit.ShortCircuitShm.SlotId;
+-import org.htrace.TraceScope;
++import org.apache.htrace.TraceScope;
+ 
+ /** Receiver */
+ @InterfaceAudience.Private
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/datatransfer/Sender.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/datatransfer/Sender.java
+index 805fe7d..d5402ac 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/datatransfer/Sender.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/datatransfer/Sender.java
+@@ -48,8 +48,8 @@
+ import org.apache.hadoop.security.token.Token;
+ import org.apache.hadoop.util.DataChecksum;
+ 
+-import org.htrace.Trace;
+-import org.htrace.Span;
++import org.apache.htrace.Trace;
++import org.apache.htrace.Span;
+ 
+ import com.google.protobuf.Message;
+ 
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BlockSender.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BlockSender.java
+index af600dc..e76b93a 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BlockSender.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BlockSender.java
+@@ -46,12 +46,12 @@
+ import org.apache.hadoop.io.nativeio.NativeIO;
+ import org.apache.hadoop.net.SocketOutputStream;
+ import org.apache.hadoop.util.DataChecksum;
++import org.apache.htrace.Sampler;
++import org.apache.htrace.Trace;
++import org.apache.htrace.TraceScope;
+ 
+ import com.google.common.annotations.VisibleForTesting;
+ import com.google.common.base.Preconditions;
+-import org.htrace.Sampler;
+-import org.htrace.Trace;
+-import org.htrace.TraceScope;
+ 
+ /**
+  * Reads a block from the disk and sends it to a recipient.
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestCacheDirectives.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestCacheDirectives.java
+index 5cf9875..e569293 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestCacheDirectives.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestCacheDirectives.java
+@@ -89,7 +89,7 @@
+ import org.apache.log4j.Level;
+ import org.apache.log4j.LogManager;
+ import org.apache.log4j.Logger;
+-import org.htrace.Sampler;
++import org.apache.htrace.Sampler;
+ import org.junit.After;
+ import org.junit.Assert;
+ import org.junit.Before;
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTraceAdmin.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTraceAdmin.java
+index 76cdb96..3b0dd70 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTraceAdmin.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTraceAdmin.java
+@@ -72,12 +72,12 @@ public void testCreateAndDestroySpanReceiver() throws Exception {
+       Assert.assertEquals("ret:0, Added trace span receiver 1 with " +
+           "configuration local-file-span-receiver.path = " + tracePath + NEWLINE,
+           runTraceCommand(trace, "-add", "-host", getHostPortForNN(cluster),
+-              "-class", "org.htrace.impl.LocalFileSpanReceiver",
++              "-class", "org.apache.htrace.impl.LocalFileSpanReceiver",
+               "-Clocal-file-span-receiver.path=" + tracePath));
+       String list =
+           runTraceCommand(trace, "-list", "-host", getHostPortForNN(cluster));
+       Assert.assertTrue(list.startsWith("ret:0"));
+-      Assert.assertTrue(list.contains("1   org.htrace.impl.LocalFileSpanReceiver"));
++      Assert.assertTrue(list.contains("1   org.apache.htrace.impl.LocalFileSpanReceiver"));
+       Assert.assertEquals("ret:0, Removed trace span receiver 1" + NEWLINE,
+           runTraceCommand(trace, "-remove", "1", "-host",
+               getHostPortForNN(cluster)));
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracing.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracing.java
+index 5c24500..66a2d7e 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracing.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracing.java
+@@ -25,12 +25,12 @@
+ import org.apache.hadoop.hdfs.DistributedFileSystem;
+ import org.apache.hadoop.hdfs.MiniDFSCluster;
+ import org.apache.hadoop.test.GenericTestUtils;
+-import org.htrace.HTraceConfiguration;
+-import org.htrace.Sampler;
+-import org.htrace.Span;
+-import org.htrace.SpanReceiver;
+-import org.htrace.Trace;
+-import org.htrace.TraceScope;
++import org.apache.htrace.HTraceConfiguration;
++import org.apache.htrace.Sampler;
++import org.apache.htrace.Span;
++import org.apache.htrace.SpanReceiver;
++import org.apache.htrace.Trace;
++import org.apache.htrace.TraceScope;
+ import org.junit.AfterClass;
+ import org.junit.Assert;
+ import org.junit.Before;
+@@ -101,8 +101,6 @@ public void testWriteTraceHooks() throws Exception {
+     Assert.assertNotNull(s);
+     long spanStart = s.getStartTimeMillis();
+     long spanEnd = s.getStopTimeMillis();
+-    Assert.assertTrue(spanStart - startTime < 100);
+-    Assert.assertTrue(spanEnd - endTime < 100);
+ 
+     // There should only be one trace id as it should all be homed in the
+     // top trace.
+@@ -272,7 +270,7 @@ public Boolean get() {
+    */
+   public static class SetSpanReceiver implements SpanReceiver {
+ 
+-    public void configure(HTraceConfiguration conf) {
++    public SetSpanReceiver(HTraceConfiguration conf) {
+     }
+ 
+     public void receiveSpan(Span span) {
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracingShortCircuitLocalRead.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracingShortCircuitLocalRead.java
+index 800cc6b..2981558 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracingShortCircuitLocalRead.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracingShortCircuitLocalRead.java
+@@ -30,10 +30,10 @@
+ import org.apache.hadoop.net.unix.DomainSocket;
+ import org.apache.hadoop.net.unix.TemporarySocketDirectory;
+ import org.apache.hadoop.util.NativeCodeLoader;
+-import org.htrace.Sampler;
+-import org.htrace.Span;
+-import org.htrace.Trace;
+-import org.htrace.TraceScope;
++import org.apache.htrace.Sampler;
++import org.apache.htrace.Span;
++import org.apache.htrace.Trace;
++import org.apache.htrace.TraceScope;
+ import org.junit.AfterClass;
+ import org.junit.Assert;
+ import org.junit.BeforeClass;
+diff --git a/hadoop-project/pom.xml b/hadoop-project/pom.xml
+index 68e940b..db96cb3 100644
+--- a/hadoop-project/pom.xml
++++ b/hadoop-project/pom.xml
+@@ -792,9 +792,9 @@
+         <version>0.1.42</version>
+       </dependency>
+       <dependency>
+-        <groupId>org.htrace</groupId>
++        <groupId>org.apache.htrace</groupId>
+         <artifactId>htrace-core</artifactId>
+-        <version>3.0.4</version>
++        <version>3.1.0-incubating</version>
+       </dependency>
+       <dependency>
+         <groupId>org.jdom</groupId>
+-- 
+1.7.9.5
+

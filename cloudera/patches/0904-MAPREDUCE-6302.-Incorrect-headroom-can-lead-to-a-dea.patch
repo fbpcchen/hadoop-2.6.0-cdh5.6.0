@@ -1,0 +1,502 @@
+From c0df176a5e3b3aee54944a5f8922be7cee7e848a Mon Sep 17 00:00:00 2001
+From: Karthik Kambatla <kasha@apache.org>
+Date: Sun, 4 Oct 2015 23:49:02 -0700
+Subject: [PATCH 0904/1023] MAPREDUCE-6302. Incorrect headroom can lead to a
+ deadlock between map and reduce allocations.
+ (kasha)
+
+(cherry picked from commit 4aa9b3e75ca86917125e56e1b438668273a5d87f)
+
+Conflicts:
+	hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/main/java/org/apache/hadoop/mapreduce/v2/app/rm/RMContainerAllocator.java
+
+(cherry picked from commit 2d8f9e3fd9b68bde292adbfb39f988f6964617da)
+
+Conflicts:
+	hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/test/java/org/apache/hadoop/mapreduce/v2/app/rm/TestRMContainerAllocator.java
+	hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/resources/mapred-default.xml
+	hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/Allocation.java
+
+Change-Id: Iaa27466198353cf0523b1c2be5733c9a3b7be388
+(cherry picked from commit 685c87b2fcb433253e0100185bd325bd6b00a015)
+---
+ .../mapreduce/v2/app/rm/RMContainerAllocator.java  |  159 +++++++++++---------
+ .../mapreduce/v2/app/rm/RMContainerRequestor.java  |    3 +-
+ .../v2/app/rm/TestRMContainerAllocator.java        |   83 +++++++++-
+ .../org/apache/hadoop/mapreduce/MRJobConfig.java   |   16 +-
+ .../src/main/resources/mapred-default.xml          |   36 +++--
+ .../resourcemanager/scheduler/Allocation.java      |    7 +-
+ 6 files changed, 210 insertions(+), 94 deletions(-)
+
+diff --git a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/main/java/org/apache/hadoop/mapreduce/v2/app/rm/RMContainerAllocator.java b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/main/java/org/apache/hadoop/mapreduce/v2/app/rm/RMContainerAllocator.java
+index dc1295f..a41b9f2 100644
+--- a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/main/java/org/apache/hadoop/mapreduce/v2/app/rm/RMContainerAllocator.java
++++ b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/main/java/org/apache/hadoop/mapreduce/v2/app/rm/RMContainerAllocator.java
+@@ -158,11 +158,13 @@ added to the pending and are ramped up (added to scheduled) based
+   private boolean reduceStarted = false;
+   private float maxReduceRampupLimit = 0;
+   private float maxReducePreemptionLimit = 0;
+-  /**
+-   * after this threshold, if the container request is not allocated, it is
+-   * considered delayed.
+-   */
+-  private long allocationDelayThresholdMs = 0;
++
++  // Mapper allocation timeout, after which a reducer is forcibly preempted
++  private long reducerUnconditionalPreemptionDelayMs;
++
++  // Duration to wait before preempting a reducer when there is NO room
++  private long reducerNoHeadroomPreemptionDelayMs = 0;
++
+   private float reduceSlowStart = 0;
+   private long retryInterval;
+   private long retrystartTime;
+@@ -192,7 +194,10 @@ protected void serviceInit(Configuration conf) throws Exception {
+     maxReducePreemptionLimit = conf.getFloat(
+         MRJobConfig.MR_AM_JOB_REDUCE_PREEMPTION_LIMIT,
+         MRJobConfig.DEFAULT_MR_AM_JOB_REDUCE_PREEMPTION_LIMIT);
+-    allocationDelayThresholdMs = conf.getInt(
++    reducerUnconditionalPreemptionDelayMs = 1000 * conf.getInt(
++        MRJobConfig.MR_JOB_REDUCER_UNCONDITIONAL_PREEMPT_DELAY_SEC,
++        MRJobConfig.DEFAULT_MR_JOB_REDUCER_UNCONDITIONAL_PREEMPT_DELAY_SEC);
++    reducerNoHeadroomPreemptionDelayMs = conf.getInt(
+         MRJobConfig.MR_JOB_REDUCER_PREEMPT_DELAY_SEC,
+         MRJobConfig.DEFAULT_MR_JOB_REDUCER_PREEMPT_DELAY_SEC) * 1000;//sec -> ms
+     RackResolver.init(conf);
+@@ -448,59 +453,89 @@ void preemptReducesIfNeeded() {
+     if (reduceResourceRequest.equals(Resources.none())) {
+       return; // no reduces
+     }
+-    //check if reduces have taken over the whole cluster and there are 
+-    //unassigned maps
+-    if (scheduledRequests.maps.size() > 0) {
+-      Resource resourceLimit = getResourceLimit();
+-      Resource availableResourceForMap =
+-          Resources.subtract(
+-            resourceLimit,
+-            Resources.multiply(reduceResourceRequest,
+-              assignedRequests.reduces.size()
+-                  - assignedRequests.preemptionWaitingReduces.size()));
+-      // availableMemForMap must be sufficient to run at least 1 map
+-      if (ResourceCalculatorUtils.computeAvailableContainers(availableResourceForMap,
+-        mapResourceRequest, getSchedulerResourceTypes()) <= 0) {
+-        // to make sure new containers are given to maps and not reduces
+-        // ramp down all scheduled reduces if any
+-        // (since reduces are scheduled at higher priority than maps)
+-        LOG.info("Ramping down all scheduled reduces:"
+-            + scheduledRequests.reduces.size());
+-        for (ContainerRequest req : scheduledRequests.reduces.values()) {
+-          pendingReduces.add(req);
+-        }
+-        scheduledRequests.reduces.clear();
+- 
+-        //do further checking to find the number of map requests that were
+-        //hanging around for a while
+-        int hangingMapRequests = getNumOfHangingRequests(scheduledRequests.maps);
+-        if (hangingMapRequests > 0) {
+-          // preempt for making space for at least one map
+-          int preemptionReduceNumForOneMap =
+-              ResourceCalculatorUtils.divideAndCeilContainers(mapResourceRequest,
+-                reduceResourceRequest, getSchedulerResourceTypes());
+-          int preemptionReduceNumForPreemptionLimit =
+-              ResourceCalculatorUtils.divideAndCeilContainers(
+-                Resources.multiply(resourceLimit, maxReducePreemptionLimit),
+-                reduceResourceRequest, getSchedulerResourceTypes());
+-          int preemptionReduceNumForAllMaps =
+-              ResourceCalculatorUtils.divideAndCeilContainers(
+-                Resources.multiply(mapResourceRequest, hangingMapRequests),
+-                reduceResourceRequest, getSchedulerResourceTypes());
+-          int toPreempt =
+-              Math.min(Math.max(preemptionReduceNumForOneMap,
+-                preemptionReduceNumForPreemptionLimit),
+-                preemptionReduceNumForAllMaps);
+ 
+-          LOG.info("Going to preempt " + toPreempt
+-              + " due to lack of space for maps");
+-          assignedRequests.preemptReduce(toPreempt);
+-        }
++    if (assignedRequests.maps.size() > 0) {
++      // there are assigned mappers
++      return;
++    }
++
++    if (scheduledRequests.maps.size() <= 0) {
++      // there are no pending requests for mappers
++      return;
++    }
++    // At this point:
++    // we have pending mappers and all assigned resources are taken by reducers
++
++    if (reducerUnconditionalPreemptionDelayMs >= 0) {
++      // Unconditional preemption is enabled.
++      // If mappers are pending for longer than the configured threshold,
++      // preempt reducers irrespective of what the headroom is.
++      if (preemptReducersForHangingMapRequests(
++          reducerUnconditionalPreemptionDelayMs)) {
++        return;
+       }
+     }
++
++    // The pending mappers haven't been waiting for too long. Let us see if
++    // the headroom can fit a mapper.
++    Resource availableResourceForMap = getAvailableResources();
++    if (ResourceCalculatorUtils.computeAvailableContainers(availableResourceForMap,
++        mapResourceRequest, getSchedulerResourceTypes()) > 0) {
++      // the available headroom is enough to run a mapper
++      return;
++    }
++
++    // Available headroom is not enough to run mapper. See if we should hold
++    // off before preempting reducers and preempt if okay.
++    preemptReducersForHangingMapRequests(reducerNoHeadroomPreemptionDelayMs);
++  }
++
++  private boolean preemptReducersForHangingMapRequests(long pendingThreshold) {
++    int hangingMapRequests = getNumHangingRequests(
++        pendingThreshold, scheduledRequests.maps);
++    if (hangingMapRequests > 0) {
++      preemptReducer(hangingMapRequests);
++      return true;
++    }
++    return false;
++  }
++
++  private void clearAllPendingReduceRequests() {
++    LOG.info("Ramping down all scheduled reduces:"
++        + scheduledRequests.reduces.size());
++    for (ContainerRequest req : scheduledRequests.reduces.values()) {
++      pendingReduces.add(req);
++    }
++    scheduledRequests.reduces.clear();
+   }
+- 
+-  private int getNumOfHangingRequests(Map<TaskAttemptId, ContainerRequest> requestMap) {
++
++  private void preemptReducer(int hangingMapRequests) {
++    clearAllPendingReduceRequests();
++
++    // preempt for making space for at least one map
++    int preemptionReduceNumForOneMap =
++        ResourceCalculatorUtils.divideAndCeilContainers(mapResourceRequest,
++            reduceResourceRequest, getSchedulerResourceTypes());
++    int preemptionReduceNumForPreemptionLimit =
++        ResourceCalculatorUtils.divideAndCeilContainers(
++            Resources.multiply(getResourceLimit(), maxReducePreemptionLimit),
++            reduceResourceRequest, getSchedulerResourceTypes());
++    int preemptionReduceNumForAllMaps =
++        ResourceCalculatorUtils.divideAndCeilContainers(
++            Resources.multiply(mapResourceRequest, hangingMapRequests),
++            reduceResourceRequest, getSchedulerResourceTypes());
++    int toPreempt =
++        Math.min(Math.max(preemptionReduceNumForOneMap,
++                preemptionReduceNumForPreemptionLimit),
++            preemptionReduceNumForAllMaps);
++
++    LOG.info("Going to preempt " + toPreempt
++        + " due to lack of space for maps");
++    assignedRequests.preemptReduce(toPreempt);
++  }
++
++  private int getNumHangingRequests(long allocationDelayThresholdMs,
++      Map<TaskAttemptId, ContainerRequest> requestMap) {
+     if (allocationDelayThresholdMs <= 0)
+       return requestMap.size();
+     int hangingRequests = 0;
+@@ -528,9 +563,6 @@ public void scheduleReduces(
+     
+     // get available resources for this job
+     Resource headRoom = getAvailableResources();
+-    if (headRoom == null) {
+-      headRoom = Resources.none();
+-    }
+ 
+     LOG.info("Recalculating schedule, headroom=" + headRoom);
+     
+@@ -655,9 +687,7 @@ public void rampDownReduces(int rampDown) {
+   @SuppressWarnings("unchecked")
+   private List<Container> getResources() throws Exception {
+     // will be null the first time
+-    Resource headRoom =
+-        getAvailableResources() == null ? Resources.none() :
+-            Resources.clone(getAvailableResources());
++    Resource headRoom = Resources.clone(getAvailableResources());
+     AllocateResponse response;
+     /*
+      * If contact with RM is lost, the AM will wait MR_AM_TO_RM_WAIT_INTERVAL_MS
+@@ -698,9 +728,7 @@ public void rampDownReduces(int rampDown) {
+       // continue to attempt to contact the RM.
+       throw e;
+     }
+-    Resource newHeadRoom =
+-        getAvailableResources() == null ? Resources.none()
+-            : getAvailableResources();
++    Resource newHeadRoom = getAvailableResources();
+     List<Container> newContainers = response.getAllocatedContainers();
+     // Setting NMTokens
+     if (response.getNMTokens() != null) {
+@@ -823,9 +851,6 @@ private void handleUpdatedNodes(AllocateResponse response) {
+   @Private
+   public Resource getResourceLimit() {
+     Resource headRoom = getAvailableResources();
+-    if (headRoom == null) {
+-      headRoom = Resources.none();
+-    }
+     Resource assignedMapResource =
+         Resources.multiply(mapResourceRequest, assignedRequests.maps.size());
+     Resource assignedReduceResource =
+diff --git a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/main/java/org/apache/hadoop/mapreduce/v2/app/rm/RMContainerRequestor.java b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/main/java/org/apache/hadoop/mapreduce/v2/app/rm/RMContainerRequestor.java
+index bb9ad02..9ce245f 100644
+--- a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/main/java/org/apache/hadoop/mapreduce/v2/app/rm/RMContainerRequestor.java
++++ b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/main/java/org/apache/hadoop/mapreduce/v2/app/rm/RMContainerRequestor.java
+@@ -50,6 +50,7 @@
+ import org.apache.hadoop.yarn.factory.providers.RecordFactoryProvider;
+ 
+ import com.google.common.annotations.VisibleForTesting;
++import org.apache.hadoop.yarn.util.resource.Resources;
+ 
+ 
+ /**
+@@ -333,7 +334,7 @@ protected void containerFailedOnHost(String hostName) {
+   }
+ 
+   protected Resource getAvailableResources() {
+-    return availableResources;
++    return availableResources == null ? Resources.none() : availableResources;
+   }
+   
+   protected void addContainerReq(ContainerRequest req) {
+diff --git a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/test/java/org/apache/hadoop/mapreduce/v2/app/rm/TestRMContainerAllocator.java b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/test/java/org/apache/hadoop/mapreduce/v2/app/rm/TestRMContainerAllocator.java
+index fba6679..f7498b9 100644
+--- a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/test/java/org/apache/hadoop/mapreduce/v2/app/rm/TestRMContainerAllocator.java
++++ b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/test/java/org/apache/hadoop/mapreduce/v2/app/rm/TestRMContainerAllocator.java
+@@ -415,7 +415,7 @@ public void testReducerRampdownDiagnostics() throws Exception {
+         MRBuilderUtils.newJobReport(jobId, "job", "user", JobState.RUNNING, 0,
+             0, 0, 0, 0, 0, 0, "jobfile", null, false, ""));
+     final MyContainerAllocator allocator = new MyContainerAllocator(rm, conf,
+-        appAttemptId, mockJob);
++        appAttemptId, mockJob, new SystemClock());
+     // add resources to scheduler
+     dispatcher.await();
+ 
+@@ -549,6 +549,69 @@ public void testNonAggressivelyPreemptReducers() throws Exception {
+         assignedRequests.preemptionWaitingReduces.size());
+   }
+ 
++  @Test(timeout = 30000)
++  public void testUnconditionalPreemptReducers() throws Exception {
++    LOG.info("Running testForcePreemptReducers");
++
++    int forcePreemptThresholdSecs = 2;
++    Configuration conf = new Configuration();
++    conf.setInt(MRJobConfig.MR_JOB_REDUCER_PREEMPT_DELAY_SEC,
++        2 * forcePreemptThresholdSecs);
++    conf.setInt(MRJobConfig.MR_JOB_REDUCER_UNCONDITIONAL_PREEMPT_DELAY_SEC,
++        forcePreemptThresholdSecs);
++
++    MyResourceManager rm = new MyResourceManager(conf);
++    rm.start();
++    rm.getMyFifoScheduler().forceResourceLimit(Resource.newInstance(8192, 8));
++    DrainDispatcher dispatcher = (DrainDispatcher) rm.getRMContext()
++        .getDispatcher();
++
++    // Submit the application
++    RMApp app = rm.submitApp(1024);
++    dispatcher.await();
++
++    MockNM amNodeManager = rm.registerNode("amNM:1234", 2048);
++    amNodeManager.nodeHeartbeat(true);
++    dispatcher.await();
++
++    ApplicationAttemptId appAttemptId = app.getCurrentAppAttempt()
++        .getAppAttemptId();
++    rm.sendAMLaunched(appAttemptId);
++    dispatcher.await();
++
++    JobId jobId = MRBuilderUtils.newJobId(appAttemptId.getApplicationId(), 0);
++    Job mockJob = mock(Job.class);
++    when(mockJob.getReport()).thenReturn(
++        MRBuilderUtils.newJobReport(jobId, "job", "user", JobState.RUNNING, 0,
++            0, 0, 0, 0, 0, 0, "jobfile", null, false, ""));
++    ControlledClock clock = new ControlledClock(null);
++    clock.setTime(1);
++    MyContainerAllocator allocator = new MyContainerAllocator(rm, conf,
++        appAttemptId, mockJob, clock);
++    allocator.setMapResourceRequest(BuilderUtils.newResource(1024, 1));
++    allocator.setReduceResourceRequest(BuilderUtils.newResource(1024, 1));
++    RMContainerAllocator.AssignedRequests assignedRequests =
++        allocator.getAssignedRequests();
++    RMContainerAllocator.ScheduledRequests scheduledRequests =
++        allocator.getScheduledRequests();
++    ContainerRequestEvent event1 =
++        createReq(jobId, 1, 2048, new String[] { "h1" }, false, false);
++    scheduledRequests.maps.put(mock(TaskAttemptId.class),
++        new RMContainerRequestor.ContainerRequest(event1, null, clock.getTime()));
++    assignedRequests.reduces.put(mock(TaskAttemptId.class),
++        mock(Container.class));
++
++    clock.setTime(clock.getTime() + 1);
++    allocator.preemptReducesIfNeeded();
++    Assert.assertEquals("The reducer is preeempted too soon", 0,
++        assignedRequests.preemptionWaitingReduces.size());
++
++    clock.setTime(clock.getTime() + 1000 * forcePreemptThresholdSecs);
++    allocator.preemptReducesIfNeeded();
++    Assert.assertEquals("The reducer is not preeempted", 1,
++        assignedRequests.preemptionWaitingReduces.size());
++  }
++
+   @Test
+   public void testMapReduceScheduling() throws Exception {
+ 
+@@ -579,7 +642,7 @@ public void testMapReduceScheduling() throws Exception {
+         MRBuilderUtils.newJobReport(jobId, "job", "user", JobState.RUNNING, 0,
+             0, 0, 0, 0, 0, 0, "jobfile", null, false, ""));
+     MyContainerAllocator allocator = new MyContainerAllocator(rm, conf,
+-        appAttemptId, mockJob);
++        appAttemptId, mockJob, new SystemClock());
+ 
+     // add resources to scheduler
+     MockNM nodeManager1 = rm.registerNode("h1:1234", 1024);
+@@ -1471,6 +1534,7 @@ public MyFifoScheduler(RMContext rmContext) {
+     List<ContainerId> lastRelease = null;
+     List<String> lastBlacklistAdditions;
+     List<String> lastBlacklistRemovals;
++    Resource forceResourceLimit = null;
+     
+     // override this to copy the objects otherwise FifoScheduler updates the
+     // numContainers in same objects as kept by RMContainerAllocator
+@@ -1491,9 +1555,18 @@ public synchronized Allocation allocate(
+       lastRelease = release;
+       lastBlacklistAdditions = blacklistAdditions;
+       lastBlacklistRemovals = blacklistRemovals;
+-      return super.allocate(
+-          applicationAttemptId, askCopy, release, 
+-          blacklistAdditions, blacklistRemovals);
++      Allocation allocation = super.allocate(
++          applicationAttemptId, askCopy, release, blacklistAdditions,
++          blacklistRemovals);
++      if (forceResourceLimit != null) {
++        // Test wants to force the non-default resource limit
++        allocation.setResourceLimit(forceResourceLimit);
++      }
++      return allocation;
++    }
++
++    public void forceResourceLimit(Resource resource) {
++      this.forceResourceLimit = resource;
+     }
+   }
+ 
+diff --git a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/java/org/apache/hadoop/mapreduce/MRJobConfig.java b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/java/org/apache/hadoop/mapreduce/MRJobConfig.java
+index 4a2c6d7..c3cafc4 100644
+--- a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/java/org/apache/hadoop/mapreduce/MRJobConfig.java
++++ b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/java/org/apache/hadoop/mapreduce/MRJobConfig.java
+@@ -641,10 +641,18 @@
+       50;
+ 
+   /**
+-   * The threshold in terms of seconds after which an unsatisfied mapper request
+-   * triggers reducer preemption to free space. Default 0 implies that the reduces
+-   * should be preempted immediately after allocation if there is currently no
+-   * room for newly allocated mappers.
++   * Duration to wait before forcibly preempting a reducer to allow
++   * allocating new mappers, even when YARN reports positive headroom.
++   */
++  public static final String MR_JOB_REDUCER_UNCONDITIONAL_PREEMPT_DELAY_SEC =
++      "mapreduce.job.reducer.unconditional-preempt.delay.sec";
++
++  public static final int
++      DEFAULT_MR_JOB_REDUCER_UNCONDITIONAL_PREEMPT_DELAY_SEC = 5 * 60;
++
++  /**
++   * Duration to wait before preempting a reducer, when there is no headroom
++   * to allocate new mappers.
+    */
+   public static final String MR_JOB_REDUCER_PREEMPT_DELAY_SEC =
+       "mapreduce.job.reducer.preempt.delay.sec";
+diff --git a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/resources/mapred-default.xml b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/resources/mapred-default.xml
+index c3aecbf..2df6951 100644
+--- a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/resources/mapred-default.xml
++++ b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/resources/mapred-default.xml
+@@ -278,24 +278,28 @@
+   </description>
+ </property>
+ 
+-<property>
+-  <name>mapreduce.jobtracker.taskscheduler</name>
+-  <value>org.apache.hadoop.mapred.JobQueueTaskScheduler</value>
+-  <description>The class responsible for scheduling the tasks.</description>
+-</property>
+-
++  <property>
++    <name>mapreduce.job.reducer.preempt.delay.sec</name>
++    <value>0</value>
++    <description>The threshold (in seconds) after which an unsatisfied
++      mapper request triggers reducer preemption when there is no anticipated
++      headroom. If set to 0 or a negative value, the reducer is preempted as
++      soon as lack of headroom is detected. Default is 0.
++    </description>
++  </property>
+ 
+-<property>
+-  <name>mapreduce.job.reducer.preempt.delay.sec</name>
+-  <value>0</value>
+-  <description>The threshold in terms of seconds after which an unsatisfied mapper 
+-  request triggers reducer preemption to free space. Default 0 implies that the 
+-  reduces should be preempted immediately after allocation if there is currently no
+-  room for newly allocated mappers.
+-  </description>
+-</property>
++  <property>
++    <name>mapreduce.job.reducer.unconditional-preempt.delay.sec</name>
++    <value>300</value>
++    <description>The threshold (in seconds) after which an unsatisfied
++      mapper request triggers a forced reducer preemption irrespective of the
++      anticipated headroom. By default, it is set to 5 mins. Setting it to 0
++      leads to immediate reducer preemption. Setting to -1 disables this
++      preemption altogether.
++    </description>
++  </property>
+ 
+-<property>
++  <property>
+     <name>mapreduce.job.max.split.locations</name>
+     <value>10</value>
+     <description>The max number of block locations to store for each split for 
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/Allocation.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/Allocation.java
+index 0cd336c..b81e585 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/Allocation.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/Allocation.java
+@@ -21,6 +21,7 @@
+ import java.util.List;
+ import java.util.Set;
+ 
++import com.google.common.annotations.VisibleForTesting;
+ import org.apache.hadoop.yarn.api.records.Container;
+ import org.apache.hadoop.yarn.api.records.ContainerId;
+ import org.apache.hadoop.yarn.api.records.NMToken;
+@@ -30,11 +31,11 @@
+ public class Allocation {
+   
+   final List<Container> containers;
+-  final Resource resourceLimit;
+   final Set<ContainerId> strictContainers;
+   final Set<ContainerId> fungibleContainers;
+   final List<ResourceRequest> fungibleResources;
+   final List<NMToken> nmTokens;
++  private Resource resourceLimit;
+ 
+   public Allocation(List<Container> containers, Resource resourceLimit,
+       Set<ContainerId> strictContainers, Set<ContainerId> fungibleContainers,
+@@ -78,4 +79,8 @@ public Resource getResourceLimit() {
+     return nmTokens;
+   }
+ 
++  @VisibleForTesting
++  public void setResourceLimit(Resource resource) {
++    this.resourceLimit = resource;
++  }
+ }
+-- 
+1.7.9.5
+

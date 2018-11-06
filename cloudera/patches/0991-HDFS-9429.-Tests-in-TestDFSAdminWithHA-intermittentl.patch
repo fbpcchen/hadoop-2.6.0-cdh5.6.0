@@ -1,0 +1,270 @@
+From ac1c999594f9a4945cd682674d06995e46ba5001 Mon Sep 17 00:00:00 2001
+From: Colin Patrick Mccabe <cmccabe@cloudera.com>
+Date: Tue, 1 Dec 2015 23:21:21 -0800
+Subject: [PATCH 0991/1023] HDFS-9429. Tests in TestDFSAdminWithHA
+ intermittently fail with EOFException (Xiao Chen
+ via Colin P. McCabe)
+
+(cherry picked from commit 53e3bf7e704c332fb119f55cb92520a51b644bfc)
+(cherry picked from commit 9b516a2a0501242b27f10a8f3e8551ed85a11320)
+
+Change-Id: I36c6771d3eff1e65ab75e59800e8bd3efda9ea87
+---
+ .../org/apache/hadoop/hdfs/TestRollingUpgrade.java |    1 +
+ .../hadoop/hdfs/TestRollingUpgradeRollback.java    |    1 +
+ .../hadoop/hdfs/qjournal/MiniJournalCluster.java   |   38 ++++++++++++++++++++
+ .../hadoop/hdfs/qjournal/MiniQJMHACluster.java     |    1 +
+ .../hdfs/qjournal/TestMiniJournalCluster.java      |    1 +
+ .../apache/hadoop/hdfs/qjournal/TestNNWithQJM.java |    1 +
+ .../hadoop/hdfs/qjournal/TestSecureNNWithQJM.java  |    1 +
+ .../hdfs/qjournal/client/TestEpochsAreUnique.java  |    1 +
+ .../hdfs/qjournal/client/TestQJMWithFaults.java    |    3 ++
+ .../qjournal/client/TestQuorumJournalManager.java  |    1 +
+ .../qjournal/server/TestJournalNodeMXBean.java     |   10 +++---
+ 11 files changed, 55 insertions(+), 4 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestRollingUpgrade.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestRollingUpgrade.java
+index 720d5ec..7877dc3 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestRollingUpgrade.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestRollingUpgrade.java
+@@ -164,6 +164,7 @@ public void testRollingUpgradeWithQJM() throws Exception {
+ 
+     final Configuration conf = new HdfsConfiguration();
+     final MiniJournalCluster mjc = new MiniJournalCluster.Builder(conf).build();
++    mjc.waitActive();
+     setConf(conf, nn1Dir, mjc);
+ 
+     {
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestRollingUpgradeRollback.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestRollingUpgradeRollback.java
+index c2e9d7c..6fdf1ac 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestRollingUpgradeRollback.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestRollingUpgradeRollback.java
+@@ -153,6 +153,7 @@ public void testRollbackWithQJM() throws Exception {
+     try {
+       mjc = new MiniJournalCluster.Builder(conf).numJournalNodes(
+           NUM_JOURNAL_NODES).build();
++      mjc.waitActive();
+       conf.set(DFSConfigKeys.DFS_NAMENODE_EDITS_DIR_KEY, mjc
+           .getQuorumJournalURI(JOURNAL_ID).toString());
+       cluster = new MiniDFSCluster.Builder(conf).numDataNodes(0).build();
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/qjournal/MiniJournalCluster.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/qjournal/MiniJournalCluster.java
+index 202188d..7b974c3 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/qjournal/MiniJournalCluster.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/qjournal/MiniJournalCluster.java
+@@ -17,26 +17,34 @@
+  */
+ package org.apache.hadoop.hdfs.qjournal;
+ 
++import static org.apache.hadoop.hdfs.qjournal.QJMTestUtil.FAKE_NSINFO;
++import static org.junit.Assert.fail;
++
+ import java.io.File;
+ import java.io.IOException;
+ import java.net.InetSocketAddress;
+ import java.net.URI;
+ import java.net.URISyntaxException;
+ import java.util.List;
++import java.util.concurrent.TimeoutException;
+ 
++import com.google.common.base.Supplier;
+ import org.apache.commons.logging.Log;
+ import org.apache.commons.logging.LogFactory;
+ import org.apache.hadoop.conf.Configuration;
+ import org.apache.hadoop.fs.FileUtil;
+ import org.apache.hadoop.hdfs.DFSConfigKeys;
+ import org.apache.hadoop.hdfs.MiniDFSCluster;
++import org.apache.hadoop.hdfs.qjournal.client.QuorumJournalManager;
+ import org.apache.hadoop.hdfs.qjournal.server.JournalNode;
+ import org.apache.hadoop.net.NetUtils;
+ 
+ import com.google.common.base.Joiner;
+ import com.google.common.collect.Lists;
++import org.apache.hadoop.test.GenericTestUtils;
+ 
+ public class MiniJournalCluster {
++  public static final String CLUSTER_WAITACTIVE_URI = "waitactive";
+   public static class Builder {
+     private String baseDir;
+     private int numJournalNodes = 3;
+@@ -217,4 +225,34 @@ public int getNumNodes() {
+     return nodes.length;
+   }
+ 
++  /**
++   * Wait until all the journalnodes start.
++   */
++  public void waitActive() throws IOException {
++    for (int i = 0; i < nodes.length; i++) {
++      final int index = i;
++      try {
++        GenericTestUtils.waitFor(new Supplier<Boolean>() {
++          // wait until all JN's IPC server is running
++          @Override public Boolean get() {
++            try {
++              QuorumJournalManager qjm =
++                  new QuorumJournalManager(nodes[index].node.getConf(),
++                      getQuorumJournalURI(CLUSTER_WAITACTIVE_URI), FAKE_NSINFO);
++              qjm.hasSomeData();
++              qjm.close();
++            } catch (IOException e) {
++              // Exception from IPC call, likely due to server not ready yet.
++              return false;
++            }
++            return true;
++          }
++        }, 50, 3000);
++      } catch (TimeoutException e) {
++        fail("Time out while waiting for journal node " + index + " to start.");
++      } catch (InterruptedException ite) {
++        LOG.warn("Thread interrupted when waiting for node start", ite);
++      }
++    }
++  }
+ }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/qjournal/MiniQJMHACluster.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/qjournal/MiniQJMHACluster.java
+index 9380701..61b9d4e 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/qjournal/MiniQJMHACluster.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/qjournal/MiniQJMHACluster.java
+@@ -92,6 +92,7 @@ private MiniQJMHACluster(Builder builder) throws IOException {
+         // start 3 journal nodes
+         journalCluster = new MiniJournalCluster.Builder(conf).format(true)
+             .build();
++        journalCluster.waitActive();
+         URI journalURI = journalCluster.getQuorumJournalURI(NAMESERVICE);
+ 
+         // start cluster with 2 NameNodes
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/qjournal/TestMiniJournalCluster.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/qjournal/TestMiniJournalCluster.java
+index fbb51e1..cace7c9 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/qjournal/TestMiniJournalCluster.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/qjournal/TestMiniJournalCluster.java
+@@ -36,6 +36,7 @@ public void testStartStop() throws IOException {
+     Configuration conf = new Configuration();
+     MiniJournalCluster c = new MiniJournalCluster.Builder(conf)
+       .build();
++    c.waitActive();
+     try {
+       URI uri = c.getQuorumJournalURI("myjournal");
+       String[] addrs = uri.getAuthority().split(";");
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/qjournal/TestNNWithQJM.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/qjournal/TestNNWithQJM.java
+index 518a785..a00363c 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/qjournal/TestNNWithQJM.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/qjournal/TestNNWithQJM.java
+@@ -55,6 +55,7 @@ public void resetSystemExit() {
+   @Before
+   public void startJNs() throws Exception {
+     mjc = new MiniJournalCluster.Builder(conf).build();
++    mjc.waitActive();
+   }
+   
+   @After
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/qjournal/TestSecureNNWithQJM.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/qjournal/TestSecureNNWithQJM.java
+index 1da92a1..f503319 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/qjournal/TestSecureNNWithQJM.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/qjournal/TestSecureNNWithQJM.java
+@@ -206,6 +206,7 @@ private void restartNameNode() throws IOException {
+   private void startCluster() throws IOException {
+     mjc = new MiniJournalCluster.Builder(conf)
+       .build();
++    mjc.waitActive();
+     conf.set(DFS_NAMENODE_EDITS_DIR_KEY,
+       mjc.getQuorumJournalURI("myjournal").toString());
+     cluster = new MiniDFSCluster.Builder(conf)
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/qjournal/client/TestEpochsAreUnique.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/qjournal/client/TestEpochsAreUnique.java
+index bd9cf6f..d57e089 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/qjournal/client/TestEpochsAreUnique.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/qjournal/client/TestEpochsAreUnique.java
+@@ -51,6 +51,7 @@
+   public void testSingleThreaded() throws IOException {
+     Configuration conf = new Configuration();
+     MiniJournalCluster cluster = new MiniJournalCluster.Builder(conf).build();
++    cluster.waitActive();
+     URI uri = cluster.getQuorumJournalURI(JID);
+     QuorumJournalManager qjm = new QuorumJournalManager(
+         conf, uri, FAKE_NSINFO);
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/qjournal/client/TestQJMWithFaults.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/qjournal/client/TestQJMWithFaults.java
+index 2e38d5f..c6d7311 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/qjournal/client/TestQJMWithFaults.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/qjournal/client/TestQJMWithFaults.java
+@@ -99,6 +99,7 @@
+   private static long determineMaxIpcNumber() throws Exception {
+     Configuration conf = new Configuration();
+     MiniJournalCluster cluster = new MiniJournalCluster.Builder(conf).build();
++    cluster.waitActive();
+     QuorumJournalManager qjm = null;
+     long ret;
+     try {
+@@ -147,6 +148,7 @@ public void testRecoverAfterDoubleFailures() throws Exception {
+         
+         MiniJournalCluster cluster = new MiniJournalCluster.Builder(conf)
+           .build();
++        cluster.waitActive();
+         QuorumJournalManager qjm = null;
+         try {
+           qjm = createInjectableQJM(cluster);
+@@ -219,6 +221,7 @@ public void testRandomized() throws Exception {
+     
+     MiniJournalCluster cluster = new MiniJournalCluster.Builder(conf)
+       .build();
++    cluster.waitActive();
+     
+     // Format the cluster using a non-faulty QJM.
+     QuorumJournalManager qjmForInitialFormat =
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/qjournal/client/TestQuorumJournalManager.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/qjournal/client/TestQuorumJournalManager.java
+index 8bb39f8..82e8a86 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/qjournal/client/TestQuorumJournalManager.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/qjournal/client/TestQuorumJournalManager.java
+@@ -95,6 +95,7 @@ public void setup() throws Exception {
+     
+     cluster = new MiniJournalCluster.Builder(conf)
+       .build();
++    cluster.waitActive();
+     
+     qjm = createSpyingQJM();
+     spies = qjm.getLoggerSetForTests().getLoggersForTests();
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/qjournal/server/TestJournalNodeMXBean.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/qjournal/server/TestJournalNodeMXBean.java
+index 3471848..498ef71 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/qjournal/server/TestJournalNodeMXBean.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/qjournal/server/TestJournalNodeMXBean.java
+@@ -19,6 +19,7 @@
+ 
+ import static org.junit.Assert.assertEquals;
+ import static org.junit.Assert.assertFalse;
++import static org.junit.Assert.assertTrue;
+ 
+ import java.io.IOException;
+ import java.lang.management.ManagementFactory;
+@@ -52,6 +53,7 @@ public void setup() throws IOException {
+     // start 1 journal node
+     jCluster = new MiniJournalCluster.Builder(new Configuration()).format(true)
+         .numJournalNodes(NUM_JN).build();
++    jCluster.waitActive();
+     jn = jCluster.getJournalNode(0);
+   }
+   
+@@ -89,19 +91,19 @@ public void testJournalNodeMXBean() throws Exception {
+     Map<String, String> infoMap = new HashMap<String, String>();
+     infoMap.put("Formatted", "true");
+     jMap.put(NAMESERVICE, infoMap);
++    Map<String, String> infoMap1 = new HashMap<>();
++    infoMap1.put("Formatted", "false");
++    jMap.put(MiniJournalCluster.CLUSTER_WAITACTIVE_URI, infoMap1);
+     assertEquals(JSON.toString(jMap), journalStatus);
+     
+     // restart journal node without formatting
+     jCluster = new MiniJournalCluster.Builder(new Configuration()).format(false)
+         .numJournalNodes(NUM_JN).build();
++    jCluster.waitActive();
+     jn = jCluster.getJournalNode(0);
+     // re-check 
+     journalStatus = (String) mbs.getAttribute(mxbeanName, "JournalsStatus");
+     assertEquals(jn.getJournalsStatus(), journalStatus);
+-    jMap = new HashMap<String, Map<String, String>>();
+-    infoMap = new HashMap<String, String>();
+-    infoMap.put("Formatted", "true");
+-    jMap.put(NAMESERVICE, infoMap);
+     assertEquals(JSON.toString(jMap), journalStatus);
+   }
+ }
+-- 
+1.7.9.5
+

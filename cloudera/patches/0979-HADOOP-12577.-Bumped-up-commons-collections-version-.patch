@@ -1,0 +1,32 @@
+From 90b970e9badb856feb0184b393edde6a73fa899f Mon Sep 17 00:00:00 2001
+From: "Vinod Kumar Vavilapalli (I am also known as @tshooter.)"
+ <vinodkv@apache.org>
+Date: Mon, 23 Nov 2015 09:59:50 -0800
+Subject: [PATCH 0979/1023] HADOOP-12577. Bumped up commons-collections
+ version to 3.2.2 to address a security flaw.
+ Contributed by Wei-Chiu Chuang.
+
+(cherry picked from commit 70c26703f462e97361924eaf6cbf80be1fce309f)
+
+Change-Id: I3a4721ecf79803c44d4ef4329574c2d15fc129d1
+(cherry picked from commit d3a8480c4ca4c1ccac0cb9b91e5fb5796f8167e3)
+---
+ hadoop-project/pom.xml |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/hadoop-project/pom.xml b/hadoop-project/pom.xml
+index b626be2..ea7c128 100644
+--- a/hadoop-project/pom.xml
++++ b/hadoop-project/pom.xml
+@@ -700,7 +700,7 @@
+       <dependency>
+         <groupId>commons-collections</groupId>
+         <artifactId>commons-collections</artifactId>
+-        <version>3.2.1</version>
++        <version>3.2.2</version>
+       </dependency>
+       <dependency>
+         <groupId>commons-configuration</groupId>
+-- 
+1.7.9.5
+

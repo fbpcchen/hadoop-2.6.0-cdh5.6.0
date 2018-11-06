@@ -1,0 +1,67 @@
+From eb8b61cb46a403ca41c1e625545a391ac85c41d0 Mon Sep 17 00:00:00 2001
+From: Vinod Kumar Vavilapalli <vinodkv@apache.org>
+Date: Tue, 8 Sep 2015 16:45:38 -0700
+Subject: [PATCH 0845/1023] HDFS-8384. Allow NN to startup if there are files
+ having a lease but are not under construction.
+ Contributed by Jing Zhao.
+
+(cherry picked from commit 33537078a80822e64f25d62478732b01704b40c1)
+
+Change-Id: Ibf2bb7df7d375f8efe22443a38dfe889f4dca68e
+(cherry picked from commit e9cd4d82e21e5b3562c927e417383453a1e5bb4c)
+---
+ .../hadoop/hdfs/server/namenode/FSNamesystem.java  |    5 ++++-
+ .../hadoop/hdfs/server/namenode/LeaseManager.java  |   14 +++++++++++---
+ 2 files changed, 15 insertions(+), 4 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSNamesystem.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSNamesystem.java
+index 0b2d0e2..e929b89 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSNamesystem.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSNamesystem.java
+@@ -4735,7 +4735,10 @@ private void finalizeINodeFileUnderConstruction(String src,
+     assert hasWriteLock();
+ 
+     FileUnderConstructionFeature uc = pendingFile.getFileUnderConstructionFeature();
+-    Preconditions.checkArgument(uc != null);
++    if (uc == null) {
++      throw new IOException("Cannot finalize file " + src
++          + " because it is not under construction");
++    }
+     leaseManager.removeLease(uc.getClientName(), src);
+     
+     pendingFile.recordModification(latestSnapshot);
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/LeaseManager.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/LeaseManager.java
+index e13a5c6..55ce0bb 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/LeaseManager.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/LeaseManager.java
+@@ -116,7 +116,11 @@ synchronized long getNumUnderConstructionBlocks() {
+         final INodeFile cons;
+         try {
+           cons = this.fsnamesystem.getFSDirectory().getINode(path).asFile();
+-            Preconditions.checkState(cons.isUnderConstruction());
++          if (!cons.isUnderConstruction()) {
++            LOG.warn("The file " + cons.getFullPathName()
++                + " is not under construction but has lease.");
++            continue;
++          }
+         } catch (UnresolvedLinkException e) {
+           throw new AssertionError("Lease files should reside on this FS");
+         }
+@@ -444,8 +448,12 @@ public void run() {
+       // verify that path exists in namespace
+       try {
+         INodeFile node = INodeFile.valueOf(fsnamesystem.dir.getINode(p), p);
+-        Preconditions.checkState(node.isUnderConstruction());
+-        inodes.put(p, node);
++        if (node.isUnderConstruction()) {
++          inodes.put(p, node);
++        } else {
++          LOG.warn("Ignore the lease of file " + p
++              + " for checkpoint since the file is not under construction");
++        }
+       } catch (IOException ioe) {
+         LOG.error(ioe);
+       }
+-- 
+1.7.9.5
+

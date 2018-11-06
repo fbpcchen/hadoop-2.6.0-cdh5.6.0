@@ -1,0 +1,63 @@
+From e4cafc773954a34f5922456f08e3efbacbccca49 Mon Sep 17 00:00:00 2001
+From: Jason Lowe <jlowe@apache.org>
+Date: Fri, 8 May 2015 20:36:07 +0000
+Subject: [PATCH 0809/1023] HADOOP-7165. listLocatedStatus(path, filter) is
+ not redefined in FilterFs. Contributed by Hairong
+ Kuang (cherry picked from commit
+ c4bd2cddede779acfd3c5cdff16bf552068dfb64)
+
+(cherry picked from commit 4b96834e0de5df48b1688cc9ddc6fd2ede6982b1)
+
+Conflicts:
+	hadoop-common-project/hadoop-common/CHANGES.txt
+
+Change-Id: Ic0a84766164b38d0cac1c94591ab797f7afb15e1
+(cherry picked from commit f9beb430f8ac08d53da502f6262f48ac808a1455)
+---
+ .../org/apache/hadoop/fs/FilterFileSystem.java     |   10 +++++++++-
+ .../main/java/org/apache/hadoop/fs/FilterFs.java   |    8 ++++++++
+ 2 files changed, 17 insertions(+), 1 deletion(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/FilterFileSystem.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/FilterFileSystem.java
+index e729e67..8e36dee 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/FilterFileSystem.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/FilterFileSystem.java
+@@ -192,7 +192,15 @@ public FSDataOutputStream create(Path f,
+     return fs.create(f, permission,
+       flags, bufferSize, replication, blockSize, progress);
+   }
+-  
++
++  @Override
++  protected RemoteIterator<LocatedFileStatus> listLocatedStatus(final Path f,
++      final PathFilter filter)
++  throws FileNotFoundException, IOException {
++    return fs.listLocatedStatus(f, filter);
++  }
++
++
+   @Override
+   @Deprecated
+   public FSDataOutputStream createNonRecursive(Path f, FsPermission permission,
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/FilterFs.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/FilterFs.java
+index b6e1d96..c3e0691 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/FilterFs.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/FilterFs.java
+@@ -185,6 +185,14 @@ public String getUriPath(final Path p) {
+   }
+ 
+   @Override
++  public RemoteIterator<LocatedFileStatus> listLocatedStatus(final Path f)
++      throws AccessControlException, FileNotFoundException,
++             UnresolvedLinkException, IOException {
++    checkPath(f);
++    return myFs.listLocatedStatus(f);
++  }
++
++  @Override
+   public RemoteIterator<Path> listCorruptFileBlocks(Path path)
+     throws IOException {
+     return myFs.listCorruptFileBlocks(path);
+-- 
+1.7.9.5
+

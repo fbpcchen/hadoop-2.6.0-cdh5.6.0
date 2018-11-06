@@ -1,0 +1,105 @@
+From 68febff5520924b41143b5a7e6a91fd1b15f683e Mon Sep 17 00:00:00 2001
+From: Lei Xu <lei@apache.org>
+Date: Fri, 25 Sep 2015 15:50:19 -0700
+Subject: [PATCH 0850/1023] HDFS-9132. Pass genstamp to
+ ReplicaAccessorBuilder. (Colin Patrick McCabe via
+ Lei (Eddy) Xu)
+
+(cherry picked from commit 1a2870f6ff646d719930901ad2350f56904b13c2)
+
+Change-Id: I42e3aca46a1fd49b99dab928a1021052759188f5
+---
+ .../org/apache/hadoop/hdfs/BlockReaderFactory.java |    1 +
+ .../apache/hadoop/hdfs/ReplicaAccessorBuilder.java |    3 +++
+ .../hadoop/hdfs/TestExternalBlockReader.java       |   15 +++++++++++++++
+ 3 files changed, 19 insertions(+)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/BlockReaderFactory.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/BlockReaderFactory.java
+index bcd957a..a301f2c 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/BlockReaderFactory.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/BlockReaderFactory.java
+@@ -378,6 +378,7 @@ private BlockReader tryToCreateExternalBlockReader() {
+         ReplicaAccessor accessor = builder.
+             setAllowShortCircuitReads(allowShortCircuitLocalReads).
+             setBlock(block.getBlockId(), block.getBlockPoolId()).
++            setGenerationStamp(block.getGenerationStamp()).
+             setBlockAccessToken(tokenBytes).
+             setClientName(clientName).
+             setConfiguration(configuration).
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/ReplicaAccessorBuilder.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/ReplicaAccessorBuilder.java
+index 2905df1..14651f4 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/ReplicaAccessorBuilder.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/ReplicaAccessorBuilder.java
+@@ -36,6 +36,9 @@
+   public abstract ReplicaAccessorBuilder
+       setBlock(long blockId, String blockPoolId);
+ 
++  /** Set the genstamp of the block which is being opened. */
++  public abstract ReplicaAccessorBuilder setGenerationStamp(long genstamp);
++
+   /**
+    * Set whether checksums must be verified.  Checksums should be skipped if
+    * the user has disabled checksum verification in the configuration.  Users
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestExternalBlockReader.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestExternalBlockReader.java
+index cb9be75..408d092 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestExternalBlockReader.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestExternalBlockReader.java
+@@ -81,6 +81,7 @@ public void testMisconfiguredExternalBlockReader() throws Exception {
+     String fileName;
+     long blockId;
+     String blockPoolId;
++    long genstamp;
+     boolean verifyChecksum;
+     String clientName;
+     boolean allowShortCircuit;
+@@ -101,6 +102,12 @@ public ReplicaAccessorBuilder setBlock(long blockId, String blockPoolId) {
+     }
+ 
+     @Override
++    public ReplicaAccessorBuilder setGenerationStamp(long genstamp) {
++      this.genstamp = genstamp;
++      return this;
++    }
++
++    @Override
+     public ReplicaAccessorBuilder setVerifyChecksum(boolean verifyChecksum) {
+       this.verifyChecksum = verifyChecksum;
+       return this;
+@@ -154,12 +161,14 @@ public ReplicaAccessor build() {
+     int numCloses = 0;
+     String error = "";
+     String prefix = "";
++    final long genstamp;
+ 
+     SyntheticReplicaAccessor(SyntheticReplicaAccessorBuilder builder) {
+       this.length = builder.visibleLength;
+       this.contents = DFSTestUtil.
+           calculateFileContentsFromSeed(SEED, Ints.checkedCast(length));
+       this.builder = builder;
++      this.genstamp = builder.genstamp;
+       String uuid = this.builder.conf.
+           get(SYNTHETIC_BLOCK_READER_TEST_UUID_KEY);
+       LinkedList<SyntheticReplicaAccessor> accessorsList =
+@@ -241,6 +250,10 @@ synchronized String getError() {
+       return error;
+     }
+ 
++    long getGenerationStamp() {
++      return genstamp;
++    }
++
+     synchronized void addError(String text) {
+       LOG.error("SyntheticReplicaAccessor error: " + text);
+       error = error + prefix + text;
+@@ -290,6 +303,8 @@ public void testExternalBlockReader() throws Exception {
+       Assert.assertEquals(dfs.getClient().clientName,
+           accessor.builder.clientName);
+       Assert.assertEquals("/a", accessor.builder.fileName);
++      Assert.assertEquals(block.getGenerationStamp(),
++          accessor.getGenerationStamp());
+       Assert.assertTrue(accessor.builder.verifyChecksum);
+       Assert.assertEquals(1024L, accessor.builder.visibleLength);
+       Assert.assertEquals(1024L, accessor.totalRead);
+-- 
+1.7.9.5
+

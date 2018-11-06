@@ -1,0 +1,60 @@
+From a63549c152cb338c8d42f289c2db981965159172 Mon Sep 17 00:00:00 2001
+From: Kihwal Lee <kihwal@apache.org>
+Date: Thu, 26 Mar 2015 08:42:45 -0500
+Subject: [PATCH 0642/1023] HDFS-7963. Fix expected tracing spans in
+ TestTracing. Contributed by Masatake Iwasaki.
+
+(cherry picked from commit 071277b9cece8da9d891f525c4dd659f2a4949dd)
+---
+ .../org/apache/hadoop/tracing/TestTracing.java     |   28 ++++++++++++++++----
+ 1 file changed, 23 insertions(+), 5 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracing.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracing.java
+index 0bbd5b4..3720abe 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracing.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracing.java
+@@ -88,7 +88,10 @@ public void testWriteTraceHooks() throws Exception {
+       "ClientNamenodeProtocol#fsync",
+       "org.apache.hadoop.hdfs.protocol.ClientProtocol.complete",
+       "ClientNamenodeProtocol#complete",
+-      "DFSOutputStream",
++      "newStreamForCreate",
++      "DFSOutputStream#writeChunk",
++      "DFSOutputStream#close",
++      "dataStreamer",
+       "OpWriteBlockProto",
+       "org.apache.hadoop.hdfs.protocol.ClientProtocol.addBlock",
+       "ClientNamenodeProtocol#addBlock"
+@@ -102,10 +105,25 @@ public void testWriteTraceHooks() throws Exception {
+     long spanStart = s.getStartTimeMillis();
+     long spanEnd = s.getStopTimeMillis();
+ 
+-    // There should only be one trace id as it should all be homed in the
+-    // top trace.
+-    for (Span span : SetSpanReceiver.SetHolder.spans.values()) {
+-      Assert.assertEquals(ts.getSpan().getTraceId(), span.getTraceId());
++    // Spans homed in the top trace shoud have same trace id.
++    // Spans having multiple parents (e.g. "dataStreamer" added by HDFS-7054)
++    // and children of them are exception.
++    String[] spansInTopTrace = {
++      "testWriteTraceHooks",
++      "org.apache.hadoop.hdfs.protocol.ClientProtocol.create",
++      "ClientNamenodeProtocol#create",
++      "org.apache.hadoop.hdfs.protocol.ClientProtocol.fsync",
++      "ClientNamenodeProtocol#fsync",
++      "org.apache.hadoop.hdfs.protocol.ClientProtocol.complete",
++      "ClientNamenodeProtocol#complete",
++      "newStreamForCreate",
++      "DFSOutputStream#writeChunk",
++      "DFSOutputStream#close",
++    };
++    for (String desc : spansInTopTrace) {
++      for (Span span : map.get(desc)) {
++        Assert.assertEquals(ts.getSpan().getTraceId(), span.getTraceId());
++      }
+     }
+   }
+ 
+-- 
+1.7.9.5
+

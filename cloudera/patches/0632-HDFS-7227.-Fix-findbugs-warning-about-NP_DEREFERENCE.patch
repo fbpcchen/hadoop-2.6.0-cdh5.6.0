@@ -1,0 +1,38 @@
+From 577f82a15d18fb64dfe039ec50e7c8e7a727f440 Mon Sep 17 00:00:00 2001
+From: Colin Patrick Mccabe <cmccabe@cloudera.com>
+Date: Thu, 23 Oct 2014 13:25:39 -0700
+Subject: [PATCH 0632/1023] HDFS-7227. Fix findbugs warning about
+ NP_DEREFERENCE_OF_READLINE_VALUE in
+ SpanReceiverHost (cmccabe)
+
+(cherry picked from commit 7ab754545dca16518e8fe9353ef69b77f365426b)
+(cherry picked from commit a36fd8867107d78feefc8db3ee8bc7c3f63ee5c8)
+---
+ .../apache/hadoop/tracing/SpanReceiverHost.java    |    4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/tracing/SpanReceiverHost.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/tracing/SpanReceiverHost.java
+index 13c92ac..81993e9 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/tracing/SpanReceiverHost.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/tracing/SpanReceiverHost.java
+@@ -19,6 +19,7 @@
+ 
+ import java.io.BufferedReader;
+ import java.io.DataInputStream;
++import java.io.EOFException;
+ import java.io.File;
+ import java.io.FileInputStream;
+ import java.io.IOException;
+@@ -101,6 +102,9 @@ private static String getUniqueLocalTraceFileName() {
+       reader = new BufferedReader(
+           new InputStreamReader(new FileInputStream("/proc/self/stat")));
+       String line = reader.readLine();
++      if (line == null) {
++        throw new EOFException();
++      }
+       nonce = line.split(" ")[0];
+     } catch (IOException e) {
+     } finally {
+-- 
+1.7.9.5
+

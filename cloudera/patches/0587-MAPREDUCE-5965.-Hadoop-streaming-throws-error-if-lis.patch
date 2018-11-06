@@ -1,0 +1,71 @@
+From ae4158e9825798797173f13baff776150fd07a5e Mon Sep 17 00:00:00 2001
+From: Robert Kanter <rkanter@apache.org>
+Date: Wed, 3 Jun 2015 18:41:45 -0700
+Subject: [PATCH 0587/1023] MAPREDUCE-5965. Hadoop streaming throws error if
+ list of input files is high. Error is: "error=7,
+ Argument list too long at if number of input file
+ is high" (wilfreds via rkanter)
+
+(cherry picked from commit cc70df98e74142331043a611a3bd8a53ff6a2242)
+---
+ .../org/apache/hadoop/streaming/PipeMapRed.java    |   19 +++++++++++--------
+ .../org/apache/hadoop/streaming/StreamJob.java     |    5 ++++-
+ 2 files changed, 15 insertions(+), 9 deletions(-)
+
+diff --git a/hadoop-tools/hadoop-streaming/src/main/java/org/apache/hadoop/streaming/PipeMapRed.java b/hadoop-tools/hadoop-streaming/src/main/java/org/apache/hadoop/streaming/PipeMapRed.java
+index f47e756..77c7252 100644
+--- a/hadoop-tools/hadoop-streaming/src/main/java/org/apache/hadoop/streaming/PipeMapRed.java
++++ b/hadoop-tools/hadoop-streaming/src/main/java/org/apache/hadoop/streaming/PipeMapRed.java
+@@ -19,8 +19,7 @@
+ package org.apache.hadoop.streaming;
+ 
+ import java.io.*;
+-import java.util.Map;
+-import java.util.Iterator;
++import java.util.Map.Entry;
+ import java.util.Arrays;
+ import java.util.ArrayList;
+ import java.util.Properties;
+@@ -238,13 +237,17 @@ void setStreamJobDetails(JobConf job) {
+   void addJobConfToEnvironment(JobConf jobconf, Properties env) {
+     JobConf conf = new JobConf(jobconf);
+     conf.setDeprecatedProperties();
+-    Iterator it = conf.iterator();
+-    while (it.hasNext()) {
+-      Map.Entry en = (Map.Entry) it.next();
+-      String name = (String) en.getKey();
+-      //String value = (String)en.getValue(); // does not apply variable expansion
+-      String value = conf.get(name); // does variable expansion 
++    int lenLimit = conf.getInt("stream.jobconf.truncate.limit", -1);
++
++    for (Entry<String, String> confEntry: conf) {
++      String name = confEntry.getKey();
++      String value = conf.get(name); // does variable expansion
+       name = safeEnvVarName(name);
++      if (lenLimit > -1  && value.length() > lenLimit) {
++        LOG.warn("Environment variable " + name + " truncated to " + lenLimit
++            + " to  fit system limits.");
++        value = value.substring(0, lenLimit);
++      }
+       envPut(env, name, value);
+     }
+   }
+diff --git a/hadoop-tools/hadoop-streaming/src/main/java/org/apache/hadoop/streaming/StreamJob.java b/hadoop-tools/hadoop-streaming/src/main/java/org/apache/hadoop/streaming/StreamJob.java
+index 7ff5641..118e0fb 100644
+--- a/hadoop-tools/hadoop-streaming/src/main/java/org/apache/hadoop/streaming/StreamJob.java
++++ b/hadoop-tools/hadoop-streaming/src/main/java/org/apache/hadoop/streaming/StreamJob.java
+@@ -617,7 +617,10 @@ private void printUsage(boolean detailed) {
+         "/path/my-hadoop-streaming.jar");
+     System.out.println("For more details about jobconf parameters see:");
+     System.out.println("  http://wiki.apache.org/hadoop/JobConfFile");
+-    System.out.println("To set an environement variable in a streaming " +
++    System.out.println("Truncate the values of the job configuration copied" +
++        "to the environment at the given length:");
++    System.out.println("   -D stream.jobconf.truncate.limit=-1");
++    System.out.println("To set an environment variable in a streaming " +
+         "command:");
+     System.out.println("   -cmdenv EXAMPLE_DIR=/home/example/dictionaries/");
+     System.out.println();
+-- 
+1.7.9.5
+

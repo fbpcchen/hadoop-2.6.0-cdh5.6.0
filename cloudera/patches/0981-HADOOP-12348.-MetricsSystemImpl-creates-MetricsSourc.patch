@@ -1,0 +1,124 @@
+From 333316b4cca4b821af1c9334a97da6c2105fd1f6 Mon Sep 17 00:00:00 2001
+From: Robert Kanter <rkanter@apache.org>
+Date: Fri, 11 Sep 2015 15:21:22 -0700
+Subject: [PATCH 0981/1023] HADOOP-12348. MetricsSystemImpl creates
+ MetricsSourceAdapter with wrong time unit
+ parameter. (zxu via rkanter)
+
+(cherry picked from commit 764f8baa99de35a0ced297b19b0cbe090c615a3b)
+
+Change-Id: Ic6528d942af9e2f14105f57be0a11c0d3676310f
+---
+ .../hadoop/metrics2/impl/MetricsSourceAdapter.java |   12 ++++++++----
+ .../hadoop/metrics2/impl/MetricsSystemImpl.java    |   12 +++++-------
+ .../metrics2/impl/TestMetricsSystemImpl.java       |   13 +++++++++++++
+ 3 files changed, 26 insertions(+), 11 deletions(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/metrics2/impl/MetricsSourceAdapter.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/metrics2/impl/MetricsSourceAdapter.java
+index b0b758c..10d46b1 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/metrics2/impl/MetricsSourceAdapter.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/metrics2/impl/MetricsSourceAdapter.java
+@@ -61,7 +61,7 @@
+ 
+   private Iterable<MetricsRecordImpl> lastRecs;
+   private long jmxCacheTS = 0;
+-  private int jmxCacheTTL;
++  private long jmxCacheTTL;
+   private MBeanInfo infoCache;
+   private ObjectName mbeanName;
+   private final boolean startMBeans;
+@@ -69,7 +69,7 @@
+   MetricsSourceAdapter(String prefix, String name, String description,
+                        MetricsSource source, Iterable<MetricsTag> injectedTags,
+                        MetricsFilter recordFilter, MetricsFilter metricFilter,
+-                       int jmxCacheTTL, boolean startMBeans) {
++                       long jmxCacheTTL, boolean startMBeans) {
+     this.prefix = checkNotNull(prefix, "prefix");
+     this.name = checkNotNull(name, "name");
+     this.source = checkNotNull(source, "source");
+@@ -84,7 +84,7 @@
+ 
+   MetricsSourceAdapter(String prefix, String name, String description,
+                        MetricsSource source, Iterable<MetricsTag> injectedTags,
+-                       int period, MetricsConfig conf) {
++                       long period, MetricsConfig conf) {
+     this(prefix, name, description, source, injectedTags,
+          conf.getFilter(RECORD_FILTER_KEY),
+          conf.getFilter(METRIC_FILTER_KEY),
+@@ -233,7 +233,11 @@ ObjectName getMBeanName() {
+     return mbeanName;
+   }
+ 
+-  
++  @VisibleForTesting
++  long getJmxCacheTTL() {
++    return jmxCacheTTL;
++  }
++
+   private void updateInfoCache() {
+     LOG.debug("Updating info cache...");
+     infoCache = infoBuilder.reset(lastRecs).get();
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/metrics2/impl/MetricsSystemImpl.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/metrics2/impl/MetricsSystemImpl.java
+index 4507e35..f7b26e5 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/metrics2/impl/MetricsSystemImpl.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/metrics2/impl/MetricsSystemImpl.java
+@@ -260,11 +260,9 @@ void unregisterSource(String name) {
+   void registerSource(String name, String desc, MetricsSource source) {
+     checkNotNull(config, "config");
+     MetricsConfig conf = sourceConfigs.get(name);
+-    MetricsSourceAdapter sa = conf != null
+-        ? new MetricsSourceAdapter(prefix, name, desc, source,
+-                                   injectedTags, period, conf)
+-        : new MetricsSourceAdapter(prefix, name, desc, source,
+-          injectedTags, period, config.subset(SOURCE_KEY));
++    MetricsSourceAdapter sa = new MetricsSourceAdapter(prefix, name, desc,
++        source, injectedTags, period * 1000L, conf != null ? conf
++            : config.subset(SOURCE_KEY));
+     sources.put(name, sa);
+     sa.start();
+     LOG.debug("Registered source "+ name);
+@@ -361,7 +359,7 @@ private synchronized void startTimer() {
+       return;
+     }
+     logicalTime = 0;
+-    long millis = period * 1000;
++    long millis = period * 1000L;
+     timer = new Timer("Timer for '"+ prefix +"' metrics system", true);
+     timer.scheduleAtFixedRate(new TimerTask() {
+           public void run() {
+@@ -554,7 +552,7 @@ static String getHostname() {
+   private void registerSystemSource() {
+     MetricsConfig sysConf = sourceConfigs.get(MS_NAME);
+     sysSource = new MetricsSourceAdapter(prefix, MS_STATS_NAME, MS_STATS_DESC,
+-        MetricsAnnotations.makeSource(this), injectedTags, period,
++        MetricsAnnotations.makeSource(this), injectedTags, period * 1000L,
+         sysConf == null ? config.subset(SOURCE_KEY) : sysConf);
+     sysSource.start();
+   }
+diff --git a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/metrics2/impl/TestMetricsSystemImpl.java b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/metrics2/impl/TestMetricsSystemImpl.java
+index b5ebb93..09c9ca4 100644
+--- a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/metrics2/impl/TestMetricsSystemImpl.java
++++ b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/metrics2/impl/TestMetricsSystemImpl.java
+@@ -494,6 +494,19 @@ public void testHangOnSinkRead() throws Exception {
+     }
+   }
+ 
++  @Test
++  public void testRegisterSourceJmxCacheTTL() {
++    MetricsSystem ms = new MetricsSystemImpl();
++    ms.init("TestMetricsSystem");
++    TestSource ts = new TestSource("ts");
++    ms.register(ts);
++    MetricsSourceAdapter sa = ((MetricsSystemImpl) ms)
++        .getSourceAdapter("TestSource");
++    assertEquals(MetricsConfig.PERIOD_DEFAULT * 1000 + 1,
++        sa.getJmxCacheTTL());
++    ms.shutdown();
++  }
++
+   @Metrics(context="test")
+   private static class TestSource {
+     @Metric("C1 desc") MutableCounterLong c1;
+-- 
+1.7.9.5
+

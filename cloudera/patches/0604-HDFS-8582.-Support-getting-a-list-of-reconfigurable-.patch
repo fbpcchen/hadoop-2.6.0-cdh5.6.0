@@ -1,0 +1,578 @@
+From 721d2357fe4c201264301a1e560e872781857d0b Mon Sep 17 00:00:00 2001
+From: Colin Patrick Mccabe <cmccabe@cloudera.com>
+Date: Fri, 19 Jun 2015 19:14:05 -0700
+Subject: [PATCH 0604/1023] HDFS-8582. Support getting a list of
+ reconfigurable config properties and do not
+ generate spurious reconfig warnings (Lei (Eddy)
+ Xu via Colin P.  McCabe)
+
+(cherry picked from commit d112d183242f447d4b742139f3a4ea531a997f45)
+(cherry picked from commit c94579f845d8f1e58475d00d20b3298e1361f6cd)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/tools/DFSAdmin.java
+---
+ .../org/apache/hadoop/conf/ReconfigurableBase.java |   14 ++-
+ .../apache/hadoop/conf/TestReconfiguration.java    |   12 +-
+ .../hdfs/protocol/ClientDatanodeProtocol.java      |    5 +
+ ...ientDatanodeProtocolServerSideTranslatorPB.java |   19 ++++
+ .../ClientDatanodeProtocolTranslatorPB.java        |   19 +++-
+ .../hadoop/hdfs/server/datanode/DataNode.java      |   22 +++-
+ .../org/apache/hadoop/hdfs/tools/DFSAdmin.java     |   59 ++++++++--
+ .../src/main/proto/ClientDatanodeProtocol.proto    |   12 ++
+ .../org/apache/hadoop/hdfs/tools/TestDFSAdmin.java |  117 +++++++++++++++-----
+ 9 files changed, 229 insertions(+), 50 deletions(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/conf/ReconfigurableBase.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/conf/ReconfigurableBase.java
+index 3664549..e50b85a 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/conf/ReconfigurableBase.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/conf/ReconfigurableBase.java
+@@ -88,6 +88,11 @@ public void setReconfigurationUtil(ReconfigurationUtil ru) {
+     reconfigurationUtil = Preconditions.checkNotNull(ru);
+   }
+ 
++  /**
++   * Create a new configuration.
++   */
++  protected abstract Configuration getNewConf();
++
+   @VisibleForTesting
+   public Collection<PropertyChange> getChangedProperties(
+       Configuration newConf, Configuration oldConf) {
+@@ -108,17 +113,16 @@ public void setReconfigurationUtil(ReconfigurationUtil ru) {
+     public void run() {
+       LOG.info("Starting reconfiguration task.");
+       Configuration oldConf = this.parent.getConf();
+-      Configuration newConf = new Configuration();
++      Configuration newConf = this.parent.getNewConf();
+       Collection<PropertyChange> changes =
+           this.parent.getChangedProperties(newConf, oldConf);
+       Map<PropertyChange, Optional<String>> results = Maps.newHashMap();
+       for (PropertyChange change : changes) {
+         String errorMessage = null;
+         if (!this.parent.isPropertyReconfigurable(change.prop)) {
+-          errorMessage = "Property " + change.prop +
+-              " is not reconfigurable";
+-          LOG.info(errorMessage);
+-          results.put(change, Optional.of(errorMessage));
++          LOG.info(String.format(
++              "Property %s is not configurable: old value: %s, new value: %s",
++              change.prop, change.oldVal, change.newVal));
+           continue;
+         }
+         LOG.info("Change property: " + change.prop + " from \""
+diff --git a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/conf/TestReconfiguration.java b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/conf/TestReconfiguration.java
+index 238ebda..5f0516ae 100644
+--- a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/conf/TestReconfiguration.java
++++ b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/conf/TestReconfiguration.java
+@@ -118,6 +118,11 @@ public ReconfigurableDummy(Configuration conf) {
+       super(conf);
+     }
+ 
++    @Override
++    protected Configuration getNewConf() {
++      return new Configuration();
++    }
++
+     @Override 
+     public Collection<String> getReconfigurableProperties() {
+       return Arrays.asList(PROP1, PROP2, PROP4);
+@@ -336,6 +341,11 @@ public void testThread() throws ReconfigurationException {
+       super(conf);
+     }
+ 
++    @Override
++    protected Configuration getNewConf() {
++      return new Configuration();
++    }
++
+     final CountDownLatch latch = new CountDownLatch(1);
+ 
+     @Override
+@@ -397,7 +407,7 @@ public void testAsyncReconfigure()
+ 
+     waitAsyncReconfigureTaskFinish(dummy);
+     ReconfigurationTaskStatus status = dummy.getReconfigurationTaskStatus();
+-    assertEquals(3, status.getStatus().size());
++    assertEquals(2, status.getStatus().size());
+     for (Map.Entry<PropertyChange, Optional<String>> result :
+         status.getStatus().entrySet()) {
+       PropertyChange change = result.getKey();
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/ClientDatanodeProtocol.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/ClientDatanodeProtocol.java
+index 1dcc196..3cf3292 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/ClientDatanodeProtocol.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/ClientDatanodeProtocol.java
+@@ -161,6 +161,11 @@ HdfsBlocksMetadata getHdfsBlocksMetadata(String blockPoolId,
+   ReconfigurationTaskStatus getReconfigurationStatus() throws IOException;
+ 
+   /**
++   * Get a list of allowed properties for reconfiguration.
++   */
++  List<String> listReconfigurableProperties() throws IOException;
++
++  /**
+    * Trigger a new block report.
+    */
+   void triggerBlockReport(BlockReportOptions options)
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocolPB/ClientDatanodeProtocolServerSideTranslatorPB.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocolPB/ClientDatanodeProtocolServerSideTranslatorPB.java
+index 5c2c4a7..2bc6a18 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocolPB/ClientDatanodeProtocolServerSideTranslatorPB.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocolPB/ClientDatanodeProtocolServerSideTranslatorPB.java
+@@ -44,6 +44,8 @@
+ import org.apache.hadoop.hdfs.protocol.proto.ClientDatanodeProtocolProtos.GetHdfsBlockLocationsResponseProto.Builder;
+ import org.apache.hadoop.hdfs.protocol.proto.ClientDatanodeProtocolProtos.GetReplicaVisibleLengthRequestProto;
+ import org.apache.hadoop.hdfs.protocol.proto.ClientDatanodeProtocolProtos.GetReplicaVisibleLengthResponseProto;
++import org.apache.hadoop.hdfs.protocol.proto.ClientDatanodeProtocolProtos.ListReconfigurablePropertiesRequestProto;
++import org.apache.hadoop.hdfs.protocol.proto.ClientDatanodeProtocolProtos.ListReconfigurablePropertiesResponseProto;
+ import org.apache.hadoop.hdfs.protocol.proto.ClientDatanodeProtocolProtos.RefreshNamenodesRequestProto;
+ import org.apache.hadoop.hdfs.protocol.proto.ClientDatanodeProtocolProtos.RefreshNamenodesResponseProto;
+ import org.apache.hadoop.hdfs.protocol.proto.ClientDatanodeProtocolProtos.ShutdownDatanodeRequestProto;
+@@ -209,6 +211,23 @@ public StartReconfigurationResponseProto startReconfiguration(
+   }
+ 
+   @Override
++  public ListReconfigurablePropertiesResponseProto listReconfigurableProperties(
++        RpcController controller,
++        ListReconfigurablePropertiesRequestProto request)
++      throws ServiceException {
++    ListReconfigurablePropertiesResponseProto.Builder builder =
++        ListReconfigurablePropertiesResponseProto.newBuilder();
++    try {
++      for (String name : impl.listReconfigurableProperties()) {
++        builder.addName(name);
++      }
++    } catch (IOException e) {
++      throw new ServiceException(e);
++    }
++    return builder.build();
++  }
++
++  @Override
+   public GetReconfigurationStatusResponseProto getReconfigurationStatus(
+       RpcController unused, GetReconfigurationStatusRequestProto request)
+       throws ServiceException {
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocolPB/ClientDatanodeProtocolTranslatorPB.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocolPB/ClientDatanodeProtocolTranslatorPB.java
+index f1a1b24..9d6375b 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocolPB/ClientDatanodeProtocolTranslatorPB.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocolPB/ClientDatanodeProtocolTranslatorPB.java
+@@ -52,6 +52,8 @@
+ import org.apache.hadoop.hdfs.protocol.proto.ClientDatanodeProtocolProtos.GetHdfsBlockLocationsRequestProto;
+ import org.apache.hadoop.hdfs.protocol.proto.ClientDatanodeProtocolProtos.GetHdfsBlockLocationsResponseProto;
+ import org.apache.hadoop.hdfs.protocol.proto.ClientDatanodeProtocolProtos.GetReplicaVisibleLengthRequestProto;
++import org.apache.hadoop.hdfs.protocol.proto.ClientDatanodeProtocolProtos.ListReconfigurablePropertiesRequestProto;
++import org.apache.hadoop.hdfs.protocol.proto.ClientDatanodeProtocolProtos.ListReconfigurablePropertiesResponseProto;
+ import org.apache.hadoop.hdfs.protocol.proto.ClientDatanodeProtocolProtos.RefreshNamenodesRequestProto;
+ import org.apache.hadoop.hdfs.protocol.proto.ClientDatanodeProtocolProtos.GetReconfigurationStatusRequestProto;
+ import org.apache.hadoop.hdfs.protocol.proto.ClientDatanodeProtocolProtos.GetReconfigurationStatusResponseProto;
+@@ -59,7 +61,6 @@
+ import org.apache.hadoop.hdfs.protocol.proto.ClientDatanodeProtocolProtos.ShutdownDatanodeRequestProto;
+ import org.apache.hadoop.hdfs.protocol.proto.ClientDatanodeProtocolProtos.StartReconfigurationRequestProto;
+ import org.apache.hadoop.hdfs.protocol.proto.ClientDatanodeProtocolProtos.TriggerBlockReportRequestProto;
+-import org.apache.hadoop.hdfs.protocol.proto.ClientDatanodeProtocolProtos.TriggerBlockReportResponseProto;
+ import org.apache.hadoop.hdfs.security.token.block.BlockTokenIdentifier;
+ import org.apache.hadoop.ipc.ProtobufHelper;
+ import org.apache.hadoop.ipc.ProtobufRpcEngine;
+@@ -101,6 +102,9 @@
+       GetReconfigurationStatusRequestProto.newBuilder().build();
+   private final static StartReconfigurationRequestProto VOID_START_RECONFIG =
+       StartReconfigurationRequestProto.newBuilder().build();
++  private static final ListReconfigurablePropertiesRequestProto
++      VOID_LIST_RECONFIGURABLE_PROPERTIES =
++      ListReconfigurablePropertiesRequestProto.newBuilder().build();
+ 
+   public ClientDatanodeProtocolTranslatorPB(DatanodeID datanodeid,
+       Configuration conf, int socketTimeout, boolean connectToDnViaHostname,
+@@ -338,6 +342,19 @@ public ReconfigurationTaskStatus getReconfigurationStatus() throws IOException {
+   }
+ 
+   @Override
++  public List<String> listReconfigurableProperties()
++      throws IOException {
++    ListReconfigurablePropertiesResponseProto response;
++    try {
++      response = rpcProxy.listReconfigurableProperties(NULL_CONTROLLER,
++          VOID_LIST_RECONFIGURABLE_PROPERTIES);
++      return response.getNameList();
++    } catch (ServiceException e) {
++      throw ProtobufHelper.getRemoteException(e);
++    }
++  }
++
++  @Override
+   public void triggerBlockReport(BlockReportOptions options)
+       throws IOException {
+     try {
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java
+index 0000c9e..4c4bb2b 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java
+@@ -279,6 +279,11 @@
+ 
+   static final int CURRENT_BLOCK_FORMAT_VERSION = 1;
+ 
++  /** A list of property that are reconfigurable at runtime. */
++  private static final List<String> RECONFIGURABLE_PROPERTIES =
++      Collections.unmodifiableList(
++          Arrays.asList(DFS_DATANODE_DATA_DIR_KEY));
++
+   /**
+    * Use {@link NetUtils#createSocketAddr(String)} instead.
+    */
+@@ -448,6 +453,11 @@ public static InetSocketAddress createSocketAddr(String target) {
+             });
+   }
+ 
++  @Override  // ReconfigurableBase
++  protected Configuration getNewConf() {
++    return new HdfsConfiguration();
++  }
++
+   @Override
+   public void reconfigurePropertyImpl(String property, String newVal)
+       throws ReconfigurationException {
+@@ -468,11 +478,9 @@ public void reconfigurePropertyImpl(String property, String newVal)
+   /**
+    * Get a list of the keys of the re-configurable properties in configuration.
+    */
+-  @Override
++  @Override // Reconfigurable
+   public Collection<String> getReconfigurableProperties() {
+-    List<String> reconfigurable =
+-        Collections.unmodifiableList(Arrays.asList(DFS_DATANODE_DATA_DIR_KEY));
+-    return reconfigurable;
++    return RECONFIGURABLE_PROPERTIES;
+   }
+ 
+   /**
+@@ -3046,6 +3054,12 @@ public ReconfigurationTaskStatus getReconfigurationStatus() throws IOException {
+   }
+ 
+   @Override // ClientDatanodeProtocol
++  public List<String> listReconfigurableProperties()
++      throws IOException {
++    return RECONFIGURABLE_PROPERTIES;
++  }
++
++  @Override // ClientDatanodeProtocol
+   public void triggerBlockReport(BlockReportOptions options)
+       throws IOException {
+     checkSuperuserPrivilege();
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/tools/DFSAdmin.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/tools/DFSAdmin.java
+index e64c09a..2cb275c 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/tools/DFSAdmin.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/tools/DFSAdmin.java
+@@ -384,7 +384,7 @@ static int run(DistributedFileSystem dfs, String[] argv, int idx) throws IOExcep
+     "\t[-refreshSuperUserGroupsConfiguration]\n" +
+     "\t[-refreshCallQueue]\n" +
+     "\t[-refresh <host:ipc_port> <key> [arg1..argn]\n" +
+-    "\t[-reconfig <datanode|...> <host:ipc_port> <start|status>]\n" +
++    "\t[-reconfig <datanode|...> <host:ipc_port> <start|status|properties>]\n" +
+     "\t[-printTopology]\n" +
+     "\t[-refreshNamenodes datanode_host:ipc_port]\n"+
+     "\t[-deleteBlockPool datanode_host:ipc_port blockpoolId [force]]\n"+
+@@ -928,8 +928,9 @@ private void printHelp(String cmd) {
+ 
+     String refreshCallQueue = "-refreshCallQueue: Reload the call queue from config\n";
+ 
+-    String reconfig = "-reconfig <datanode|...> <host:ipc_port> <start|status>:\n" +
+-        "\tStarts reconfiguration or gets the status of an ongoing reconfiguration.\n" +
++    String reconfig = "-reconfig <datanode|...> <host:ipc_port> <start|status|properties>:\n" +
++        "\tStarts or gets the status of a reconfiguration operation, \n" +
++        "\tor gets a list of reconfigurable properties.\n" +
+         "\tThe second parameter specifies the node type.\n" +
+         "\tCurrently, only reloading DataNode's configuration is supported.\n";
+ 
+@@ -1388,6 +1389,9 @@ public int reconfig(String[] argv, int i) throws IOException {
+       return startReconfiguration(nodeType, address);
+     } else if ("status".equals(op)) {
+       return getReconfigurationStatus(nodeType, address, System.out, System.err);
++    } else if ("properties".equals(op)) {
++      return getReconfigurableProperties(
++          nodeType, address, System.out, System.err);
+     }
+     System.err.println("Unknown operation: " + op);
+     return -1;
+@@ -1425,18 +1429,24 @@ int getReconfigurationStatus(String nodeType, String address,
+ 
+         out.println(" and finished at " +
+             new Date(status.getEndTime()).toString() + ".");
++        if (status.getStatus() == null) {
++          // Nothing to report.
++          return 0;
++        }
+         for (Map.Entry<PropertyChange, Optional<String>> result :
+             status.getStatus().entrySet()) {
+           if (!result.getValue().isPresent()) {
+-            out.print("SUCCESS: ");
++            out.printf(
++                "SUCCESS: Changed property %s%n\tFrom: \"%s\"%n\tTo: \"%s\"%n",
++                result.getKey().prop, result.getKey().oldVal,
++                result.getKey().newVal);
+           } else {
+-            out.print("FAILED: ");
+-          }
+-          out.printf("Change property %s\n\tFrom: \"%s\"\n\tTo: \"%s\"\n",
+-              result.getKey().prop, result.getKey().oldVal,
+-              result.getKey().newVal);
+-          if (result.getValue().isPresent()) {
+-            out.println("\tError: " + result.getValue().get() + ".");
++            final String errorMsg = result.getValue().get();
++            out.printf(
++                  "FAILED: Change property %s%n\tFrom: \"%s\"%n\tTo: \"%s\"%n",
++                  result.getKey().prop, result.getKey().oldVal,
++                  result.getKey().newVal);
++            out.println("\tError: " + errorMsg + ".");
+           }
+         }
+       } catch (IOException e) {
+@@ -1444,7 +1454,32 @@ int getReconfigurationStatus(String nodeType, String address,
+         return 1;
+       }
+     } else {
+-      err.println("Node type " + nodeType + " does not support reconfiguration.");
++      err.println("Node type " + nodeType +
++          " does not support reconfiguration.");
++      return 1;
++    }
++    return 0;
++  }
++
++  int getReconfigurableProperties(String nodeType, String address,
++      PrintStream out, PrintStream err) throws IOException {
++    if ("datanode".equals(nodeType)) {
++      ClientDatanodeProtocol dnProxy = getDataNodeProxy(address);
++      try {
++        List<String> properties =
++            dnProxy.listReconfigurableProperties();
++        out.println(
++            "Configuration properties that are allowed to be reconfigured:");
++        for (String name : properties) {
++          out.println(name);
++        }
++      } catch (IOException e) {
++        err.println("DataNode reconfiguration: " + e + ".");
++        return 1;
++      }
++    } else {
++      err.println("Node type " + nodeType +
++          " does not support reconfiguration.");
+       return 1;
+     }
+     return 0;
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/proto/ClientDatanodeProtocol.proto b/hadoop-hdfs-project/hadoop-hdfs/src/main/proto/ClientDatanodeProtocol.proto
+index 48f6dd1..e0d1f5f 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/proto/ClientDatanodeProtocol.proto
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/proto/ClientDatanodeProtocol.proto
+@@ -180,6 +180,14 @@ message GetReconfigurationStatusResponseProto {
+   repeated GetReconfigurationStatusConfigChangeProto changes = 3;
+ }
+ 
++message ListReconfigurablePropertiesRequestProto {
++}
++
++/** Query the reconfigurable properties on DataNode. */
++message ListReconfigurablePropertiesResponseProto {
++  repeated string name = 1;
++}
++
+ /**
+  * Protocol used from client to the Datanode.
+  * See the request and response for details of rpc call.
+@@ -230,6 +238,10 @@ service ClientDatanodeProtocolService {
+   rpc startReconfiguration(StartReconfigurationRequestProto)
+       returns(StartReconfigurationResponseProto);
+ 
++  rpc listReconfigurableProperties(
++      ListReconfigurablePropertiesRequestProto)
++      returns(ListReconfigurablePropertiesResponseProto);
++
+   rpc triggerBlockReport(TriggerBlockReportRequestProto)
+       returns(TriggerBlockReportResponseProto);
+ }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/tools/TestDFSAdmin.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/tools/TestDFSAdmin.java
+index 9758955..a2b5638 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/tools/TestDFSAdmin.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/tools/TestDFSAdmin.java
+@@ -22,6 +22,7 @@
+ import com.google.common.collect.Lists;
+ import org.apache.hadoop.conf.Configuration;
+ import org.apache.hadoop.conf.ReconfigurationUtil;
++import org.apache.hadoop.hdfs.DFSConfigKeys;
+ import org.apache.hadoop.hdfs.MiniDFSCluster;
+ import org.apache.hadoop.hdfs.server.common.Storage;
+ import org.apache.hadoop.hdfs.server.datanode.DataNode;
+@@ -42,6 +43,7 @@
+ import static org.hamcrest.CoreMatchers.anyOf;
+ import static org.hamcrest.CoreMatchers.is;
+ import static org.hamcrest.CoreMatchers.not;
++import static org.junit.Assert.assertEquals;
+ import static org.junit.Assert.assertThat;
+ import static org.junit.Assert.assertTrue;
+ import static org.hamcrest.CoreMatchers.containsString;
+@@ -50,18 +52,17 @@
+ import static org.mockito.Mockito.when;
+ 
+ public class TestDFSAdmin {
++  private Configuration conf = null;
+   private MiniDFSCluster cluster;
+   private DFSAdmin admin;
+   private DataNode datanode;
+ 
+   @Before
+   public void setUp() throws Exception {
+-    Configuration conf = new Configuration();
+-    cluster = new MiniDFSCluster.Builder(conf).numDataNodes(1).build();
+-    cluster.waitActive();
++    conf = new Configuration();
++    restartCluster();
+ 
+     admin = new DFSAdmin();
+-    datanode = cluster.getDataNodes().get(0);
+   }
+ 
+   @After
+@@ -72,6 +73,15 @@ public void tearDown() throws Exception {
+     }
+   }
+ 
++  private void restartCluster() throws IOException {
++    if (cluster != null) {
++      cluster.shutdown();
++    }
++    cluster = new MiniDFSCluster.Builder(conf).numDataNodes(1).build();
++    cluster.waitActive();
++    datanode = cluster.getDataNodes().get(0);
++  }
++
+   private List<String> getReconfigureStatus(String nodeType, String address)
+       throws IOException {
+     ByteArrayOutputStream bufOut = new ByteArrayOutputStream();
+@@ -87,16 +97,26 @@ public void tearDown() throws Exception {
+     return outputs;
+   }
+ 
+-  @Test(timeout = 30000)
+-  public void testGetReconfigureStatus()
++  /**
++   * Test reconfiguration and check the status outputs.
++   * @param expectedSuccuss set true if the reconfiguration task should success.
++   * @throws IOException
++   * @throws InterruptedException
++   */
++  private void testGetReconfigurationStatus(boolean expectedSuccuss)
+       throws IOException, InterruptedException {
+     ReconfigurationUtil ru = mock(ReconfigurationUtil.class);
+     datanode.setReconfigurationUtil(ru);
+ 
+     List<ReconfigurationUtil.PropertyChange> changes =
+-        new ArrayList<ReconfigurationUtil.PropertyChange>();
++        new ArrayList<>();
+     File newDir = new File(cluster.getDataDirectory(), "data_new");
+-    newDir.mkdirs();
++    if (expectedSuccuss) {
++      newDir.mkdirs();
++    } else {
++      // Inject failure.
++      newDir.createNewFile();
++    }
+     changes.add(new ReconfigurationUtil.PropertyChange(
+         DFS_DATANODE_DATA_DIR_KEY, newDir.toString(),
+         datanode.getConf().get(DFS_DATANODE_DATA_DIR_KEY)));
+@@ -121,31 +141,74 @@ public void testGetReconfigureStatus()
+       Thread.sleep(100);
+     }
+     assertTrue(count > 0);
+-    assertThat(outputs.size(), is(8));  // 3 (SUCCESS) + 4 (FAILED)
++    if (expectedSuccuss) {
++      assertThat(outputs.size(), is(4));
++    } else {
++      assertThat(outputs.size(), is(6));
++    }
+ 
+     List<StorageLocation> locations = DataNode.getStorageLocations(
+         datanode.getConf());
+-    assertThat(locations.size(), is(1));
+-    assertThat(locations.get(0).getFile(), is(newDir));
+-    // Verify the directory is appropriately formatted.
+-    assertTrue(new File(newDir, Storage.STORAGE_DIR_CURRENT).isDirectory());
+-
+-    int successOffset = outputs.get(1).startsWith("SUCCESS:") ? 1 : 5;
+-    int failedOffset = outputs.get(1).startsWith("FAILED:") ? 1: 4;
+-    assertThat(outputs.get(successOffset),
+-        containsString("Change property " + DFS_DATANODE_DATA_DIR_KEY));
+-    assertThat(outputs.get(successOffset + 1),
++    if (expectedSuccuss) {
++      assertThat(locations.size(), is(1));
++      assertThat(locations.get(0).getFile(), is(newDir));
++      // Verify the directory is appropriately formatted.
++      assertTrue(new File(newDir, Storage.STORAGE_DIR_CURRENT).isDirectory());
++    } else {
++      assertTrue(locations.isEmpty());
++    }
++
++    int offset = 1;
++    if (expectedSuccuss) {
++      assertThat(outputs.get(offset),
++          containsString("SUCCESS: Changed property " +
++              DFS_DATANODE_DATA_DIR_KEY));
++    } else {
++      assertThat(outputs.get(offset),
++          containsString("FAILED: Change property " +
++              DFS_DATANODE_DATA_DIR_KEY));
++    }
++    assertThat(outputs.get(offset + 1),
+         is(allOf(containsString("From:"), containsString("data1"),
+             containsString("data2"))));
+-    assertThat(outputs.get(successOffset + 2),
++    assertThat(outputs.get(offset + 2),
+         is(not(anyOf(containsString("data1"), containsString("data2")))));
+-    assertThat(outputs.get(successOffset + 2),
++    assertThat(outputs.get(offset + 2),
+         is(allOf(containsString("To"), containsString("data_new"))));
+-    assertThat(outputs.get(failedOffset),
+-        containsString("Change property randomKey"));
+-    assertThat(outputs.get(failedOffset + 1),
+-        containsString("From: \"old456\""));
+-    assertThat(outputs.get(failedOffset + 2),
+-        containsString("To: \"new123\""));
++  }
++
++  @Test(timeout = 30000)
++  public void testGetReconfigurationStatus()
++      throws IOException, InterruptedException {
++    testGetReconfigurationStatus(true);
++    restartCluster();
++    testGetReconfigurationStatus(false);
++  }
++
++  private List<String> getReconfigurationAllowedProperties(
++      String nodeType, String address)
++      throws IOException {
++    ByteArrayOutputStream bufOut = new ByteArrayOutputStream();
++    PrintStream out = new PrintStream(bufOut);
++    ByteArrayOutputStream bufErr = new ByteArrayOutputStream();
++    PrintStream err = new PrintStream(bufErr);
++    admin.getReconfigurableProperties(nodeType, address, out, err);
++    Scanner scanner = new Scanner(bufOut.toString());
++    List<String> outputs = Lists.newArrayList();
++    while (scanner.hasNextLine()) {
++      outputs.add(scanner.nextLine());
++    }
++    return outputs;
++  }
++
++  @Test(timeout = 30000)
++  public void testGetReconfigAllowedProperties() throws IOException {
++    final int port = datanode.getIpcPort();
++    final String address = "localhost:" + port;
++    List<String> outputs =
++        getReconfigurationAllowedProperties("datanode", address);
++    assertEquals(2, outputs.size());
++    assertEquals(DFSConfigKeys.DFS_DATANODE_DATA_DIR_KEY,
++        outputs.get(1));
+   }
+ }
+\ No newline at end of file
+-- 
+1.7.9.5
+

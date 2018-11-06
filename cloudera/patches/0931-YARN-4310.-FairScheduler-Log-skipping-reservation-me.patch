@@ -1,0 +1,45 @@
+From 00f3bb5d49b7c8313b169cb6028b76a157794ca5 Mon Sep 17 00:00:00 2001
+From: Arun Suresh <asuresh@apache.org>
+Date: Thu, 29 Oct 2015 13:42:09 -0700
+Subject: [PATCH 0931/1023] YARN-4310. FairScheduler: Log skipping reservation
+ messages at DEBUG level (asuresh)
+
+(cherry picked from commit 58d1df585c2b8a4d2f78ae30726f07b4c6a94731)
+(cherry picked from commit 8943abfb089a49b4f39eba321c3bd4b882e9bcee)
+
+Change-Id: I6515a48c31f2c9a950dd9aa36af694cc9c8a991e
+(cherry picked from commit 80736950b75f771d854d162db61622b88f9cb3b4)
+---
+ .../scheduler/fair/FSAppAttempt.java               |   16 +++++++++-------
+ 1 file changed, 9 insertions(+), 7 deletions(-)
+
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/FSAppAttempt.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/FSAppAttempt.java
+index 8a06f17..f0b1501 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/FSAppAttempt.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/main/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/FSAppAttempt.java
+@@ -487,13 +487,15 @@ private boolean reservationExceedsThreshold(FSSchedulerNode node,
+       if (existingReservations >= numAllowedReservations) {
+         DecimalFormat df = new DecimalFormat();
+         df.setMaximumFractionDigits(2);
+-        LOG.info("Reservation Exceeds Allowed number of nodes:" +
+-                " app_id=" + getApplicationId() +
+-                " existingReservations=" + existingReservations +
+-                " totalAvailableNodes=" + totalAvailNodes +
+-                " reservableNodesRatio=" + df.format(
+-                                        scheduler.getReservableNodesRatio()) +
+-                " numAllowedReservations=" + numAllowedReservations);
++        if (LOG.isDebugEnabled()) {
++          LOG.debug("Reservation Exceeds Allowed number of nodes:" +
++                  " app_id=" + getApplicationId() +
++                  " existingReservations=" + existingReservations +
++                  " totalAvailableNodes=" + totalAvailNodes +
++                  " reservableNodesRatio=" + df.format(
++                                          scheduler.getReservableNodesRatio()) +
++                  " numAllowedReservations=" + numAllowedReservations);
++        }
+         return true;
+       }
+     }
+-- 
+1.7.9.5
+

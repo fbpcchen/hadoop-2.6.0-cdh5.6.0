@@ -1,0 +1,38 @@
+From 67894cb9c541593604d09a50aee6718b07ef4c66 Mon Sep 17 00:00:00 2001
+From: Xiaoyu Yao <xyao@apache.org>
+Date: Tue, 16 Jun 2015 14:12:45 -0700
+Subject: [PATCH 0803/1023] HDFS-8551. Fix hdfs datanode CLI usage message.
+ Contributed by Brahma Reddy Battula.
+
+(cherry picked from commit 9cd5ad9d84e46295249877ade50cd49c34b9bf12)
+(cherry picked from commit 4bfbc6b1d4da3219fc1597d1fac998cf585070a8)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt
+
+Change-Id: I9e065d17248a47c96c68d561e5c3ab9cacf387b6
+(cherry picked from commit 6e2aaa3cc2ff3aef10b5cc30b13cf1dfb039f051)
+---
+ .../hadoop/hdfs/server/datanode/DataNode.java      |    4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java
+index 62021a0..3193c14 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java
+@@ -264,9 +264,11 @@
+     LogFactory.getLog(DataNode.class.getName() + ".clienttrace");
+   
+   private static final String USAGE =
+-      "Usage: java DataNode [-regular | -rollback]\n" +
++      "Usage: hdfs datanode [-regular | -rollback | -rollingupgrade rollback" +
++      " ]\n" +
+       "    -regular                 : Normal DataNode startup (default).\n" +
+       "    -rollback                : Rollback a standard or rolling upgrade.\n" +
++      "    -rollingupgrade rollback : Rollback a rolling upgrade operation.\n" +
+       "  Refer to HDFS documentation for the difference between standard\n" +
+       "  and rolling upgrades.";
+ 
+-- 
+1.7.9.5
+

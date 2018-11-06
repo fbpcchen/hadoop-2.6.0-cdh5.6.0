@@ -1,0 +1,144 @@
+From fbbac1f88f40c9aa9dfb4d34df795a982355f86e Mon Sep 17 00:00:00 2001
+From: cnauroth <cnauroth@apache.org>
+Date: Thu, 5 Feb 2015 16:53:34 -0800
+Subject: [PATCH 0797/1023] HADOOP-11526. Memory leak in Bzip2Compressor and
+ Bzip2Decompressor. Contributed by Anu Engineer.
+
+(cherry picked from commit 6583ad148be5447eb2f086a2c6c7006631dff4da)
+
+Conflicts:
+	hadoop-common-project/hadoop-common/CHANGES.txt
+
+(cherry picked from commit a9ea7cff31c2534d7e96ecf2a9b40106bbf54e2d)
+
+Conflicts:
+	hadoop-common-project/hadoop-common/CHANGES.txt
+
+Change-Id: Ie4aacd387efdc5f5e9d71fd22f5cd665b456adaa
+(cherry picked from commit e76184922d6f1bb42969438b60b150ed587f08d1)
+---
+ .../hadoop/io/compress/bzip2/Bzip2Compressor.c     |   28 +++++++++++++++-----
+ .../hadoop/io/compress/bzip2/Bzip2Decompressor.c   |   28 +++++++++++++++-----
+ 2 files changed, 44 insertions(+), 12 deletions(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/native/src/org/apache/hadoop/io/compress/bzip2/Bzip2Compressor.c b/hadoop-common-project/hadoop-common/src/main/native/src/org/apache/hadoop/io/compress/bzip2/Bzip2Compressor.c
+index d4cd6df..ef81bea 100644
+--- a/hadoop-common-project/hadoop-common/src/main/native/src/org/apache/hadoop/io/compress/bzip2/Bzip2Compressor.c
++++ b/hadoop-common-project/hadoop-common/src/main/native/src/org/apache/hadoop/io/compress/bzip2/Bzip2Compressor.c
+@@ -43,15 +43,25 @@ JNIEXPORT void JNICALL
+ Java_org_apache_hadoop_io_compress_bzip2_Bzip2Compressor_initIDs(
+                                  JNIEnv *env, jclass class, jstring libname)
+ {
+-    const char* bzlib_name = (*env)->GetStringUTFChars(env, libname, NULL);
+-    if (strcmp(bzlib_name, "system-native") == 0)
+-      bzlib_name = HADOOP_BZIP2_LIBRARY;
++    const char *bzlib_name = NULL;
++    const char *java_lib_name = (*env)->GetStringUTFChars(env, libname, NULL);
++    if (java_lib_name == NULL) {
++        // Java code will get OutOfMemoryException thrown by GetStringUTFChars
++        goto cleanup;
++    }
++
++    if (strcmp(java_lib_name, "system-native") == 0) {
++        bzlib_name = HADOOP_BZIP2_LIBRARY;
++    } else {
++        bzlib_name = java_lib_name;
++    }
++
+     // Load the native library.
+     void *libbz2 = dlopen(bzlib_name, RTLD_LAZY | RTLD_GLOBAL);
+     if (!libbz2) {
+         THROW(env, "java/lang/UnsatisfiedLinkError",
+               "Cannot load bzip2 native library");
+-        return;
++        goto cleanup;
+     }
+ 
+     // Locate the requisite symbols from libbz2.so.
+@@ -83,6 +93,11 @@ Java_org_apache_hadoop_io_compress_bzip2_Bzip2Compressor_initIDs(
+                                                      "Ljava/nio/Buffer;");
+     Bzip2Compressor_directBufferSize = (*env)->GetFieldID(env, class, 
+                                                   "directBufferSize", "I");
++ cleanup:
++    if(java_lib_name != NULL) {
++        (*env)->ReleaseStringUTFChars(env,libname,java_lib_name);
++        java_lib_name = NULL;
++    }
+ }
+ 
+ JNIEXPORT jlong JNICALL
+@@ -234,9 +249,10 @@ Java_org_apache_hadoop_io_compress_bzip2_Bzip2Compressor_end(
+ {
+     if (dlsym_BZ2_bzCompressEnd(BZSTREAM(stream)) != BZ_OK) {
+         THROW(env, "java/lang/InternalError", NULL);
+-    } else {
+-        free(BZSTREAM(stream));
+     }
++
++    free(BZSTREAM(stream));
++
+ }
+ 
+ JNIEXPORT jstring JNICALL
+diff --git a/hadoop-common-project/hadoop-common/src/main/native/src/org/apache/hadoop/io/compress/bzip2/Bzip2Decompressor.c b/hadoop-common-project/hadoop-common/src/main/native/src/org/apache/hadoop/io/compress/bzip2/Bzip2Decompressor.c
+index b6c5213..ad9bcb7 100644
+--- a/hadoop-common-project/hadoop-common/src/main/native/src/org/apache/hadoop/io/compress/bzip2/Bzip2Decompressor.c
++++ b/hadoop-common-project/hadoop-common/src/main/native/src/org/apache/hadoop/io/compress/bzip2/Bzip2Decompressor.c
+@@ -42,15 +42,25 @@ JNIEXPORT void JNICALL
+ Java_org_apache_hadoop_io_compress_bzip2_Bzip2Decompressor_initIDs(
+                                  JNIEnv *env, jclass class, jstring libname)
+ {
+-    const char* bzlib_name = (*env)->GetStringUTFChars(env, libname, NULL);
+-    if (strcmp(bzlib_name, "system-native") == 0)
+-      bzlib_name = HADOOP_BZIP2_LIBRARY;
++    const char *bzlib_name = NULL;
++    const char *java_lib_name = (*env)->GetStringUTFChars(env, libname, NULL);
++    if (java_lib_name == NULL) {
++        // Java code will get OutOfMemoryException thrown by GetStringUTFChars
++        goto cleanup;
++    }
++
++    if (strcmp(java_lib_name, "system-native") == 0) {
++        bzlib_name = HADOOP_BZIP2_LIBRARY;
++    } else {
++        bzlib_name = java_lib_name;
++    }
++
+     // Load the native library.
+     void *libbz2 = dlopen(bzlib_name, RTLD_LAZY | RTLD_GLOBAL);
+     if (!libbz2) {
+         THROW(env, "java/lang/UnsatisfiedLinkError",
+               "Cannot load bzip2 native library");
+-        return;
++        goto cleanup;
+     }
+ 
+     // Locate the requisite symbols from libbz2.so.
+@@ -80,6 +90,11 @@ Java_org_apache_hadoop_io_compress_bzip2_Bzip2Decompressor_initIDs(
+                                                 "Ljava/nio/Buffer;");
+     Bzip2Decompressor_directBufferSize = (*env)->GetFieldID(env, class, 
+                                                 "directBufferSize", "I");
++cleanup:
++    if(java_lib_name != NULL) {
++         (*env)->ReleaseStringUTFChars(env,libname,java_lib_name);
++         java_lib_name = NULL;
++    }
+ }
+ 
+ JNIEXPORT jlong JNICALL
+@@ -237,9 +252,10 @@ Java_org_apache_hadoop_io_compress_bzip2_Bzip2Decompressor_end(
+ {
+     if (dlsym_BZ2_bzDecompressEnd(BZSTREAM(stream)) != BZ_OK) {
+         THROW(env, "java/lang/InternalError", 0);
+-    } else {
+-        free(BZSTREAM(stream));
+     }
++
++    free(BZSTREAM(stream));
++
+ }
+ 
+ /**
+-- 
+1.7.9.5
+

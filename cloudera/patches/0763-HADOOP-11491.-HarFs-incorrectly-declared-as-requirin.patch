@@ -1,0 +1,52 @@
+From 54890cc7a7ed872270a124462cba16ae97547e74 Mon Sep 17 00:00:00 2001
+From: Gera Shegalov <gera@apache.org>
+Date: Fri, 1 May 2015 15:44:36 -0700
+Subject: [PATCH 0763/1023] HADOOP-11491. HarFs incorrectly declared as
+ requiring an authority. (Brahma Reddy Battula via
+ gera)
+
+(cherry picked from commit f343f8657e2b01773a32c2c7d960dc368954b42e)
+(cherry picked from commit 58970d69de8a1662e4548cd6d4ca460dd70562f8)
+
+Conflicts:
+	hadoop-common-project/hadoop-common/CHANGES.txt
+
+Change-Id: I6d64de8d63798dc9b289c63e21069e6d0135d596
+(cherry picked from commit b3645ebbeee7dfd29d60ade69492b8671f887ab3)
+---
+ .../src/main/java/org/apache/hadoop/fs/HarFs.java  |    2 +-
+ .../apache/hadoop/fs/TestHarFileSystemBasics.java  |    7 +++++++
+ 2 files changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/HarFs.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/HarFs.java
+index a2369e3..4f5fde8 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/HarFs.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/HarFs.java
+@@ -27,7 +27,7 @@
+ public class HarFs extends DelegateToFileSystem {
+   HarFs(final URI theUri, final Configuration conf)
+       throws IOException, URISyntaxException {
+-    super(theUri, new HarFileSystem(), conf, "har", true);
++    super(theUri, new HarFileSystem(), conf, "har", false);
+   }
+ 
+   @Override
+diff --git a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/TestHarFileSystemBasics.java b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/TestHarFileSystemBasics.java
+index 577abfd..53507b9 100644
+--- a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/TestHarFileSystemBasics.java
++++ b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/TestHarFileSystemBasics.java
+@@ -398,4 +398,11 @@ public void testNegativeHarFsModifications() throws Exception {
+     }
+   }
+ 
++  @Test
++  public void testHarFsWithoutAuthority() throws Exception {
++    final URI uri = harFileSystem.getUri();
++    Assert.assertNull("har uri authority not null: " + uri, uri.getAuthority());
++    FileContext.getFileContext(uri, conf);
++  }
++
+ }
+-- 
+1.7.9.5
+

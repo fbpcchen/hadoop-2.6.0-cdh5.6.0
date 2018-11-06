@@ -1,0 +1,108 @@
+From c282dc6c30e7d5d27410cabbb328d60fc24266d9 Mon Sep 17 00:00:00 2001
+From: Kihwal Lee <kihwal@apache.org>
+Date: Thu, 18 Dec 2014 13:00:18 -0600
+Subject: [PATCH 1023/1023] HDFS-7373. Clean up temporary files after fsimage
+ transfer failures. Contributed by Kihwal Lee
+ (cherry picked from commit
+ c0d666c74e9ea76564a2458c6c0a78ae7afa9fea)
+
+(cherry picked from commit 8bffaa46fca8b07dff407935e3c30ec3a036286f)
+
+Change-Id: I8fef6c088386180dc162137e1d1ca305a47c7bb8
+(cherry picked from commit 5360fa155ba52ef71bd5da4e6ba3f05c0348f67b)
+(cherry picked from commit 8f98c5f8003833a7cece4e5e658694f99bb53e3c)
+---
+ .../hdfs/server/namenode/TransferFsImage.java      |   21 ++++++++++++++++++++
+ .../hdfs/server/namenode/TestCheckpoint.java       |   19 ++++++++++++++++++
+ 2 files changed, 40 insertions(+)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/TransferFsImage.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/TransferFsImage.java
+index d7d4a68..1661457 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/TransferFsImage.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/TransferFsImage.java
+@@ -530,10 +530,18 @@ private static MD5Hash receiveFile(String url, List<File> localPaths,
+         fos.getChannel().force(true);
+         fos.close();
+       }
++
++      // Something went wrong and did not finish reading.
++      // Remove the temporary files.
++      if (!finishedReceiving) {
++        deleteTmpFiles(localPaths);
++      }
++
+       if (finishedReceiving && received != advertisedSize) {
+         // only throw this exception if we think we read all of it on our end
+         // -- otherwise a client-side IOException would be masked by this
+         // exception that makes it look like a server-side problem!
++        deleteTmpFiles(localPaths);
+         throw new IOException("File " + url + " received length " + received +
+                               " is not of the advertised size " +
+                               advertisedSize);
+@@ -550,6 +558,7 @@ private static MD5Hash receiveFile(String url, List<File> localPaths,
+       
+       if (advertisedDigest != null &&
+           !computedDigest.equals(advertisedDigest)) {
++        deleteTmpFiles(localPaths);
+         throw new IOException("File " + url + " computed digest " +
+             computedDigest + " does not match advertised digest " + 
+             advertisedDigest);
+@@ -560,6 +569,18 @@ private static MD5Hash receiveFile(String url, List<File> localPaths,
+     }    
+   }
+ 
++  private static void deleteTmpFiles(List<File> files) {
++    if (files == null) {
++      return;
++    }
++
++    LOG.info("Deleting temporary files: " + files);
++    for (File file : files) {
++      file.delete(); // ignore the return value
++    }
++  }
++
++
+   private static MD5Hash parseMD5Header(HttpURLConnection connection) {
+     String header = connection.getHeaderField(MD5_HEADER);
+     return (header != null) ? new MD5Hash(header) : null;
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestCheckpoint.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestCheckpoint.java
+index b78e2f8..cb5092a 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestCheckpoint.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestCheckpoint.java
+@@ -643,6 +643,22 @@ public boolean matches(Object argument) {
+         });
+   }
+ 
++  private void checkTempImages(NNStorage storage) throws IOException {
++    List<File> dirs = new ArrayList<File>();
++    dirs.add(storage.getStorageDir(0).getCurrentDir());
++    dirs.add(storage.getStorageDir(1).getCurrentDir());
++
++    for (File dir : dirs) {
++      File[] list = dir.listFiles();
++      for (File f : list) {
++        // Throw an exception if a temp image file is found.
++        if(f.getName().contains(NNStorage.NameNodeFile.IMAGE_NEW.getName())) {
++          throw new IOException("Found " + f);
++        }
++      }
++    }
++  }
++
+   /**
+    * Simulate 2NN failing to send the whole file (error type 3)
+    * The length header in the HTTP transfer should prevent
+@@ -704,6 +720,9 @@ private void doSendFailTest(String exceptionSubstring)
+         GenericTestUtils.assertExceptionContains(exceptionSubstring, e);
+       }
+       Mockito.reset(faultInjector);
++      // Make sure there is no temporary files left around.
++      checkTempImages(cluster.getNameNode().getFSImage().getStorage());
++      checkTempImages(secondary.getFSImage().getStorage());
+       secondary.shutdown(); // secondary namenode crash!
+       secondary = null;
+ 
+-- 
+1.7.9.5
+

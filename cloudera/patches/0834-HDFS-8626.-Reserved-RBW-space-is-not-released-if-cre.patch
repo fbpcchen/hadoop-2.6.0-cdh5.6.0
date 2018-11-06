@@ -1,0 +1,35 @@
+From 658811a3e691844fb23767ccf938d2fffd9a884b Mon Sep 17 00:00:00 2001
+From: Arpit Agarwal <arp@apache.org>
+Date: Fri, 19 Jun 2015 18:23:34 -0700
+Subject: [PATCH 0834/1023] HDFS-8626. Reserved RBW space is not released if
+ creation of RBW File fails. (Contributed by
+ kanaka kumar avvaru)
+
+(cherry picked from commit dc4171cb66ef47cea9dbba95f2ebb5fa10e70d53)
+
+Change-Id: I1c712081b34110ac22962e90cf63d58beb2588b7
+---
+ .../datanode/fsdataset/impl/FsVolumeImpl.java      |    7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsVolumeImpl.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsVolumeImpl.java
+index b9aad7c..9e8c588 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsVolumeImpl.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsVolumeImpl.java
+@@ -750,7 +750,12 @@ public FsDatasetSpi getDataset() {
+   File createRbwFile(String bpid, Block b) throws IOException {
+     checkReference();
+     reserveSpaceForRbw(b.getNumBytes());
+-    return getBlockPoolSlice(bpid).createRbwFile(b);
++    try {
++      return getBlockPoolSlice(bpid).createRbwFile(b);
++    } catch (IOException exception) {
++      releaseReservedSpace(b.getNumBytes());
++      throw exception;
++    }
+   }
+ 
+   /**
+-- 
+1.7.9.5
+

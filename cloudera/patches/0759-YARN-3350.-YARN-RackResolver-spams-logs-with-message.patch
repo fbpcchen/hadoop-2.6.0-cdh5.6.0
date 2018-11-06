@@ -1,0 +1,44 @@
+From b9bf6cfb173ce4634a1add8a3d1aa09f62f6ad26 Mon Sep 17 00:00:00 2001
+From: Junping Du <junping_du@apache.org>
+Date: Fri, 20 Mar 2015 18:21:33 -0700
+Subject: [PATCH 0759/1023] YARN-3350. YARN RackResolver spams logs with
+ messages at info level. Contributed by Wilfred
+ Spiegelenburg (cherry picked from commit
+ 7f1e2f996995e1883d9336f720c27621cf1b73b6)
+
+(cherry picked from commit 9aedb3d688f2076fa407766e2fe8d2606f60d6c3)
+
+Conflicts:
+	hadoop-yarn-project/CHANGES.txt
+
+Change-Id: I61d21e96cfe4633681bc3a87482be26b8818cdaa
+---
+ .../org/apache/hadoop/yarn/util/RackResolver.java  |   10 +++++++---
+ 1 file changed, 7 insertions(+), 3 deletions(-)
+
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/main/java/org/apache/hadoop/yarn/util/RackResolver.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/main/java/org/apache/hadoop/yarn/util/RackResolver.java
+index cc2a56c..c44c2cf 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/main/java/org/apache/hadoop/yarn/util/RackResolver.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/main/java/org/apache/hadoop/yarn/util/RackResolver.java
+@@ -102,11 +102,15 @@ private static Node coreResolve(String hostName) {
+     String rName = null;
+     if (rNameList == null || rNameList.get(0) == null) {
+       rName = NetworkTopology.DEFAULT_RACK;
+-      LOG.info("Couldn't resolve " + hostName + ". Falling back to "
+-          + NetworkTopology.DEFAULT_RACK);
++      if (LOG.isDebugEnabled()) {
++        LOG.debug("Couldn't resolve " + hostName + ". Falling back to "
++            + NetworkTopology.DEFAULT_RACK);
++      }
+     } else {
+       rName = rNameList.get(0);
+-      LOG.info("Resolved " + hostName + " to " + rName);
++      if (LOG.isDebugEnabled()) {
++        LOG.debug("Resolved " + hostName + " to " + rName);
++      }
+     }
+     return new NodeBase(hostName, rName);
+   }
+-- 
+1.7.9.5
+

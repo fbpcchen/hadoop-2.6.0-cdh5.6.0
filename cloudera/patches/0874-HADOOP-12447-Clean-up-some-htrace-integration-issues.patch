@@ -1,0 +1,613 @@
+From a442c76a36f4cf2341a4b2c46eb01778b15e5bf7 Mon Sep 17 00:00:00 2001
+From: Colin Patrick Mccabe <cmccabe@cloudera.com>
+Date: Tue, 29 Sep 2015 09:25:11 -0700
+Subject: [PATCH 0874/1023] HADOOP-12447: Clean up some htrace integration
+ issues (cmccabe)
+
+(cherry picked from commit 850d679acb935a6a6b0e6cb6f69d998e99395468)
+(cherry picked from commit 171bd1cb2b04bb8d198febe7c0dabf48787c596e)
+
+Conflicts:
+	hadoop-common-project/hadoop-common/src/site/apt/Tracing.apt.vm
+	hadoop-common-project/hadoop-common/src/site/markdown/Tracing.md
+	hadoop-hdfs-project/hadoop-hdfs-client/src/main/java/org/apache/hadoop/hdfs/client/HdfsClientConfigKeys.java
+	hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSConfigKeys.java
+	hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/common/JspHelper.java
+
+Change-Id: I6de7c4e66c60e730c5779e18ec95ee775a19631b
+(cherry picked from commit f752ec2290f31ba73c66788acfb1a6df89f3a159)
+---
+ .../hadoop-common/src/site/apt/Tracing.apt.vm      |  233 --------------------
+ .../hadoop-common/src/site/markdown/Tracing.md     |  190 ++++++++++++++++
+ .../hadoop/hdfs/server/common/JspHelper.java       |    2 +
+ .../hdfs/server/namenode/NameNodeRpcServer.java    |    2 +-
+ .../hadoop/hdfs/server/namenode/NamenodeFsck.java  |    3 +-
+ .../src/main/resources/hdfs-default.xml            |    8 -
+ .../blockmanagement/TestBlockTokenWithDFS.java     |    2 +
+ .../server/datanode/TestDataNodeVolumeFailure.java |    2 +
+ .../org/apache/hadoop/tracing/TestTraceAdmin.java  |    8 +-
+ 9 files changed, 203 insertions(+), 247 deletions(-)
+ delete mode 100644 hadoop-common-project/hadoop-common/src/site/apt/Tracing.apt.vm
+ create mode 100644 hadoop-common-project/hadoop-common/src/site/markdown/Tracing.md
+
+diff --git a/hadoop-common-project/hadoop-common/src/site/apt/Tracing.apt.vm b/hadoop-common-project/hadoop-common/src/site/apt/Tracing.apt.vm
+deleted file mode 100644
+index c51037b..0000000
+--- a/hadoop-common-project/hadoop-common/src/site/apt/Tracing.apt.vm
++++ /dev/null
+@@ -1,233 +0,0 @@
+-~~ Licensed under the Apache License, Version 2.0 (the "License");
+-~~ you may not use this file except in compliance with the License.
+-~~ You may obtain a copy of the License at
+-~~
+-~~   http://www.apache.org/licenses/LICENSE-2.0
+-~~
+-~~ Unless required by applicable law or agreed to in writing, software
+-~~ distributed under the License is distributed on an "AS IS" BASIS,
+-~~ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+-~~ See the License for the specific language governing permissions and
+-~~ limitations under the License. See accompanying LICENSE file.
+-
+-  ---
+-  Hadoop Distributed File System-${project.version} - Enabling Dapper-like Tracing
+-  ---
+-  ---
+-  ${maven.build.timestamp}
+-
+-Enabling Dapper-like Tracing in Hadoop
+-
+-%{toc|section=1|fromDepth=0}
+-
+-* {Dapper-like Tracing in Hadoop}
+-
+-** HTrace
+-
+-  {{{https://issues.apache.org/jira/browse/HDFS-5274}HDFS-5274}}
+-  added support for tracing requests through HDFS,
+-  using the open source tracing library, {{{https://git-wip-us.apache.org/repos/asf/incubator-htrace.git}Apache HTrace}}.
+-  Setting up tracing is quite simple, however it requires some very minor changes to your client code.
+-
+-** Samplers
+-  Configure the samplers in <<<core-site.xml>>> property: <<<hadoop.htrace.sampler>>>.
+-  The value can be NeverSampler, AlwaysSampler or ProbabilitySampler. NeverSampler: HTrace is OFF 
+-  for all spans; AlwaysSampler: HTrace is ON for all spans; ProbabilitySampler: HTrace is ON for 
+-  some percentage% of top-level spans.
+-
+-+----
+-  <property>
+-    <name>hadoop.htrace.sampler</name>
+-    <value>NeverSampler</value>
+-  </property>
+-+----
+-
+-** SpanReceivers
+-
+-  The tracing system works by collecting information in structs called 'Spans'.
+-  It is up to you to choose how you want to receive this information
+-  by implementing the SpanReceiver interface, which defines one method:
+-
+-+----
+-public void receiveSpan(Span span);
+-+----
+-
+-  Configure what SpanReceivers you'd like to use
+-  by putting a comma separated list of the fully-qualified class name of
+-  classes implementing SpanReceiver
+-  in <<<core-site.xml>>> property: <<<hadoop.htrace.spanreceiver.classes>>>.
+-
+-+----
+-  <property>
+-    <name>hadoop.htrace.spanreceiver.classes</name>
+-    <value>org.apache.htrace.impl.LocalFileSpanReceiver</value>
+-  </property>
+-  <property>
+-    <name>hadoop.htrace.local-file-span-receiver.path</name>
+-    <value>/var/log/hadoop/htrace.out</value>
+-  </property>
+-+----
+-
+-  You can omit package name prefix if you use span receiver bundled with HTrace.
+-
+-+----
+-  <property>
+-    <name>hadoop.htrace.spanreceiver.classes</name>
+-    <value>LocalFileSpanReceiver</value>
+-  </property>
+-+----
+-
+-
+-
+-** Setting up ZipkinSpanReceiver
+-
+-  Instead of implementing SpanReceiver by yourself,
+-  you can use <<<ZipkinSpanReceiver>>> which uses
+-  {{{https://github.com/twitter/zipkin}Zipkin}}
+-  for collecting and displaying tracing data.
+-
+-  In order to use <<<ZipkinSpanReceiver>>>,
+-  you need to download and setup {{{https://github.com/twitter/zipkin}Zipkin}} first.
+-
+-  you also need to add the jar of <<<htrace-zipkin>>> to the classpath of Hadoop on each node.
+-  Here is example setup procedure.
+-
+-+----
+-  $ git clone https://github.com/cloudera/htrace
+-  $ cd htrace/htrace-zipkin
+-  $ mvn compile assembly:single
+-  $ cp target/htrace-zipkin-*-jar-with-dependencies.jar $HADOOP_HOME/share/hadoop/common/lib/
+-+----
+-
+-  The sample configuration for <<<ZipkinSpanReceiver>>> is shown below.
+-  By adding these to <<<core-site.xml>>> of NameNode and DataNodes,
+-  <<<ZipkinSpanReceiver>>> is initialized on the startup.
+-  You also need this configuration on the client node in addition to the servers.
+-
+-+----
+-  <property>
+-    <name>hadoop.htrace.spanreceiver.classes</name>
+-    <value>ZipkinSpanReceiver</value>
+-  </property>
+-  <property>
+-    <name>hadoop.htrace.zipkin.collector-hostname</name>
+-    <value>192.168.1.2</value>
+-  </property>
+-  <property>
+-    <name>hadoop.htrace.zipkin.collector-port</name>
+-    <value>9410</value>
+-  </property>
+-+----
+-
+-
+-** Dynamic update of tracing configuration
+-
+-  You can use <<<hadoop trace>>> command to see and update the tracing configuration of each servers.
+-  You must specify IPC server address of namenode or datanode by <<<-host>>> option.
+-  You need to run the command against all servers if you want to update the configuration of all servers.
+-
+-  <<<hadoop trace -list>>> shows list of loaded span receivers associated with the id.
+-
+-+----
+-  $ hadoop trace -list -host 192.168.56.2:9000
+-  ID  CLASS
+-  1   org.apache.htrace.impl.LocalFileSpanReceiver
+-
+-  $ hadoop trace -list -host 192.168.56.2:50020
+-  ID  CLASS
+-  1   org.apache.htrace.impl.LocalFileSpanReceiver
+-+----
+-
+-  <<<hadoop trace -remove>>> removes span receiver from server.
+-  <<<-remove>>> options takes id of span receiver as argument.
+-
+-+----
+-  $ hadoop trace -remove 1 -host 192.168.56.2:9000
+-  Removed trace span receiver 1
+-+----
+-
+-  <<<hadoop trace -add>>> adds span receiver to server.
+-  You need to specify the class name of span receiver as argument of <<<-class>>> option.
+-  You can specify the configuration associated with span receiver by <<<-Ckey=value>>> options.
+-
+-+----
+-  $ hadoop trace -add -class LocalFileSpanReceiver -Chadoop.htrace.local-file-span-receiver.path=/tmp/htrace.out -host 192.168.56.2:9000
+-  Added trace span receiver 2 with configuration hadoop.htrace.local-file-span-receiver.path = /tmp/htrace.out
+-
+-  $ hadoop trace -list -host 192.168.56.2:9000
+-  ID  CLASS
+-  2   org.apache.htrace.impl.LocalFileSpanReceiver
+-+----
+-
+-
+-** Starting tracing spans by HTrace API
+-
+-  In order to trace,
+-  you will need to wrap the traced logic with <<tracing span>> as shown below.
+-  When there is running tracing spans,
+-  the tracing information is propagated to servers along with RPC requests.
+-
+-  In addition, you need to initialize <<<SpanReceiver>>> once per process.
+-
+-+----
+-import org.apache.hadoop.hdfs.HdfsConfiguration;
+-import org.apache.hadoop.tracing.SpanReceiverHost;
+-import org.apache.htrace.Sampler;
+-import org.apache.htrace.Trace;
+-import org.apache.htrace.TraceScope;
+-
+-...
+-
+-    SpanReceiverHost.getInstance(new HdfsConfiguration());
+-
+-...
+-
+-    TraceScope ts = Trace.startSpan("Gets", Sampler.ALWAYS);
+-    try {
+-      ... // traced logic
+-    } finally {
+-      if (ts != null) ts.close();
+-    }
+-+----
+-
+-** Sample code for tracing
+-
+-  The <<<TracingFsShell.java>>> shown below is the wrapper of FsShell
+-  which start tracing span before invoking HDFS shell command.
+-
+-+----
+-import org.apache.hadoop.conf.Configuration;
+-import org.apache.hadoop.fs.FsShell;
+-import org.apache.hadoop.tracing.SpanReceiverHost;
+-import org.apache.hadoop.util.ToolRunner;
+-import org.apache.htrace.Sampler;
+-import org.apache.htrace.Trace;
+-import org.apache.htrace.TraceScope;
+-
+-public class TracingFsShell {
+-  public static void main(String argv[]) throws Exception {
+-    Configuration conf = new Configuration();
+-    FsShell shell = new FsShell();
+-    conf.setQuietMode(false);
+-    shell.setConf(conf);
+-    SpanReceiverHost.getInstance(conf);
+-    int res = 0;
+-    TraceScope ts = null;
+-    try {
+-      ts = Trace.startSpan("FsShell", Sampler.ALWAYS);
+-      res = ToolRunner.run(shell, argv);
+-    } finally {
+-      shell.close();
+-      if (ts != null) ts.close();
+-    }
+-    System.exit(res);
+-  }
+-}
+-+----
+-
+-  You can compile and execute this code as shown below.
+-
+-+----
+-$ javac -cp `hadoop classpath` TracingFsShell.java
+-$ java -cp .:`hadoop classpath` TracingFsShell -ls /
+-+----
+diff --git a/hadoop-common-project/hadoop-common/src/site/markdown/Tracing.md b/hadoop-common-project/hadoop-common/src/site/markdown/Tracing.md
+new file mode 100644
+index 0000000..4cc6a07
+--- /dev/null
++++ b/hadoop-common-project/hadoop-common/src/site/markdown/Tracing.md
+@@ -0,0 +1,190 @@
++<!---
++  Licensed under the Apache License, Version 2.0 (the "License");
++  you may not use this file except in compliance with the License.
++  You may obtain a copy of the License at
++
++   http://www.apache.org/licenses/LICENSE-2.0
++
++  Unless required by applicable law or agreed to in writing, software
++  distributed under the License is distributed on an "AS IS" BASIS,
++  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++  See the License for the specific language governing permissions and
++  limitations under the License. See accompanying LICENSE file.
++-->
++
++Enabling Dapper-like Tracing in Hadoop
++======================================
++
++* [Enabling Dapper-like Tracing in Hadoop](#Enabling_Dapper-like_Tracing_in_Hadoop)
++    * [Dapper-like Tracing in Hadoop](#Dapper-like_Tracing_in_Hadoop)
++        * [HTrace](#HTrace)
++        * [SpanReceivers](#SpanReceivers)
++        * [Dynamic update of tracing configuration](#Dynamic_update_of_tracing_configuration)
++        * [Starting tracing spans by HTrace API](#Starting_tracing_spans_by_HTrace_API)
++        * [Sample code for tracing](#Sample_code_for_tracing)
++        * [Starting tracing spans by configuration for HDFS client](#Starting_tracing_spans_by_configuration_for_HDFS_client)
++
++
++Dapper-like Tracing in Hadoop
++-----------------------------
++
++### HTrace
++
++[HDFS-5274](https://issues.apache.org/jira/browse/HDFS-5274) added support for tracing requests through HDFS,
++using the open source tracing library,
++[Apache HTrace](http://htrace.incubator.apache.org/).
++Setting up tracing is quite simple, however it requires some very minor changes to your client code.
++
++### SpanReceivers
++
++The tracing system works by collecting information in structs called 'Spans'.
++It is up to you to choose how you want to receive this information
++by using implementation of [SpanReceiver](http://htrace.incubator.apache.org/#Span_Receivers)
++interface bundled with HTrace or implementing it by yourself.
++
++[HTrace](http://htrace.incubator.apache.org/) provides options such as
++
++* FlumeSpanReceiver
++* HBaseSpanReceiver
++* HTracedRESTReceiver
++* ZipkinSpanReceiver
++
++See core-default.xml for a description of HTrace configuration keys.  In some
++cases, you will also need to add the jar containing the SpanReceiver that you
++are using to the classpath of Hadoop on each node. (In the example above,
++LocalFileSpanReceiver is included in the htrace-core4 jar which is bundled
++with Hadoop.)
++
++```
++    $ cp htrace-htraced/target/htrace-htraced-4.0.1-incubating.jar $HADOOP_HOME/share/hadoop/common/lib/
++```
++
++### Dynamic update of tracing configuration
++
++You can use `hadoop trace` command to see and update the tracing configuration of each servers.
++You must specify IPC server address of namenode or datanode by `-host` option.
++You need to run the command against all servers if you want to update the configuration of all servers.
++
++`hadoop trace -list` shows list of loaded span receivers associated with the id.
++
++      $ hadoop trace -list -host 192.168.56.2:9000
++      ID  CLASS
++      1   org.apache.htrace.core.LocalFileSpanReceiver
++
++      $ hadoop trace -list -host 192.168.56.2:50020
++      ID  CLASS
++      1   org.apache.htrace.core.LocalFileSpanReceiver
++
++`hadoop trace -remove` removes span receiver from server.
++`-remove` options takes id of span receiver as argument.
++
++      $ hadoop trace -remove 1 -host 192.168.56.2:9000
++      Removed trace span receiver 1
++
++`hadoop trace -add` adds span receiver to server.
++You need to specify the class name of span receiver as argument of `-class` option.
++You can specify the configuration associated with span receiver by `-Ckey=value` options.
++
++      $ hadoop trace -add -class org.apache.htrace.core.LocalFileSpanReceiver -Chadoop.htrace.local.file.span.receiver.path=/tmp/htrace.out -host 192.168.56.2:9000
++      Added trace span receiver 2 with configuration hadoop.htrace.local.file.span.receiver.path = /tmp/htrace.out
++
++      $ hadoop trace -list -host 192.168.56.2:9000
++      ID  CLASS
++      2   org.apache.htrace.core.LocalFileSpanReceiver
++
++### Starting tracing spans by HTrace API
++
++In order to trace, you will need to wrap the traced logic with **tracing span** as shown below.
++When there is running tracing spans,
++the tracing information is propagated to servers along with RPC requests.
++
++```java
++    import org.apache.hadoop.hdfs.HdfsConfiguration;
++    import org.apache.htrace.core.Tracer;
++    import org.apache.htrace.core.TraceScope;
++
++    ...
++
++
++    ...
++
++        TraceScope ts = tracer.newScope("Gets");
++        try {
++          ... // traced logic
++        } finally {
++          ts.close();
++        }
++```
++
++### Sample code for tracing by HTrace API
++
++The `TracingFsShell.java` shown below is the wrapper of FsShell
++which start tracing span before invoking HDFS shell command.
++
++```java
++    import org.apache.hadoop.conf.Configuration;
++    import org.apache.hadoop.fs.FsShell;
++    import org.apache.hadoop.hdfs.DFSConfigKeys;
++    import org.apache.hadoop.hdfs.HdfsConfiguration;
++    import org.apache.hadoop.tracing.TraceUtils;
++    import org.apache.hadoop.util.ToolRunner;
++    import org.apache.htrace.core.Trace;
++    import org.apache.htrace.core.TraceScope;
++
++    public class TracingFsShell {
++      public static void main(String argv[]) throws Exception {
++        Configuration conf = new HdfsConfiguration();
++        FsShell shell = new FsShell();
++        conf.setQuietMode(false);
++        shell.setConf(conf);
++        Tracer tracer = new Tracer.Builder("TracingFsShell").
++            conf(TraceUtils.wrapHadoopConf("tracing.fs.shell.htrace.", conf)).
++            build();
++        int res = 0;
++        TraceScope scope = tracer.newScope("FsShell");
++        try {
++          res = ToolRunner.run(shell, argv);
++        } finally {
++          scope.close();
++          shell.close();
++        }
++        tracer.close();
++        System.exit(res);
++      }
++    }
++```
++
++You can compile and execute this code as shown below.
++
++    $ javac -cp `hadoop classpath` TracingFsShell.java
++    $ java -cp .:`hadoop classpath` TracingFsShell -ls /
++
++### Starting tracing spans by configuration for HDFS client
++
++The DFSClient can enable tracing internally. This allows you to use HTrace with
++your client without modifying the client source code.
++
++Configure the span receivers and samplers in `hdfs-site.xml`
++by properties `fs.client.htrace.sampler.classes` and
++`fs.client.htrace.spanreceiver.classes`.  The value of
++`fs.client.htrace.sampler.classes` can be NeverSampler, AlwaysSampler or
++ProbabilitySampler.
++
++* NeverSampler: HTrace is OFF for all requests to namenodes and datanodes;
++* AlwaysSampler: HTrace is ON for all requests to namenodes and datanodes;
++* ProbabilitySampler: HTrace is ON for some percentage% of  requests to namenodes and datanodes
++
++```xml
++      <property>
++        <name>hadoop.htrace.span.receiver.classes</name>
++        <value>LocalFileSpanReceiver</value>
++      </property>
++      <property>
++        <name>fs.client.htrace.sampler.classes</name>
++        <value>ProbabilitySampler</value>
++      </property>
++      <property>
++        <name>fs.client.htrace.sampler.fraction</name>
++        <value>0.01</value>
++      </property>
++```
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/common/JspHelper.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/common/JspHelper.java
+index 10e29a7..a6e1863 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/common/JspHelper.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/common/JspHelper.java
+@@ -44,6 +44,7 @@
+ import org.apache.commons.logging.LogFactory;
+ import org.apache.hadoop.classification.InterfaceAudience;
+ import org.apache.hadoop.conf.Configuration;
++import org.apache.hadoop.fs.FsTracer;
+ import org.apache.hadoop.fs.Path;
+ import org.apache.hadoop.hdfs.BlockReader;
+ import org.apache.hadoop.hdfs.BlockReaderFactory;
+@@ -234,6 +235,7 @@ public static void streamBlockInAscii(InetSocketAddress addr, String poolId,
+       setDatanodeInfo(new DatanodeInfo(datanodeId)).
+       setCachingStrategy(CachingStrategy.newDefaultStrategy()).
+       setConfiguration(conf).
++      setTracer(FsTracer.get(conf)).
+       setRemotePeerFactory(new RemotePeerFactory() {
+         @Override
+         public Peer newConnectedPeer(InetSocketAddress addr,
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNodeRpcServer.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNodeRpcServer.java
+index 8bd47f5..996d807 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNodeRpcServer.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNodeRpcServer.java
+@@ -407,7 +407,7 @@ public NameNodeRpcServer(Configuration conf, NameNode nn)
+         UnresolvedPathException.class);
+     clientRpcServer.setTracer(nn.tracer);
+     if (serviceRpcServer != null) {
+-      clientRpcServer.setTracer(nn.tracer);
++      serviceRpcServer.setTracer(nn.tracer);
+     }
+  }
+ 
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NamenodeFsck.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NamenodeFsck.java
+index e2b5760..c9baa99 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NamenodeFsck.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NamenodeFsck.java
+@@ -71,6 +71,7 @@
+ import org.apache.hadoop.security.AccessControlException;
+ import org.apache.hadoop.security.UserGroupInformation;
+ import org.apache.hadoop.security.token.Token;
++import org.apache.hadoop.tracing.TraceUtils;
+ import org.apache.hadoop.util.Time;
+ import org.apache.htrace.core.Tracer;
+ 
+@@ -185,7 +186,7 @@
+         namenode.getNamesystem().getBlockManager().getDatanodeManager()
+         .getHost2DatanodeMap());
+     this.tracer = new Tracer.Builder("NamenodeFsck").
+-        conf(TraceUtils.wrapHadoopConf("namenode.htrace.", conf)).
++        conf(TraceUtils.wrapHadoopConf("namenode.fsck.htrace.", conf)).
+         build();
+     
+     for (Iterator<String> it = pmap.keySet().iterator(); it.hasNext();) {
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/resources/hdfs-default.xml b/hadoop-hdfs-project/hadoop-hdfs/src/main/resources/hdfs-default.xml
+index af2e8b7..e9b92d4 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/resources/hdfs-default.xml
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/resources/hdfs-default.xml
+@@ -2302,14 +2302,6 @@
+ </property>
+ 
+ <property>
+-  <name>dfs.client.htrace.sampler.classes</name>
+-  <value></value>
+-  <description>
+-    The class names of the HTrace Samplers to use for the HDFS client.
+-  </description>
+-</property>
+-
+-<property>
+   <name>dfs.ha.zkfc.nn.http.timeout.ms</name>
+   <value>20000</value>
+   <description>
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/blockmanagement/TestBlockTokenWithDFS.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/blockmanagement/TestBlockTokenWithDFS.java
+index b15cb38..012de95 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/blockmanagement/TestBlockTokenWithDFS.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/blockmanagement/TestBlockTokenWithDFS.java
+@@ -34,6 +34,7 @@
+ import org.apache.hadoop.fs.FSDataInputStream;
+ import org.apache.hadoop.fs.FSDataOutputStream;
+ import org.apache.hadoop.fs.FileSystem;
++import org.apache.hadoop.fs.FsTracer;
+ import org.apache.hadoop.fs.Path;
+ import org.apache.hadoop.hdfs.BlockReader;
+ import org.apache.hadoop.hdfs.BlockReaderFactory;
+@@ -159,6 +160,7 @@ private static void tryRead(final Configuration conf, LocatedBlock lblock,
+           setCachingStrategy(CachingStrategy.newDefaultStrategy()).
+           setClientCacheContext(ClientContext.getFromConf(conf)).
+           setConfiguration(conf).
++          setTracer(FsTracer.get(conf)).
+           setRemotePeerFactory(new RemotePeerFactory() {
+             @Override
+             public Peer newConnectedPeer(InetSocketAddress addr,
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestDataNodeVolumeFailure.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestDataNodeVolumeFailure.java
+index cfebed9..aacaa14 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestDataNodeVolumeFailure.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/datanode/TestDataNodeVolumeFailure.java
+@@ -37,6 +37,7 @@
+ import org.apache.hadoop.conf.ReconfigurationException;
+ import org.apache.hadoop.fs.FileSystem;
+ import org.apache.hadoop.fs.FileUtil;
++import org.apache.hadoop.fs.FsTracer;
+ import org.apache.hadoop.fs.Path;
+ import org.apache.hadoop.hdfs.BlockReader;
+ import org.apache.hadoop.hdfs.BlockReaderFactory;
+@@ -511,6 +512,7 @@ private void accessBlock(DatanodeInfo datanode, LocatedBlock lblock)
+       setCachingStrategy(CachingStrategy.newDefaultStrategy()).
+       setClientCacheContext(ClientContext.getFromConf(conf)).
+       setConfiguration(conf).
++      setTracer(FsTracer.get(conf)).
+       setRemotePeerFactory(new RemotePeerFactory() {
+         @Override
+         public Peer newConnectedPeer(InetSocketAddress addr,
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTraceAdmin.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTraceAdmin.java
+index b08866b..7e10d90 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTraceAdmin.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTraceAdmin.java
+@@ -73,10 +73,10 @@ public void testCreateAndDestroySpanReceiver() throws Exception {
+       Assert.assertEquals("ret:0, [no span receivers found]" + NEWLINE,
+           runTraceCommand(trace, "-list", "-host", getHostPortForNN(cluster)));
+       Assert.assertEquals("ret:0, Added trace span receiver 1 with " +
+-          "configuration dfs.htrace.local-file-span-receiver.path = " + tracePath + NEWLINE,
++          "configuration hadoop.htrace.local.file.span.receiver.path = " + tracePath + NEWLINE,
+           runTraceCommand(trace, "-add", "-host", getHostPortForNN(cluster),
+               "-class", "org.apache.htrace.core.LocalFileSpanReceiver",
+-              "-Cdfs.htrace.local-file-span-receiver.path=" + tracePath));
++              "-Chadoop.htrace.local.file.span.receiver.path=" + tracePath));
+       String list =
+           runTraceCommand(trace, "-list", "-host", getHostPortForNN(cluster));
+       Assert.assertTrue(list.startsWith("ret:0"));
+@@ -87,10 +87,10 @@ public void testCreateAndDestroySpanReceiver() throws Exception {
+       Assert.assertEquals("ret:0, [no span receivers found]" + NEWLINE,
+           runTraceCommand(trace, "-list", "-host", getHostPortForNN(cluster)));
+       Assert.assertEquals("ret:0, Added trace span receiver 2 with " +
+-          "configuration dfs.htrace.local-file-span-receiver.path = " + tracePath + NEWLINE,
++          "configuration hadoop.htrace.local.file.span.receiver.path = " + tracePath + NEWLINE,
+           runTraceCommand(trace, "-add", "-host", getHostPortForNN(cluster),
+               "-class", "LocalFileSpanReceiver",
+-              "-Cdfs.htrace.local-file-span-receiver.path=" + tracePath));
++              "-Chadoop.htrace.local.file.span.receiver.path=" + tracePath));
+       Assert.assertEquals("ret:0, Removed trace span receiver 2" + NEWLINE,
+           runTraceCommand(trace, "-remove", "2", "-host",
+               getHostPortForNN(cluster)));
+-- 
+1.7.9.5
+

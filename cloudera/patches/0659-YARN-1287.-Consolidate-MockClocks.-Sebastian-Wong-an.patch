@@ -1,0 +1,658 @@
+From 6f726e5aa15d9339f2e9211520b8a35e44c16a65 Mon Sep 17 00:00:00 2001
+From: Karthik Kambatla <kasha@apache.org>
+Date: Sat, 9 May 2015 14:34:54 -0700
+Subject: [PATCH 0659/1023] YARN-1287. Consolidate MockClocks. (Sebastian Wong
+ and Anubhav Dhoot via kasha)
+
+(cherry picked from commit 70fb37cd79a7eba6818313960624380bacfe0bb2)
+
+Conflicts:
+	hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/test/java/org/apache/hadoop/yarn/server/nodemanager/util/TestCgroupsLCEResourcesHandler.java
+---
+ .../mapreduce/v2/app/TestRuntimeEstimators.java    |   26 ++--------
+ .../apache/hadoop/yarn/util/ControlledClock.java   |   15 ++++++
+ .../scheduler/fair/FairSchedulerTestBase.java      |   16 +-----
+ .../fair/TestAllocationFileLoaderService.java      |   19 ++-----
+ .../scheduler/fair/TestContinuousScheduling.java   |   14 ++----
+ .../scheduler/fair/TestFSAppAttempt.java           |   26 +++-------
+ .../scheduler/fair/TestFairScheduler.java          |   52 ++++++++++----------
+ .../fair/TestFairSchedulerPreemption.java          |   12 +++--
+ .../scheduler/fair/TestMaxRunningAppsEnforcer.java |    7 +--
+ 9 files changed, 76 insertions(+), 111 deletions(-)
+
+diff --git a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/test/java/org/apache/hadoop/mapreduce/v2/app/TestRuntimeEstimators.java b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/test/java/org/apache/hadoop/mapreduce/v2/app/TestRuntimeEstimators.java
+index 3231f83..475cd1f 100644
+--- a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/test/java/org/apache/hadoop/mapreduce/v2/app/TestRuntimeEstimators.java
++++ b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/test/java/org/apache/hadoop/mapreduce/v2/app/TestRuntimeEstimators.java
+@@ -69,13 +69,13 @@
+ import org.apache.hadoop.yarn.api.records.ApplicationId;
+ import org.apache.hadoop.yarn.api.records.ContainerId;
+ import org.apache.hadoop.yarn.api.records.NodeId;
+-import org.apache.hadoop.yarn.api.records.Token;
+ import org.apache.hadoop.yarn.event.AsyncDispatcher;
+ import org.apache.hadoop.yarn.event.EventHandler;
+ import org.apache.hadoop.yarn.factories.RecordFactory;
+ import org.apache.hadoop.yarn.factory.providers.RecordFactoryProvider;
+ import org.apache.hadoop.yarn.security.client.ClientToAMTokenSecretManager;
+ import org.apache.hadoop.yarn.util.Clock;
++import org.apache.hadoop.yarn.util.ControlledClock;
+ import org.apache.hadoop.yarn.util.SystemClock;
+ import org.junit.Assert;
+ import org.junit.Test;
+@@ -90,7 +90,7 @@
+   private static int MAP_TASKS = 200;
+   private static int REDUCE_TASKS = 150;
+ 
+-  MockClock clock;
++  ControlledClock clock;
+ 
+   Job myJob;
+ 
+@@ -120,7 +120,7 @@
+   private void coreTestEstimator
+       (TaskRuntimeEstimator testedEstimator, int expectedSpeculations) {
+     estimator = testedEstimator;
+-	clock = new MockClock();
++	clock = new ControlledClock();
+ 	dispatcher = new AsyncDispatcher();
+     myJob = null;
+     slotsInUse.set(0);
+@@ -129,7 +129,7 @@
+     successfulSpeculations.set(0);
+     taskTimeSavedBySpeculation.set(0);
+ 
+-    clock.advanceTime(1000);
++    clock.tickMsec(1000);
+ 
+     Configuration conf = new Configuration();
+ 
+@@ -230,7 +230,7 @@
+         }
+       }
+ 
+-      clock.advanceTime(1000L);
++      clock.tickMsec(1000L);
+ 
+       if (clock.getTime() % 10000L == 0L) {
+         speculator.scanForSpeculations();
+@@ -777,22 +777,6 @@ public String getAssignedContainerMgrAddress() {
+     }
+   }
+ 
+-  static class MockClock implements Clock {
+-    private long currentTime = 0;
+-
+-    public long getTime() {
+-      return currentTime;
+-    }
+-
+-    void setMeasuredTime(long newTime) {
+-      currentTime = newTime;
+-    }
+-
+-    void advanceTime(long increment) {
+-      currentTime += increment;
+-    }
+-  }
+-
+   class MyAppMaster extends CompositeService {
+     final Clock clock;
+       public MyAppMaster(Clock clock) {
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/test/java/org/apache/hadoop/yarn/util/ControlledClock.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/test/java/org/apache/hadoop/yarn/util/ControlledClock.java
+index 16bd785..6dcb1dd 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/test/java/org/apache/hadoop/yarn/util/ControlledClock.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-common/src/test/java/org/apache/hadoop/yarn/util/ControlledClock.java
+@@ -21,6 +21,11 @@
+ public class ControlledClock implements Clock {
+   private long time = -1;
+   private final Clock actualClock;
++  // Convenience for getting a controlled clock with overridden time
++  public ControlledClock() {
++    this(new SystemClock());
++    setTime(0);
++  }
+   public ControlledClock(Clock actualClock) {
+     this.actualClock = actualClock;
+   }
+@@ -30,6 +35,16 @@ public synchronized void setTime(long time) {
+   public synchronized void reset() {
+     time = -1;
+   }
++  public synchronized void tickSec(int seconds) {
++    tickMsec(seconds * 1000L);
++  }
++  public synchronized void tickMsec(long millisec) {
++    if (time == -1) {
++      throw new IllegalStateException("ControlledClock setTime should be " +
++          "called before incrementing time");
++    }
++    time = time + millisec;
++  }
+ 
+   @Override
+   public synchronized long getTime() {
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/FairSchedulerTestBase.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/FairSchedulerTestBase.java
+index db68f91..d5a07d1 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/FairSchedulerTestBase.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/FairSchedulerTestBase.java
+@@ -49,19 +49,7 @@
+ import org.apache.hadoop.yarn.util.Clock;
+ 
+ public class FairSchedulerTestBase {
+-  protected static class MockClock implements Clock {
+-    private long time = 0;
+-    @Override
+-    public long getTime() {
+-      return time;
+-    }
+-
+-    public void tick(int seconds) {
+-      time = time + seconds * 1000;
+-    }
+-  }
+-
+-  protected final static String TEST_DIR =
++  public final static String TEST_DIR =
+       new File(System.getProperty("test.build.data", "/tmp")).getAbsolutePath();
+ 
+   private static RecordFactory
+@@ -239,4 +227,4 @@ protected RMApp createMockRMApp(ApplicationAttemptId attemptId) {
+         .put(attemptId.getApplicationId(), app);
+     return app;
+   }
+-}
+\ No newline at end of file
++}
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/TestAllocationFileLoaderService.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/TestAllocationFileLoaderService.java
+index 42c288d..6bbac86 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/TestAllocationFileLoaderService.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/TestAllocationFileLoaderService.java
+@@ -30,7 +30,7 @@
+ import org.apache.hadoop.yarn.server.resourcemanager.scheduler.fair.QueuePlacementRule.NestedUserQueue;
+ import org.apache.hadoop.yarn.server.resourcemanager.scheduler.fair.policies.DominantResourceFairnessPolicy;
+ import org.apache.hadoop.yarn.server.resourcemanager.scheduler.fair.policies.FairSharePolicy;
+-import org.apache.hadoop.yarn.util.Clock;
++import org.apache.hadoop.yarn.util.ControlledClock;
+ import org.apache.hadoop.yarn.util.resource.Resources;
+ import org.junit.Test;
+ 
+@@ -42,18 +42,6 @@
+   final static String ALLOC_FILE = new File(TEST_DIR,
+       "test-queues").getAbsolutePath();
+   
+-  private class MockClock implements Clock {
+-    private long time = 0;
+-    @Override
+-    public long getTime() {
+-      return time;
+-    }
+-
+-    public void tick(long ms) {
+-      time += ms;
+-    }
+-  }
+-  
+   @Test
+   public void testGetAllocationFileFromClasspath() {
+     Configuration conf = new Configuration();
+@@ -80,7 +68,8 @@ public void testReload() throws Exception {
+     out.println("</allocations>");
+     out.close();
+     
+-    MockClock clock = new MockClock();
++    ControlledClock clock = new ControlledClock();
++    clock.setTime(0);
+     Configuration conf = new Configuration();
+     conf.set(FairSchedulerConfiguration.ALLOCATION_FILE, ALLOC_FILE);
+ 
+@@ -125,7 +114,7 @@ public void testReload() throws Exception {
+     out.println("</allocations>");
+     out.close();
+     
+-    clock.tick(System.currentTimeMillis()
++    clock.tickMsec(System.currentTimeMillis()
+         + AllocationFileLoaderService.ALLOC_RELOAD_WAIT_MS + 10000);
+     allocLoader.start();
+     
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/TestContinuousScheduling.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/TestContinuousScheduling.java
+index c7a0e55..d1e166b 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/TestContinuousScheduling.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/TestContinuousScheduling.java
+@@ -19,19 +19,16 @@
+ package org.apache.hadoop.yarn.server.resourcemanager.scheduler.fair;
+ 
+ import org.apache.hadoop.conf.Configuration;
+-import org.apache.hadoop.metrics2.lib.MutableRate;
+-import org.apache.hadoop.metrics2.util.SampleStat;
+ import org.apache.hadoop.yarn.api.records.ApplicationAttemptId;
+ import org.apache.hadoop.yarn.api.records.ContainerId;
+-import org.apache.hadoop.yarn.api.records.Resource;
+ import org.apache.hadoop.yarn.api.records.ResourceRequest;
+ import org.apache.hadoop.yarn.server.resourcemanager.MockNodes;
+ import org.apache.hadoop.yarn.server.resourcemanager.MockRM;
+ import org.apache.hadoop.yarn.server.resourcemanager.rmnode.RMNode;
+ import org.apache.hadoop.yarn.server.resourcemanager.scheduler.event.NodeAddedSchedulerEvent;
+ 
+-import org.apache.hadoop.yarn.server.resourcemanager.scheduler.event
+-    .NodeUpdateSchedulerEvent;
++import org.apache.hadoop.yarn.server.resourcemanager.scheduler.event.NodeUpdateSchedulerEvent;
++import org.apache.hadoop.yarn.util.ControlledClock;
+ import org.apache.hadoop.yarn.util.resource.Resources;
+ import org.junit.After;
+ import static org.junit.Assert.assertEquals;
+@@ -40,11 +37,10 @@
+ import org.junit.Test;
+ 
+ import java.util.ArrayList;
+-import java.util.Collections;
+ import java.util.List;
+ 
+ public class TestContinuousScheduling extends FairSchedulerTestBase {
+-  private MockClock mockClock;
++  private ControlledClock mockClock;
+ 
+   @Override
+   public Configuration createConfiguration() {
+@@ -58,7 +54,7 @@ public Configuration createConfiguration() {
+ 
+   @Before
+   public void setup() {
+-    mockClock = new MockClock();
++    mockClock = new ControlledClock();
+     conf = createConfiguration();
+     resourceManager = new MockRM(conf);
+     resourceManager.start();
+@@ -105,7 +101,7 @@ public void testSchedulingDelay() throws InterruptedException {
+     FSAppAttempt app = scheduler.getSchedulerApp(appAttemptId);
+ 
+     // Advance time and let continuous scheduling kick in
+-    mockClock.tick(1);
++    mockClock.tickSec(1);
+     while (1024 != app.getCurrentConsumption().getMemory()) {
+       Thread.sleep(100);
+     }
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/TestFSAppAttempt.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/TestFSAppAttempt.java
+index 43fe186..7aa62a8 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/TestFSAppAttempt.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/TestFSAppAttempt.java
+@@ -31,7 +31,8 @@
+ import org.apache.hadoop.yarn.server.resourcemanager.scheduler.fair.policies.DominantResourceFairnessPolicy;
+ import org.apache.hadoop.yarn.server.resourcemanager.scheduler.fair.policies.FairSharePolicy;
+ import org.apache.hadoop.yarn.server.resourcemanager.scheduler.fair.policies.FifoPolicy;
+-import org.apache.hadoop.yarn.util.Clock;
++
++import org.apache.hadoop.yarn.util.ControlledClock;
+ import org.apache.hadoop.yarn.util.resource.Resources;
+ import org.junit.Before;
+ import org.junit.Test;
+@@ -39,19 +40,6 @@
+ 
+ public class TestFSAppAttempt extends FairSchedulerTestBase {
+ 
+-  private class MockClock implements Clock {
+-    private long time = 0;
+-    @Override
+-    public long getTime() {
+-      return time;
+-    }
+-
+-    public void tick(int seconds) {
+-      time = time + seconds * 1000;
+-    }
+-
+-  }
+-
+   @Before
+   public void setup() {
+     Configuration conf = createConfiguration();
+@@ -125,7 +113,7 @@ public void testDelaySchedulingForContinuousScheduling()
+     Priority prio = Mockito.mock(Priority.class);
+     Mockito.when(prio.getPriority()).thenReturn(1);
+ 
+-    MockClock clock = new MockClock();
++    ControlledClock clock = new ControlledClock();
+     scheduler.setClock(clock);
+ 
+     long nodeLocalityDelayMs = 5 * 1000L;    // 5 seconds
+@@ -143,13 +131,13 @@ public void testDelaySchedulingForContinuousScheduling()
+                     nodeLocalityDelayMs, rackLocalityDelayMs, clock.getTime()));
+ 
+     // after 4 seconds should remain node local
+-    clock.tick(4);
++    clock.tickSec(4);
+     assertEquals(NodeType.NODE_LOCAL,
+             schedulerApp.getAllowedLocalityLevelByTime(prio,
+                     nodeLocalityDelayMs, rackLocalityDelayMs, clock.getTime()));
+ 
+     // after 6 seconds should switch to rack local
+-    clock.tick(2);
++    clock.tickSec(2);
+     assertEquals(NodeType.RACK_LOCAL,
+             schedulerApp.getAllowedLocalityLevelByTime(prio,
+                     nodeLocalityDelayMs, rackLocalityDelayMs, clock.getTime()));
+@@ -162,12 +150,12 @@ public void testDelaySchedulingForContinuousScheduling()
+                     nodeLocalityDelayMs, rackLocalityDelayMs, clock.getTime()));
+ 
+     // Now escalate again to rack-local, then to off-switch
+-    clock.tick(6);
++    clock.tickSec(6);
+     assertEquals(NodeType.RACK_LOCAL,
+             schedulerApp.getAllowedLocalityLevelByTime(prio,
+                     nodeLocalityDelayMs, rackLocalityDelayMs, clock.getTime()));
+ 
+-    clock.tick(7);
++    clock.tickSec(7);
+     assertEquals(NodeType.OFF_SWITCH,
+             schedulerApp.getAllowedLocalityLevelByTime(prio,
+                     nodeLocalityDelayMs, rackLocalityDelayMs, clock.getTime()));
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/TestFairScheduler.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/TestFairScheduler.java
+index 18fa17a..265b8e0 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/TestFairScheduler.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/TestFairScheduler.java
+@@ -99,6 +99,8 @@
+ import org.apache.hadoop.yarn.server.resourcemanager.scheduler.fair.policies.DominantResourceFairnessPolicy;
+ import org.apache.hadoop.yarn.server.resourcemanager.scheduler.fair.policies.FifoPolicy;
+ import org.apache.hadoop.yarn.server.utils.BuilderUtils;
++import org.apache.hadoop.yarn.util.ControlledClock;
++import org.apache.hadoop.yarn.util.SystemClock;
+ import org.apache.hadoop.yarn.util.resource.Resources;
+ import org.junit.After;
+ import org.junit.Assert;
+@@ -1545,7 +1547,7 @@ public void testChoiceOfPreemptedContainers() throws Exception {
+     conf.set(FairSchedulerConfiguration.ALLOCATION_FILE + ".allocation.file", ALLOC_FILE);
+     conf.set(FairSchedulerConfiguration.USER_AS_DEFAULT_QUEUE, "false");
+     
+-    MockClock clock = new MockClock();
++    ControlledClock clock = new ControlledClock();
+     scheduler.setClock(clock);
+     
+     PrintWriter out = new PrintWriter(new FileWriter(ALLOC_FILE));
+@@ -1643,7 +1645,7 @@ public void testChoiceOfPreemptedContainers() throws Exception {
+             scheduler.getSchedulerApp(app2).getPreemptionContainers()));
+ 
+     // Pretend 15 seconds have passed
+-    clock.tick(15);
++    clock.tickSec(15);
+ 
+     // Trigger a kill by insisting we want containers back
+     scheduler.preemptResources(Resources.createResource(2 * 1024));
+@@ -1673,7 +1675,7 @@ public void testChoiceOfPreemptedContainers() throws Exception {
+     scheduler.preemptResources(Resources.createResource(2 * 1024));
+ 
+     // Pretend 15 seconds have passed
+-    clock.tick(15);
++    clock.tickSec(15);
+ 
+     // We should be able to claw back another container from A and B each.
+     // For queueA (fifo), continue preempting from app2.
+@@ -1705,7 +1707,7 @@ public void testPreemptionIsNotDelayedToNextRound() throws Exception {
+     conf.set(FairSchedulerConfiguration.ALLOCATION_FILE, ALLOC_FILE);
+     conf.set(FairSchedulerConfiguration.USER_AS_DEFAULT_QUEUE, "false");
+ 
+-    MockClock clock = new MockClock();
++    ControlledClock clock = new ControlledClock();
+     scheduler.setClock(clock);
+ 
+     PrintWriter out = new PrintWriter(new FileWriter(ALLOC_FILE));
+@@ -1758,7 +1760,7 @@ public void testPreemptionIsNotDelayedToNextRound() throws Exception {
+     scheduler.update();
+ 
+     // Let 11 sec pass
+-    clock.tick(11);
++    clock.tickSec(11);
+ 
+     scheduler.update();
+     Resource toPreempt = scheduler.resToPreempt(scheduler.getQueueManager()
+@@ -1778,7 +1780,7 @@ public void testPreemptionIsNotDelayedToNextRound() throws Exception {
+    */
+   public void testPreemptionDecision() throws Exception {
+     conf.set(FairSchedulerConfiguration.ALLOCATION_FILE, ALLOC_FILE);
+-    MockClock clock = new MockClock();
++    ControlledClock clock = new ControlledClock();
+     scheduler.setClock(clock);
+ 
+     PrintWriter out = new PrintWriter(new FileWriter(ALLOC_FILE));
+@@ -1889,7 +1891,7 @@ public void testPreemptionDecision() throws Exception {
+         Resources.none(), scheduler.resToPreempt(schedD, clock.getTime())));
+     // After minSharePreemptionTime has passed, they should want to preempt min
+     // share.
+-    clock.tick(6);
++    clock.tickSec(6);
+     assertEquals(
+         1024, scheduler.resToPreempt(schedC, clock.getTime()).getMemory());
+     assertEquals(
+@@ -1898,7 +1900,7 @@ public void testPreemptionDecision() throws Exception {
+     // After fairSharePreemptionTime has passed, they should want to preempt
+     // fair share.
+     scheduler.update();
+-    clock.tick(6);
++    clock.tickSec(6);
+     assertEquals(
+         1536 , scheduler.resToPreempt(schedC, clock.getTime()).getMemory());
+     assertEquals(
+@@ -1911,7 +1913,7 @@ public void testPreemptionDecision() throws Exception {
+    */
+   public void testPreemptionDecisionWithVariousTimeout() throws Exception {
+     conf.set(FairSchedulerConfiguration.ALLOCATION_FILE, ALLOC_FILE);
+-    MockClock clock = new MockClock();
++    ControlledClock clock = new ControlledClock();
+     scheduler.setClock(clock);
+ 
+     PrintWriter out = new PrintWriter(new FileWriter(ALLOC_FILE));
+@@ -2027,7 +2029,7 @@ public void testPreemptionDecisionWithVariousTimeout() throws Exception {
+ 
+     // After 5 seconds, queueB1 wants to preempt min share
+     scheduler.update();
+-    clock.tick(6);
++    clock.tickSec(6);
+     assertEquals(
+        1024, scheduler.resToPreempt(queueB1, clock.getTime()).getMemory());
+     assertEquals(
+@@ -2037,7 +2039,7 @@ public void testPreemptionDecisionWithVariousTimeout() throws Exception {
+ 
+     // After 10 seconds, queueB2 wants to preempt min share
+     scheduler.update();
+-    clock.tick(5);
++    clock.tickSec(5);
+     assertEquals(
+         1024, scheduler.resToPreempt(queueB1, clock.getTime()).getMemory());
+     assertEquals(
+@@ -2047,7 +2049,7 @@ public void testPreemptionDecisionWithVariousTimeout() throws Exception {
+ 
+     // After 15 seconds, queueC wants to preempt min share
+     scheduler.update();
+-    clock.tick(5);
++    clock.tickSec(5);
+     assertEquals(
+         1024, scheduler.resToPreempt(queueB1, clock.getTime()).getMemory());
+     assertEquals(
+@@ -2057,7 +2059,7 @@ public void testPreemptionDecisionWithVariousTimeout() throws Exception {
+ 
+     // After 20 seconds, queueB2 should want to preempt fair share
+     scheduler.update();
+-    clock.tick(5);
++    clock.tickSec(5);
+     assertEquals(
+         1024, scheduler.resToPreempt(queueB1, clock.getTime()).getMemory());
+     assertEquals(
+@@ -2067,7 +2069,7 @@ public void testPreemptionDecisionWithVariousTimeout() throws Exception {
+ 
+     // After 25 seconds, queueB1 should want to preempt fair share
+     scheduler.update();
+-    clock.tick(5);
++    clock.tickSec(5);
+     assertEquals(
+         1536, scheduler.resToPreempt(queueB1, clock.getTime()).getMemory());
+     assertEquals(
+@@ -2077,7 +2079,7 @@ public void testPreemptionDecisionWithVariousTimeout() throws Exception {
+ 
+     // After 30 seconds, queueC should want to preempt fair share
+     scheduler.update();
+-    clock.tick(5);
++    clock.tickSec(5);
+     assertEquals(
+         1536, scheduler.resToPreempt(queueB1, clock.getTime()).getMemory());
+     assertEquals(
+@@ -3749,7 +3751,7 @@ public void testQueueMaxAMShareDefault() throws Exception {
+   @Test
+   public void testMaxRunningAppsHierarchicalQueues() throws Exception {
+     conf.set(FairSchedulerConfiguration.ALLOCATION_FILE, ALLOC_FILE);
+-    MockClock clock = new MockClock();
++    ControlledClock clock = new ControlledClock();
+     scheduler.setClock(clock);
+ 
+     PrintWriter out = new PrintWriter(new FileWriter(ALLOC_FILE));
+@@ -3774,28 +3776,28 @@ public void testMaxRunningAppsHierarchicalQueues() throws Exception {
+     ApplicationAttemptId attId1 = createSchedulingRequest(1024, "queue1.sub1", "user1");
+     verifyAppRunnable(attId1, true);
+     verifyQueueNumRunnable("queue1.sub1", 1, 0);
+-    clock.tick(10);
++    clock.tickSec(10);
+     // exceeds no limits
+     ApplicationAttemptId attId2 = createSchedulingRequest(1024, "queue1.sub3", "user1");
+     verifyAppRunnable(attId2, true);
+     verifyQueueNumRunnable("queue1.sub3", 1, 0);
+-    clock.tick(10);
++    clock.tickSec(10);
+     // exceeds no limits
+     ApplicationAttemptId attId3 = createSchedulingRequest(1024, "queue1.sub2", "user1");
+     verifyAppRunnable(attId3, true);
+     verifyQueueNumRunnable("queue1.sub2", 1, 0);
+-    clock.tick(10);
++    clock.tickSec(10);
+     // exceeds queue1 limit
+     ApplicationAttemptId attId4 = createSchedulingRequest(1024, "queue1.sub2", "user1");
+     verifyAppRunnable(attId4, false);
+     verifyQueueNumRunnable("queue1.sub2", 1, 1);
+-    clock.tick(10);
++    clock.tickSec(10);
+     // exceeds sub3 limit
+     ApplicationAttemptId attId5 = createSchedulingRequest(1024, "queue1.sub3", "user1");
+     verifyAppRunnable(attId5, false);
+     verifyQueueNumRunnable("queue1.sub3", 1, 1);
+-    clock.tick(10);
+-    
++    clock.tickSec(10);
++
+     // Even though the app was removed from sub3, the app from sub2 gets to go
+     // because it came in first
+     AppAttemptRemovedSchedulerEvent appRemovedEvent1 =
+@@ -4056,7 +4058,7 @@ public void testDefaultRuleInitializesProperlyWhenPolicyNotConfigured()
+   public void testRecoverRequestAfterPreemption() throws Exception {
+     conf.setLong(FairSchedulerConfiguration.WAIT_TIME_BEFORE_KILL, 10);
+     
+-    MockClock clock = new MockClock();
++    ControlledClock clock = new ControlledClock();
+     scheduler.setClock(clock);
+     scheduler.init(conf);
+     scheduler.start();
+@@ -4107,8 +4109,8 @@ public void testRecoverRequestAfterPreemption() throws Exception {
+     scheduler.warnOrKillContainer(rmContainer);
+     
+     // Wait for few clock ticks
+-    clock.tick(5);
+-    
++    clock.tickSec(5);
++
+     // preempt now
+     scheduler.warnOrKillContainer(rmContainer);
+ 
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/TestFairSchedulerPreemption.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/TestFairSchedulerPreemption.java
+index 903c7af..a3527e8 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/TestFairSchedulerPreemption.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/TestFairSchedulerPreemption.java
+@@ -26,6 +26,8 @@
+ import org.apache.hadoop.yarn.server.resourcemanager.scheduler.ResourceScheduler;
+ import org.apache.hadoop.yarn.server.resourcemanager.scheduler.event.NodeAddedSchedulerEvent;
+ import org.apache.hadoop.yarn.server.resourcemanager.scheduler.event.NodeUpdateSchedulerEvent;
++
++import org.apache.hadoop.yarn.util.ControlledClock;
+ import org.apache.hadoop.yarn.util.resource.Resources;
+ import org.junit.After;
+ import org.junit.Before;
+@@ -43,7 +45,7 @@
+   private final static String ALLOC_FILE = new File(TEST_DIR,
+       TestFairSchedulerPreemption.class.getName() + ".xml").getAbsolutePath();
+ 
+-  private MockClock clock;
++  private ControlledClock clock;
+ 
+   private static class StubbedFairScheduler extends FairScheduler {
+     public int lastPreemptMemory = -1;
+@@ -71,7 +73,7 @@ protected Configuration createConfiguration() {
+   @Before
+   public void setup() throws IOException {
+     conf = createConfiguration();
+-    clock = new MockClock();
++    clock = new ControlledClock();
+   }
+ 
+   @After
+@@ -149,7 +151,7 @@ public void testPreemptionWithFreeResources() throws Exception {
+     // Verify submitting another request triggers preemption
+     createSchedulingRequest(1024, "queueB", "user1", 1, 1);
+     scheduler.update();
+-    clock.tick(6);
++    clock.tickSec(6);
+ 
+     ((StubbedFairScheduler) scheduler).resetLastPreemptResources();
+     scheduler.preemptTasksIfNecessary();
+@@ -165,7 +167,7 @@ public void testPreemptionWithFreeResources() throws Exception {
+     // Verify submitting another request doesn't trigger preemption
+     createSchedulingRequest(1024, "queueB", "user1", 1, 1);
+     scheduler.update();
+-    clock.tick(6);
++    clock.tickSec(6);
+ 
+     ((StubbedFairScheduler) scheduler).resetLastPreemptResources();
+     scheduler.preemptTasksIfNecessary();
+@@ -181,7 +183,7 @@ public void testPreemptionWithFreeResources() throws Exception {
+     // Verify submitting another request triggers preemption
+     createSchedulingRequest(1024, "queueB", "user1", 1, 1);
+     scheduler.update();
+-    clock.tick(6);
++    clock.tickSec(6);
+ 
+     ((StubbedFairScheduler) scheduler).resetLastPreemptResources();
+     scheduler.preemptTasksIfNecessary();
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/TestMaxRunningAppsEnforcer.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/TestMaxRunningAppsEnforcer.java
+index ac5748f..6cca19a 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/TestMaxRunningAppsEnforcer.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/fair/TestMaxRunningAppsEnforcer.java
+@@ -31,6 +31,7 @@
+ import org.apache.hadoop.yarn.server.resourcemanager.RMContext;
+ import org.apache.hadoop.yarn.api.records.ApplicationAttemptId;
+ import org.apache.hadoop.yarn.api.records.ApplicationId;
++import org.apache.hadoop.yarn.util.ControlledClock;
+ import org.junit.Before;
+ import org.junit.Test;
+ 
+@@ -40,14 +41,14 @@
+   private Map<String, Integer> userMaxApps;
+   private MaxRunningAppsEnforcer maxAppsEnforcer;
+   private int appNum;
+-  private TestFairScheduler.MockClock clock;
++  private ControlledClock clock;
+   private RMContext rmContext;
+   private FairScheduler scheduler;
+   
+   @Before
+   public void setup() throws Exception {
+     Configuration conf = new Configuration();
+-    clock = new TestFairScheduler.MockClock();
++    clock = new ControlledClock();
+     scheduler = mock(FairScheduler.class);
+     when(scheduler.getConf()).thenReturn(
+         new FairSchedulerConfiguration(conf));
+@@ -151,7 +152,7 @@ public void testRemoveEnablingOrderedByStartTime() {
+     FSAppAttempt app1 = addApp(leaf1, "user");
+     addApp(leaf2, "user");
+     addApp(leaf2, "user");
+-    clock.tick(20);
++    clock.tickSec(20);
+     addApp(leaf1, "user");
+     assertEquals(1, leaf1.getNumRunnableApps());
+     assertEquals(1, leaf2.getNumRunnableApps());
+-- 
+1.7.9.5
+

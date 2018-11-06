@@ -1,0 +1,29 @@
+From d8ef79e694881d27c7b18029c590ffe1b82af6af Mon Sep 17 00:00:00 2001
+From: Colin Patrick Mccabe <cmccabe@cloudera.com>
+Date: Tue, 30 Jun 2015 13:50:11 -0700
+Subject: [PATCH 0617/1023] CLOUDERA-BUILD. CDH-29026. Fix unit test failure
+ in
+ TestNameNodeJspHelper#testNodeListJspGenerateNodesList
+ (cmccabe)
+
+(cherry picked from commit 301a8ea5d5f0acae6b7e2155e36f52926e0b0596)
+---
+ .../hdfs/server/namenode/NamenodeJspHelper.java    |    2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NamenodeJspHelper.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NamenodeJspHelper.java
+index 2eeb447..420d6ed 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NamenodeJspHelper.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NamenodeJspHelper.java
+@@ -879,6 +879,8 @@ void generateNodesList(ServletContext context, JspWriter out,
+       sorterOrder = request.getParameter("sorter/order");
+       if (sorterField == null)
+         sorterField = "name";
++      if (sorterOrder == null)
++        sorterOrder = "ASC";
+ 
+       String[] validSortOrders = new String[]{"ASC", "DSC"};
+       String validatedOrder = null;
+-- 
+1.7.9.5
+

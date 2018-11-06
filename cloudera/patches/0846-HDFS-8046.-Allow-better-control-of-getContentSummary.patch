@@ -1,0 +1,129 @@
+From 5297b466659d24d06f43169c850842d8cbfacb7b Mon Sep 17 00:00:00 2001
+From: Kihwal Lee <kihwal@apache.org>
+Date: Wed, 8 Apr 2015 15:39:25 -0500
+Subject: [PATCH 0846/1023] HDFS-8046. Allow better control of
+ getContentSummary. Contributed by Kihwal Lee.
+ (cherry picked from commit
+ 285b31e75e51ec8e3a796c2cb0208739368ca9b8)
+
+(cherry picked from commit 7e622076d41a85fc9a8600fb270564a085f5cd83)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/ContentSummaryComputationContext.java
+	hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSDirStatAndListingOp.java
+	hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSDirectory.java
+
+(cherry picked from commit 1ef5e0b18066ca949adcf4c55a41f186c47e7264)
+(cherry picked from commit 619f7938466e907f335941bbbbd928c6272a0482)
+
+Change-Id: Icb9393972adb5c8a4d5e0299fb0db1b66771d176
+---
+ .../java/org/apache/hadoop/hdfs/DFSConfigKeys.java |    4 +++-
+ .../namenode/ContentSummaryComputationContext.java |   10 +++++++---
+ .../hadoop/hdfs/server/namenode/FSDirectory.java   |   10 +++++++++-
+ 3 files changed, 19 insertions(+), 5 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSConfigKeys.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSConfigKeys.java
+index 9d60680..28bcd5a 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSConfigKeys.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSConfigKeys.java
+@@ -283,7 +283,9 @@
+   public static final String  DFS_LIST_LIMIT = "dfs.ls.limit";
+   public static final int     DFS_LIST_LIMIT_DEFAULT = 1000;
+   public static final String  DFS_CONTENT_SUMMARY_LIMIT_KEY = "dfs.content-summary.limit";
+-  public static final int     DFS_CONTENT_SUMMARY_LIMIT_DEFAULT = 0;
++  public static final int     DFS_CONTENT_SUMMARY_LIMIT_DEFAULT = 5000;
++  public static final String  DFS_CONTENT_SUMMARY_SLEEP_MICROSEC_KEY = "dfs.content-summary.sleep-microsec";
++  public static final long    DFS_CONTENT_SUMMARY_SLEEP_MICROSEC_DEFAULT = 500;
+   public static final String  DFS_DATANODE_FAILED_VOLUMES_TOLERATED_KEY = "dfs.datanode.failed.volumes.tolerated";
+   public static final int     DFS_DATANODE_FAILED_VOLUMES_TOLERATED_DEFAULT = 0;
+   public static final String  DFS_DATANODE_SYNCONCLOSE_KEY = "dfs.datanode.synconclose";
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/ContentSummaryComputationContext.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/ContentSummaryComputationContext.java
+index dab64ec..17e16ab 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/ContentSummaryComputationContext.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/ContentSummaryComputationContext.java
+@@ -29,6 +29,8 @@
+   private long nextCountLimit = 0;
+   private long limitPerRun = 0;
+   private long yieldCount = 0;
++  private long sleepMilliSec = 0;
++  private int sleepNanoSec = 0;
+ 
+   /**
+    * Constructor
+@@ -40,17 +42,19 @@
+    *        no limit (i.e. no yielding)
+    */
+   public ContentSummaryComputationContext(FSDirectory dir,
+-      FSNamesystem fsn, long limitPerRun) {
++      FSNamesystem fsn, long limitPerRun, long sleepMicroSec) {
+     this.dir = dir;
+     this.fsn = fsn;
+     this.limitPerRun = limitPerRun;
+     this.nextCountLimit = limitPerRun;
+     this.counts = Content.Counts.newInstance();
++    this.sleepMilliSec = sleepMicroSec/1000;
++    this.sleepNanoSec = (int)((sleepMicroSec%1000)*1000);
+   }
+ 
+   /** Constructor for blocking computation. */
+   public ContentSummaryComputationContext() {
+-    this(null, null, 0);
++    this(null, null, 0, 1000);
+   }
+ 
+   /** Return current yield count */
+@@ -101,7 +105,7 @@ public boolean yield() {
+     fsn.readUnlock();
+ 
+     try {
+-      Thread.sleep(1);
++      Thread.sleep(sleepMilliSec, sleepNanoSec);
+     } catch (InterruptedException ie) {
+     } finally {
+       // reacquire
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSDirectory.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSDirectory.java
+index e050911..c9586a4 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSDirectory.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSDirectory.java
+@@ -144,6 +144,7 @@ private static INodeDirectory createRoot(FSNamesystem namesystem) {
+   private final int maxDirItems;
+   private final int lsLimit;  // max list limit
+   private final int contentCountLimit; // max content summary counts per run
++  private final long contentSleepMicroSec;
+   private final INodeMap inodeMap; // Synchronized by dirLock
+   private long yieldCount = 0; // keep track of lock yield count.
+   private final int inodeXAttrsLimit; //inode xattrs max limit
+@@ -204,6 +205,9 @@ public int getWriteHoldCount() {
+     this.contentCountLimit = conf.getInt(
+         DFSConfigKeys.DFS_CONTENT_SUMMARY_LIMIT_KEY,
+         DFSConfigKeys.DFS_CONTENT_SUMMARY_LIMIT_DEFAULT);
++    this.contentSleepMicroSec = conf.getLong(
++        DFSConfigKeys.DFS_CONTENT_SUMMARY_SLEEP_MICROSEC_KEY,
++        DFSConfigKeys.DFS_CONTENT_SUMMARY_SLEEP_MICROSEC_DEFAULT);
+     
+     // filesystem limits
+     this.maxComponentLength = conf.getInt(
+@@ -252,6 +256,10 @@ public INodeDirectory getRoot() {
+     return rootDir;
+   }
+ 
++  long getContentSleepMicroSec() {
++    return contentSleepMicroSec;
++  }
++
+   /**
+    * Shutdown the filestore
+    */
+@@ -2186,7 +2194,7 @@ ContentSummary getContentSummary(String src)
+         ContentSummaryComputationContext cscc =
+ 
+             new ContentSummaryComputationContext(this, getFSNamesystem(),
+-            contentCountLimit);
++            contentCountLimit, contentSleepMicroSec);
+         ContentSummary cs = targetNode.computeAndConvertContentSummary(cscc);
+         yieldCount += cscc.getYieldCount();
+         return cs;
+-- 
+1.7.9.5
+

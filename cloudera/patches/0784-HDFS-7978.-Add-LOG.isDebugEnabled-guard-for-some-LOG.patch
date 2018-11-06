@@ -1,0 +1,331 @@
+From f94736df1b475a77a7cd91d15084402db19103f8 Mon Sep 17 00:00:00 2001
+From: Andrew Wang <wang@apache.org>
+Date: Wed, 1 Apr 2015 12:53:25 -0700
+Subject: [PATCH 0784/1023] HDFS-7978. Add LOG.isDebugEnabled() guard for some
+ LOG.debug(..). Contributed by Walter Su.
+
+(cherry picked from commit ed72daa5df97669906234e8ac9a406d78136b206)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt
+
+Change-Id: Id85b13273fb306919f44a5b89a08eae571e81d2e
+(cherry picked from commit bc23c83b1c62e95b765f957ea2945c0b3e1a00d4)
+---
+ .../org/apache/hadoop/hdfs/BlockReaderFactory.java |   24 +++++++++-----------
+ .../main/java/org/apache/hadoop/hdfs/HAUtil.java   |   12 ++++++----
+ .../hdfs/server/datanode/BPServiceActor.java       |    8 ++++---
+ .../datanode/fsdataset/impl/FsDatasetCache.java    |    8 ++++---
+ .../hdfs/server/namenode/FileJournalManager.java   |   22 +++++++++++-------
+ .../hadoop/hdfs/server/namenode/NameNode.java      |    4 +++-
+ .../hdfs/shortcircuit/ShortCircuitCache.java       |    4 +++-
+ .../tools/offlineImageViewer/FSImageLoader.java    |    6 +++--
+ .../hadoop/hdfs/util/LightWeightHashSet.java       |    6 +++--
+ .../org/apache/hadoop/hdfs/web/TokenAspect.java    |    8 +++++--
+ .../apache/hadoop/hdfs/web/WebHdfsFileSystem.java  |   16 +++++++++----
+ 11 files changed, 75 insertions(+), 43 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/BlockReaderFactory.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/BlockReaderFactory.java
+index 5fce2cf..bcd957a 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/BlockReaderFactory.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/BlockReaderFactory.java
+@@ -419,9 +419,9 @@ private BlockReader getLegacyBlockReaderLocal() throws IOException {
+       return null;
+     }
+     if (clientContext.getDisableLegacyBlockReaderLocal()) {
+-      PerformanceAdvisory.LOG.debug(this + ": can't construct " +
+-          "BlockReaderLocalLegacy because " +
+-          "disableLegacyBlockReaderLocal is set.");
++        PerformanceAdvisory.LOG.debug("{}: can't construct " +
++            "BlockReaderLocalLegacy because " +
++            "disableLegacyBlockReaderLocal is set.", this);
+       return null;
+     }
+     IOException ioe = null;
+@@ -460,8 +460,8 @@ private BlockReader getBlockReaderLocal() throws InvalidToken {
+                       getPathInfo(inetSocketAddress, conf);
+     }
+     if (!pathInfo.getPathState().getUsableForShortCircuit()) {
+-      PerformanceAdvisory.LOG.debug(this + ": " + pathInfo + " is not " +
+-          "usable for short circuit; giving up on BlockReaderLocal.");
++      PerformanceAdvisory.LOG.debug("{}: {} is not usable for short circuit; " +
++              "giving up on BlockReaderLocal.", this, pathInfo);
+       return null;
+     }
+     ShortCircuitCache cache = clientContext.getShortCircuitCache();
+@@ -476,11 +476,9 @@ private BlockReader getBlockReaderLocal() throws InvalidToken {
+       throw exc;
+     }
+     if (info.getReplica() == null) {
+-      if (LOG.isTraceEnabled()) {
+-        PerformanceAdvisory.LOG.debug(this + ": failed to get " +
+-            "ShortCircuitReplica. Cannot construct " +
+-            "BlockReaderLocal via " + pathInfo.getPath());
+-      }
++      PerformanceAdvisory.LOG.debug("{}: failed to get " +
++          "ShortCircuitReplica. Cannot construct " +
++          "BlockReaderLocal via {}", this, pathInfo.getPath());
+       return null;
+     }
+     return new BlockReaderLocal.Builder(conf).
+@@ -661,9 +659,9 @@ private BlockReader getRemoteBlockReaderFromDomain() throws IOException {
+                       getPathInfo(inetSocketAddress, conf);
+     }
+     if (!pathInfo.getPathState().getUsableForDataTransfer()) {
+-      PerformanceAdvisory.LOG.debug(this + ": not trying to create a " +
+-          "remote block reader because the UNIX domain socket at " +
+-          pathInfo + " is not usable.");
++      PerformanceAdvisory.LOG.debug("{}: not trying to create a " +
++          "remote block reader because the UNIX domain socket at {}" +
++           " is not usable.", this, pathInfo);
+       return null;
+     }
+     if (LOG.isTraceEnabled()) {
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/HAUtil.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/HAUtil.java
+index f91f709..0ee57c2 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/HAUtil.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/HAUtil.java
+@@ -319,12 +319,16 @@ public static void cloneDelegationTokenForLogicalUri(
+             buildTokenServicePrefixForLogicalUri(HdfsConstants.HDFS_URI_SCHEME)
+                 + "//" + specificToken.getService());
+         ugi.addToken(alias, specificToken);
+-        LOG.debug("Mapped HA service delegation token for logical URI " +
+-            haUri + " to namenode " + singleNNAddr);
++        if (LOG.isDebugEnabled()) {
++          LOG.debug("Mapped HA service delegation token for logical URI " +
++              haUri + " to namenode " + singleNNAddr);
++        }
+       }
+     } else {
+-      LOG.debug("No HA service delegation token found for logical URI " +
+-          haUri);
++      if (LOG.isDebugEnabled()) {
++        LOG.debug("No HA service delegation token found for logical URI " +
++            haUri);
++      }
+     }
+   }
+ 
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BPServiceActor.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BPServiceActor.java
+index 46ae9e9..985e969 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BPServiceActor.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BPServiceActor.java
+@@ -526,9 +526,11 @@ DatanodeCommand cacheReport() throws IOException {
+       long createCost = createTime - startTime;
+       long sendCost = sendTime - createTime;
+       dn.getMetrics().addCacheReport(sendCost);
+-      LOG.debug("CacheReport of " + blockIds.size()
+-          + " block(s) took " + createCost + " msec to generate and "
+-          + sendCost + " msecs for RPC and NN processing");
++      if (LOG.isDebugEnabled()) {
++        LOG.debug("CacheReport of " + blockIds.size()
++            + " block(s) took " + createCost + " msec to generate and "
++            + sendCost + " msecs for RPC and NN processing");
++      }
+     }
+     return cmd;
+   }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetCache.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetCache.java
+index c6408e6..e0df0f2 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetCache.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/fsdataset/impl/FsDatasetCache.java
+@@ -319,9 +319,11 @@ synchronized void uncacheBlock(String bpid, long blockId) {
+       mappableBlockMap.put(key,
+           new Value(prevValue.mappableBlock, State.UNCACHING));
+       if (deferred) {
+-        LOG.debug("{} is anchored, and can't be uncached now.  Scheduling it " +
+-            "for uncaching in {} ",
+-            key, DurationFormatUtils.formatDurationHMS(revocationPollingMs));
++        if (LOG.isDebugEnabled()) {
++          LOG.debug("{} is anchored, and can't be uncached now.  Scheduling it " +
++                  "for uncaching in {} ",
++              key, DurationFormatUtils.formatDurationHMS(revocationPollingMs));
++        }
+         deferredUncachingExecutor.schedule(
+             new UncachingTask(key, revocationMs),
+             revocationPollingMs, TimeUnit.MILLISECONDS);
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FileJournalManager.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FileJournalManager.java
+index 2df052b..b8a59b5 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FileJournalManager.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FileJournalManager.java
+@@ -319,9 +319,11 @@ synchronized public void selectInputStreams(
+       Collection<EditLogInputStream> streams, long fromTxId,
+       boolean inProgressOk) throws IOException {
+     List<EditLogFile> elfs = matchEditLogs(sd.getCurrentDir());
+-    LOG.debug(this + ": selecting input streams starting at " + fromTxId + 
+-        (inProgressOk ? " (inProgress ok) " : " (excluding inProgress) ") +
+-        "from among " + elfs.size() + " candidate file(s)");
++    if (LOG.isDebugEnabled()) {
++      LOG.debug(this + ": selecting input streams starting at " + fromTxId +
++          (inProgressOk ? " (inProgress ok) " : " (excluding inProgress) ") +
++          "from among " + elfs.size() + " candidate file(s)");
++    }
+     addStreamsToCollectionFromFiles(elfs, streams, fromTxId, inProgressOk);
+   }
+   
+@@ -330,8 +332,10 @@ static void addStreamsToCollectionFromFiles(Collection<EditLogFile> elfs,
+     for (EditLogFile elf : elfs) {
+       if (elf.isInProgress()) {
+         if (!inProgressOk) {
+-          LOG.debug("passing over " + elf + " because it is in progress " +
+-              "and we are ignoring in-progress logs.");
++          if (LOG.isDebugEnabled()) {
++            LOG.debug("passing over " + elf + " because it is in progress " +
++                "and we are ignoring in-progress logs.");
++          }
+           continue;
+         }
+         try {
+@@ -344,9 +348,11 @@ static void addStreamsToCollectionFromFiles(Collection<EditLogFile> elfs,
+       }
+       if (elf.lastTxId < fromTxId) {
+         assert elf.lastTxId != HdfsConstants.INVALID_TXID;
+-        LOG.debug("passing over " + elf + " because it ends at " +
+-            elf.lastTxId + ", but we only care about transactions " +
+-            "as new as " + fromTxId);
++        if (LOG.isDebugEnabled()) {
++          LOG.debug("passing over " + elf + " because it ends at " +
++              elf.lastTxId + ", but we only care about transactions " +
++              "as new as " + fromTxId);
++        }
+         continue;
+       }
+       EditLogFileInputStream elfis = new EditLogFileInputStream(elf.getFile(),
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNode.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNode.java
+index e463eea..3e06756 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNode.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNode.java
+@@ -1530,7 +1530,9 @@ public static void initializeGenericKeys(Configuration conf,
+       URI defaultUri = URI.create(HdfsConstants.HDFS_URI_SCHEME + "://"
+           + conf.get(DFS_NAMENODE_RPC_ADDRESS_KEY));
+       conf.set(FS_DEFAULT_NAME_KEY, defaultUri.toString());
+-      LOG.debug("Setting " + FS_DEFAULT_NAME_KEY + " to " + defaultUri.toString());
++      if (LOG.isDebugEnabled()) {
++        LOG.debug("Setting " + FS_DEFAULT_NAME_KEY + " to " + defaultUri.toString());
++      }
+     }
+   }
+     
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/shortcircuit/ShortCircuitCache.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/shortcircuit/ShortCircuitCache.java
+index a7c6dc1..10afe58 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/shortcircuit/ShortCircuitCache.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/shortcircuit/ShortCircuitCache.java
+@@ -446,7 +446,9 @@ void unref(ShortCircuitReplica replica) {
+           purgeReason = "purging replica because it is stale.";
+         }
+         if (purgeReason != null) {
+-          LOG.debug(this + ": " + purgeReason);
++          if (LOG.isDebugEnabled()) {
++            LOG.debug(this + ": " + purgeReason);
++          }
+           purge(replica);
+         }
+       }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/tools/offlineImageViewer/FSImageLoader.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/tools/offlineImageViewer/FSImageLoader.java
+index 8571ed3..b4702be 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/tools/offlineImageViewer/FSImageLoader.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/tools/offlineImageViewer/FSImageLoader.java
+@@ -146,8 +146,10 @@ public int compare(FsImageProto.FileSummary.Section s1,
+             summary.getCodec(), new BufferedInputStream(new LimitInputStream(
+             fin, s.getLength())));
+ 
+-        LOG.debug("Loading section " + s.getName() + " length: " + s.getLength
+-                ());
++        if (LOG.isDebugEnabled()) {
++          LOG.debug("Loading section " + s.getName() + " length: " + s.getLength
++              ());
++        }
+         switch (FSImageFormatProtobuf.SectionName.fromString(s.getName())) {
+           case STRING_TABLE:
+             stringTable = loadStringTable(is);
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/util/LightWeightHashSet.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/util/LightWeightHashSet.java
+index 7b7b2a9..ffd390f 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/util/LightWeightHashSet.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/util/LightWeightHashSet.java
+@@ -127,8 +127,10 @@ public LightWeightHashSet(int initCapacity, float maxLoadFactor,
+     this.shrinkThreshold = (int) (capacity * minLoadFactor);
+ 
+     entries = new LinkedElement[capacity];
+-    LOG.debug("initial capacity=" + initialCapacity + ", max load factor= "
+-        + maxLoadFactor + ", min load factor= " + minLoadFactor);
++    if (LOG.isDebugEnabled()) {
++      LOG.debug("initial capacity=" + initialCapacity + ", max load factor= "
++          + maxLoadFactor + ", min load factor= " + minLoadFactor);
++    }
+   }
+ 
+   public LightWeightHashSet() {
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/web/TokenAspect.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/web/TokenAspect.java
+index 1a258f0..03145ed 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/web/TokenAspect.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/web/TokenAspect.java
+@@ -142,7 +142,9 @@ synchronized void ensureTokenInitialized() throws IOException {
+       if (token != null) {
+         fs.setDelegationToken(token);
+         addRenewAction(fs);
+-        LOG.debug("Created new DT for " + token.getService());
++        if(LOG.isDebugEnabled()) {
++          LOG.debug("Created new DT for " + token.getService());
++        }
+       }
+       hasInitedToken = true;
+     }
+@@ -155,7 +157,9 @@ public synchronized void reset() {
+   synchronized void initDelegationToken(UserGroupInformation ugi) {
+     Token<?> token = selectDelegationToken(ugi);
+     if (token != null) {
+-      LOG.debug("Found existing DT for " + token.getService());
++      if(LOG.isDebugEnabled()) {
++        LOG.debug("Found existing DT for " + token.getService());
++      }
+       fs.setDelegationToken(token);
+       hasInitedToken = true;
+     }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/web/WebHdfsFileSystem.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/web/WebHdfsFileSystem.java
+index b36fbf2..98684f2 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/web/WebHdfsFileSystem.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/web/WebHdfsFileSystem.java
+@@ -231,12 +231,16 @@ public static boolean isEnabled(final Configuration conf, final Log log) {
+       // refetch tokens.  even if ugi has credentials, don't attempt
+       // to get another token to match hdfs/rpc behavior
+       if (token != null) {
+-        LOG.debug("Using UGI token: " + token);
++        if(LOG.isDebugEnabled()) {
++          LOG.debug("Using UGI token: " + token);
++        }
+         canRefreshDelegationToken = false; 
+       } else {
+         token = getDelegationToken(null);
+         if (token != null) {
+-          LOG.debug("Fetched new token: " + token);
++          if(LOG.isDebugEnabled()) {
++            LOG.debug("Fetched new token: " + token);
++          }
+         } else { // security is disabled
+           canRefreshDelegationToken = false;
+         }
+@@ -251,7 +255,9 @@ synchronized boolean replaceExpiredDelegationToken() throws IOException {
+     boolean replaced = false;
+     if (canRefreshDelegationToken) {
+       Token<?> token = getDelegationToken(null);
+-      LOG.debug("Replaced expired token: " + token);
++      if(LOG.isDebugEnabled()) {
++        LOG.debug("Replaced expired token: " + token);
++      }
+       setDelegationToken(token);
+       replaced = (token != null);
+     }
+@@ -1183,7 +1189,9 @@ public synchronized void close() throws IOException {
+         cancelDelegationToken(delegationToken);
+       }
+     } catch (IOException ioe) {
+-      LOG.debug("Token cancel failed: "+ioe);
++      if (LOG.isDebugEnabled()) {
++        LOG.debug("Token cancel failed: " + ioe);
++      }
+     } finally {
+       super.close();
+     }
+-- 
+1.7.9.5
+

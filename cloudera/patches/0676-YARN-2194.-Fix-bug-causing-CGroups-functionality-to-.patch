@@ -1,0 +1,242 @@
+From aa1faee40d901d368f4ae685c7837bdde42726b5 Mon Sep 17 00:00:00 2001
+From: Varun Vasudev <vvasudev@apache.org>
+Date: Tue, 7 Jul 2015 16:59:29 +0530
+Subject: [PATCH 0676/1023] YARN-2194. Fix bug causing CGroups functionality
+ to fail on RHEL7. Contributed by Wei Yan.
+
+(cherry-picked from commit 7e3ebc0fc59dbd1d7768b5a6c05af18b8c8fea4d)
+
+(cherry picked from commit 16ca0fcf99a0f859f2a8e12b37d8767f4f45e253)
+
+Change-Id: Id40570bfdc1629d16b4803cacdad1a23f84a0ec8
+---
+ .../java/org/apache/hadoop/util/StringUtils.java   |    8 ++++++++
+ .../org/apache/hadoop/util/TestStringUtils.java    |    4 ++++
+ .../server/nodemanager/LinuxContainerExecutor.java |   12 ++++++++----
+ .../linux/privileged/PrivilegedOperation.java      |    1 +
+ .../privileged/PrivilegedOperationExecutor.java    |    2 +-
+ .../util/CgroupsLCEResourcesHandler.java           |    6 ++++--
+ .../native/container-executor/impl/configuration.c |    8 ++++----
+ .../test/test-container-executor.c                 |    4 ++--
+ .../TestLinuxContainerExecutorWithMocks.java       |   13 +++++++++----
+ 9 files changed, 41 insertions(+), 17 deletions(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/util/StringUtils.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/util/StringUtils.java
+index ff8edc3..9625845 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/util/StringUtils.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/util/StringUtils.java
+@@ -871,6 +871,10 @@ public static String join(CharSequence separator, Iterable<?> strings) {
+     return sb.toString();
+   }
+ 
++  public static String join(char separator, Iterable<?> strings) {
++    return join(separator + "", strings);
++  }
++
+   /**
+    * Concatenates strings, using a separator.
+    *
+@@ -893,6 +897,10 @@ public static String join(CharSequence separator, String[] strings) {
+     return sb.toString();
+   }
+ 
++  public static String join(char separator, String[] strings) {
++    return join(separator + "", strings);
++  }
++
+   /**
+    * Convert SOME_STUFF to SomeStuff
+    *
+diff --git a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/util/TestStringUtils.java b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/util/TestStringUtils.java
+index 0c930d4..f4db930 100644
+--- a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/util/TestStringUtils.java
++++ b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/util/TestStringUtils.java
+@@ -275,8 +275,12 @@ public void testJoin() {
+     s.add("c");
+     assertEquals("", StringUtils.join(":", s.subList(0, 0)));
+     assertEquals("a", StringUtils.join(":", s.subList(0, 1)));
++    assertEquals("", StringUtils.join(':', s.subList(0, 0)));
++    assertEquals("a", StringUtils.join(':', s.subList(0, 1)));
+     assertEquals("a:b", StringUtils.join(":", s.subList(0, 2)));
+     assertEquals("a:b:c", StringUtils.join(":", s.subList(0, 3)));
++    assertEquals("a:b", StringUtils.join(':', s.subList(0, 2)));
++    assertEquals("a:b:c", StringUtils.join(':', s.subList(0, 3)));
+   }
+   
+   @Test (timeout = 30000)
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/LinuxContainerExecutor.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/LinuxContainerExecutor.java
+index 88b4717..5882f13 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/LinuxContainerExecutor.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/LinuxContainerExecutor.java
+@@ -229,8 +229,10 @@ public void startLocalizer(Path nmPrivateContainerTokensPath,
+                    Integer.toString(Commands.INITIALIZE_CONTAINER.getValue()),
+                    appId,
+                    nmPrivateContainerTokensPath.toUri().getPath().toString(),
+-                   StringUtils.join(",", localDirs),
+-                   StringUtils.join(",", logDirs)));
++                   StringUtils.join(PrivilegedOperation.LINUX_FILE_PATH_SEPARATOR,
++                       localDirs),
++                   StringUtils.join(PrivilegedOperation.LINUX_FILE_PATH_SEPARATOR,
++                       logDirs)));
+ 
+     File jvm =                                  // use same jvm as parent
+       new File(new File(System.getProperty("java.home"), "bin"), "java");
+@@ -345,8 +347,10 @@ public int launchContainer(Container container,
+             nmPrivateCotainerScriptPath.toUri().getPath().toString(),
+             nmPrivateTokensPath.toUri().getPath().toString(),
+             pidFilePath.toString(),
+-            StringUtils.join(",", localDirs),
+-            StringUtils.join(",", logDirs),
++            StringUtils.join(PrivilegedOperation.LINUX_FILE_PATH_SEPARATOR,
++                localDirs),
++            StringUtils.join(PrivilegedOperation.LINUX_FILE_PATH_SEPARATOR,
++                logDirs),
+             resourcesOptions));
+ 
+         if (tcCommandFile != null) {
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/containermanager/linux/privileged/PrivilegedOperation.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/containermanager/linux/privileged/PrivilegedOperation.java
+index 74556a8..f220cbd 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/containermanager/linux/privileged/PrivilegedOperation.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/containermanager/linux/privileged/PrivilegedOperation.java
+@@ -36,6 +36,7 @@
+ @InterfaceAudience.Private
+ @InterfaceStability.Unstable
+ public class PrivilegedOperation {
++  public final static char LINUX_FILE_PATH_SEPARATOR = '%';
+ 
+   public enum OperationType {
+     CHECK_SETUP("--checksetup"),
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/containermanager/linux/privileged/PrivilegedOperationExecutor.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/containermanager/linux/privileged/PrivilegedOperationExecutor.java
+index 1c4a51c..6fe0f5c 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/containermanager/linux/privileged/PrivilegedOperationExecutor.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/containermanager/linux/privileged/PrivilegedOperationExecutor.java
+@@ -234,7 +234,7 @@ public String executePrivilegedOperation(PrivilegedOperation operation,
+ 
+       if (noneArgsOnly == false) {
+         //We have already appended at least one tasks file.
+-        finalOpArg.append(",");
++        finalOpArg.append(PrivilegedOperation.LINUX_FILE_PATH_SEPARATOR);
+         finalOpArg.append(tasksFile);
+       } else {
+         finalOpArg.append(tasksFile);
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/util/CgroupsLCEResourcesHandler.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/util/CgroupsLCEResourcesHandler.java
+index d90da97..698aa62 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/util/CgroupsLCEResourcesHandler.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/util/CgroupsLCEResourcesHandler.java
+@@ -50,6 +50,7 @@
+ import org.apache.hadoop.yarn.api.records.Resource;
+ import org.apache.hadoop.yarn.conf.YarnConfiguration;
+ import org.apache.hadoop.yarn.server.nodemanager.LinuxContainerExecutor;
++import org.apache.hadoop.yarn.server.nodemanager.containermanager.linux.privileged.PrivilegedOperation;
+ import org.apache.hadoop.yarn.util.Clock;
+ import org.apache.hadoop.yarn.util.ResourceCalculatorPlugin;
+ import org.apache.hadoop.yarn.util.SystemClock;
+@@ -416,10 +417,11 @@ public String getResourcesOption(ContainerId containerId) {
+ 
+     if (isCpuWeightEnabled()) {
+       sb.append(pathForCgroup(CONTROLLER_CPU, containerName) + "/tasks");
+-      sb.append(",");
++      sb.append(PrivilegedOperation.LINUX_FILE_PATH_SEPARATOR);
+     }
+ 
+-    if (sb.charAt(sb.length() - 1) == ',') {
++    if (sb.charAt(sb.length() - 1) ==
++        PrivilegedOperation.LINUX_FILE_PATH_SEPARATOR) {
+       sb.deleteCharAt(sb.length() - 1);
+     }
+ 
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/native/container-executor/impl/configuration.c b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/native/container-executor/impl/configuration.c
+index 15b53ae..51adc97 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/native/container-executor/impl/configuration.c
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/native/container-executor/impl/configuration.c
+@@ -283,7 +283,7 @@ char * get_value(const char* key) {
+ 
+ /**
+  * Function to return an array of values for a key.
+- * Value delimiter is assumed to be a comma.
++ * Value delimiter is assumed to be a '%'.
+  */
+ char ** get_values(const char * key) {
+   char *value = get_value(key);
+@@ -291,7 +291,7 @@ char ** get_values(const char * key) {
+ }
+ 
+ /**
+- * Extracts array of values from the comma separated list of values.
++ * Extracts array of values from the '%' separated list of values.
+  */
+ char ** extract_values(char *value) {
+   char ** toPass = NULL;
+@@ -303,14 +303,14 @@ char ** extract_values(char *value) {
+   //first allocate any array of 10
+   if(value != NULL) {
+     toPass = (char **) malloc(sizeof(char *) * toPassSize);
+-    tempTok = strtok_r((char *)value, ",", &tempstr);
++    tempTok = strtok_r((char *)value, "%", &tempstr);
+     while (tempTok != NULL) {
+       toPass[size++] = tempTok;
+       if(size == toPassSize) {
+         toPassSize += MAX_SIZE;
+         toPass = (char **) realloc(toPass,(sizeof(char *) * toPassSize));
+       }
+-      tempTok = strtok_r(NULL, ",", &tempstr);
++      tempTok = strtok_r(NULL, "%", &tempstr);
+     }
+   }
+   if (toPass != NULL) {
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/native/container-executor/test/test-container-executor.c b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/native/container-executor/test/test-container-executor.c
+index 7f08e06..24556e7 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/native/container-executor/test/test-container-executor.c
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/native/container-executor/test/test-container-executor.c
+@@ -30,8 +30,8 @@
+ 
+ #define TEST_ROOT "/tmp/test-container-executor"
+ #define DONT_TOUCH_FILE "dont-touch-me"
+-#define NM_LOCAL_DIRS       TEST_ROOT "/local-1," TEST_ROOT "/local-2," \
+-               TEST_ROOT "/local-3," TEST_ROOT "/local-4," TEST_ROOT "/local-5"
++#define NM_LOCAL_DIRS       TEST_ROOT "/local-1%" TEST_ROOT "/local-2%" \
++               TEST_ROOT "/local-3%" TEST_ROOT "/local-4%" TEST_ROOT "/local-5"
+ #define NM_LOG_DIRS         TEST_ROOT "/logs/userlogs"
+ #define ARRAY_SIZE 1000
+ 
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/test/java/org/apache/hadoop/yarn/server/nodemanager/TestLinuxContainerExecutorWithMocks.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/test/java/org/apache/hadoop/yarn/server/nodemanager/TestLinuxContainerExecutorWithMocks.java
+index 81591ca..31a9eb6 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/test/java/org/apache/hadoop/yarn/server/nodemanager/TestLinuxContainerExecutorWithMocks.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/test/java/org/apache/hadoop/yarn/server/nodemanager/TestLinuxContainerExecutorWithMocks.java
+@@ -49,6 +49,7 @@
+ import org.apache.hadoop.yarn.conf.YarnConfiguration;
+ import org.apache.hadoop.yarn.server.nodemanager.containermanager.container.Container;
+ import org.apache.hadoop.yarn.server.nodemanager.containermanager.container.ContainerDiagnosticsUpdateEvent;
++import org.apache.hadoop.yarn.server.nodemanager.containermanager.linux.privileged.PrivilegedOperation;
+ import org.junit.Assert;
+ import org.junit.After;
+ import org.junit.Before;
+@@ -137,8 +138,10 @@ public void testContainerLaunch() throws IOException {
+     assertEquals(Arrays.asList(YarnConfiguration.DEFAULT_NM_NONSECURE_MODE_LOCAL_USER,
+         appSubmitter, cmd, appId, containerId,
+         workDir.toString(), "/bin/echo", "/dev/null", pidFile.toString(),
+-        StringUtils.join(",", dirsHandler.getLocalDirs()),
+-        StringUtils.join(",", dirsHandler.getLogDirs()), "cgroups=none"),
++        StringUtils.join(PrivilegedOperation.LINUX_FILE_PATH_SEPARATOR,
++            dirsHandler.getLocalDirs()),
++        StringUtils.join(PrivilegedOperation.LINUX_FILE_PATH_SEPARATOR,
++            dirsHandler.getLogDirs()), "cgroups=none"),
+         readMockParams());
+     
+   }
+@@ -283,8 +286,10 @@ public Object answer(InvocationOnMock invocationOnMock)
+     assertEquals(Arrays.asList(YarnConfiguration.DEFAULT_NM_NONSECURE_MODE_LOCAL_USER,
+         appSubmitter, cmd, appId, containerId,
+         workDir.toString(), "/bin/echo", "/dev/null", pidFile.toString(),
+-        StringUtils.join(",", dirsHandler.getLocalDirs()),
+-        StringUtils.join(",", dirsHandler.getLogDirs()),
++        StringUtils.join(PrivilegedOperation.LINUX_FILE_PATH_SEPARATOR,
++            dirsHandler.getLocalDirs()),
++        StringUtils.join(PrivilegedOperation.LINUX_FILE_PATH_SEPARATOR,
++            dirsHandler.getLogDirs()),
+         "cgroups=none"), readMockParams());
+ 
+   }
+-- 
+1.7.9.5
+

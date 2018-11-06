@@ -1,0 +1,107 @@
+From 51d5533e41e2cedf6e89421c6f64c3fe8c6a9429 Mon Sep 17 00:00:00 2001
+From: yliu <yliu@apache.org>
+Date: Thu, 19 Mar 2015 23:24:55 +0800
+Subject: [PATCH 0879/1023] HDFS-7930. commitBlockSynchronization() does not
+ remove locations. (yliu)
+
+(cherry picked from commit 90164ffd84f6ef56e9f8f99dcc7424a8d115dbae)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt
+	hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSNamesystem.java
+	hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestFileTruncate.java
+
+Change-Id: I273fe8f28780bd85a1ed0a6555c07f15b2c46f0f
+(cherry picked from commit bf14dec225aeeadc9d2dd09cb3fc2a7e80dc1369)
+---
+ .../hdfs/server/blockmanagement/BlockManager.java  |   40 ++++++++++++++++++++
+ .../hadoop/hdfs/server/namenode/FSNamesystem.java  |    8 +++-
+ 2 files changed, 46 insertions(+), 2 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlockManager.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlockManager.java
+index 7047134..6fb81b3 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlockManager.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlockManager.java
+@@ -2048,6 +2048,46 @@ void rescanPostponedMisreplicatedBlocks() {
+   }
+ 
+   /**
++   * Mark block replicas as corrupt except those on the storages in 
++   * newStorages list.
++   */
++  public void markBlockReplicasAsCorrupt(BlockInfo block, 
++      long oldGenerationStamp, long oldNumBytes, 
++      DatanodeStorageInfo[] newStorages) throws IOException {
++    assert namesystem.hasWriteLock();
++    BlockToMarkCorrupt b = null;
++    if (block.getGenerationStamp() != oldGenerationStamp) {
++      b = new BlockToMarkCorrupt(block, oldGenerationStamp,
++          "genstamp does not match " + oldGenerationStamp
++          + " : " + block.getGenerationStamp(), Reason.GENSTAMP_MISMATCH);
++    } else if (block.getNumBytes() != oldNumBytes) {
++      b = new BlockToMarkCorrupt(block,
++          "length does not match " + oldNumBytes
++          + " : " + block.getNumBytes(), Reason.SIZE_MISMATCH);
++    } else {
++      return;
++    }
++
++    for (DatanodeStorageInfo storage : getStorages(block)) {
++      boolean isCorrupt = true;
++      if (newStorages != null) {
++        for (DatanodeStorageInfo newStorage : newStorages) {
++          if (newStorage!= null && storage.equals(newStorage)) {
++            isCorrupt = false;
++            break;
++          }
++        }
++      }
++      if (isCorrupt) {
++        blockLog.info("BLOCK* markBlockReplicasAsCorrupt: mark block replica" +
++            " {} on {} as corrupt because the dn is not in the new committed " +
++            "storage list.", b, storage.getDatanodeDescriptor());
++        markBlockAsCorrupt(b, storage, storage.getDatanodeDescriptor());
++      }
++    }
++  }
++
++  /**
+    * processFirstBlockReport is intended only for processing "initial" block
+    * reports, the first block report received from a DN after it registers.
+    * It just adds all the valid replicas to the datanode, without calculating 
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSNamesystem.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSNamesystem.java
+index 7ee7138..31346fc 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSNamesystem.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSNamesystem.java
+@@ -4830,6 +4830,8 @@ void commitBlockSynchronization(ExtendedBlock lastblock,
+           throw new IOException("Block (=" + lastblock + ") not found");
+         }
+       }
++      final long oldGenerationStamp = storedBlock.getGenerationStamp();
++      final long oldNumBytes = storedBlock.getNumBytes();
+       //
+       // The implementation of delete operation (see @deleteInternal method)
+       // first removes the file paths from namespace, and delays the removal
+@@ -4883,8 +4885,6 @@ void commitBlockSynchronization(ExtendedBlock lastblock,
+         storedBlock.setNumBytes(newlength);
+ 
+         // find the DatanodeDescriptor objects
+-        // There should be no locations in the blockManager till now because the
+-        // file is underConstruction
+         ArrayList<DatanodeDescriptor> trimmedTargets =
+             new ArrayList<DatanodeDescriptor>(newtargets.length);
+         ArrayList<String> trimmedStorages =
+@@ -4921,6 +4921,10 @@ void commitBlockSynchronization(ExtendedBlock lastblock,
+                 trimmedTargets.toArray(new DatanodeID[trimmedTargets.size()]),
+                 trimmedStorages.toArray(new String[trimmedStorages.size()]));
+         iFile.setLastBlock(storedBlock, trimmedStorageInfos);
++        if (closeFile) {
++          blockManager.markBlockReplicasAsCorrupt(storedBlock,
++              oldGenerationStamp, oldNumBytes, trimmedStorageInfos);
++        }
+       }
+ 
+       if (closeFile) {
+-- 
+1.7.9.5
+

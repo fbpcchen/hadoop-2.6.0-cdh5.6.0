@@ -1,0 +1,155 @@
+From 0a21cfd0820a570657dc28aaafe402928a2b6bc0 Mon Sep 17 00:00:00 2001
+From: Vinayakumar B <vinayakumarb@apache.org>
+Date: Mon, 6 Jul 2015 15:39:43 +0530
+Subject: [PATCH 0835/1023] HADOOP-12186. ActiveStandbyElector shouldn't call
+ monitorLockNodeAsync multiple times (Contributed
+ by zhihai xu)
+
+(cherry picked from commit 233cab89adb6bae21d7e171f2af516b92266242c)
+(cherry picked from commit 91d2c599685ff359ce174f2b669dca6d764b39cb)
+
+Change-Id: Ie46c99f26f26714aa434e0573be69233e988065d
+(cherry picked from commit 70f546100374ff1e94816c25ede91b09b8cb0c5d)
+---
+ .../org/apache/hadoop/ha/ActiveStandbyElector.java |   20 +++++++++++--
+ .../apache/hadoop/ha/TestActiveStandbyElector.java |   31 ++++++++++++++++++++
+ 2 files changed, 48 insertions(+), 3 deletions(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ha/ActiveStandbyElector.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ha/ActiveStandbyElector.java
+index 9cc2ef7..d57d154 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ha/ActiveStandbyElector.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ha/ActiveStandbyElector.java
+@@ -173,7 +173,9 @@
+ 
+   private Lock sessionReestablishLockForTests = new ReentrantLock();
+   private boolean wantToBeInElection;
+-  
++  private boolean monitorLockNodePending = false;
++  private ZooKeeper monitorLockNodeClient;
++
+   /**
+    * Create a new ActiveStandbyElector object <br/>
+    * The elector is created by providing to it the Zookeeper configuration, the
+@@ -463,7 +465,8 @@ public synchronized void processResult(int rc, String path, Object ctx,
+   public synchronized void processResult(int rc, String path, Object ctx,
+       Stat stat) {
+     if (isStaleClient(ctx)) return;
+-    
++    monitorLockNodePending = false;
++
+     assert wantToBeInElection :
+         "Got a StatNode result after quitting election";
+     
+@@ -732,6 +735,11 @@ synchronized State getStateForTests() {
+     return state;
+   }
+ 
++  @VisibleForTesting
++  synchronized boolean isMonitorLockNodePending() {
++    return monitorLockNodePending;
++  }
++
+   private boolean reEstablishSession() {
+     int connectionRetryCount = 0;
+     boolean success = false;
+@@ -925,7 +933,13 @@ private void createLockNodeAsync() {
+   }
+ 
+   private void monitorLockNodeAsync() {
+-    zkClient.exists(zkLockFilePath, 
++    if (monitorLockNodePending && monitorLockNodeClient == zkClient) {
++      LOG.info("Ignore duplicate monitor lock-node request.");
++      return;
++    }
++    monitorLockNodePending = true;
++    monitorLockNodeClient = zkClient;
++    zkClient.exists(zkLockFilePath,
+         watcher, this,
+         zkClient);
+   }
+diff --git a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/ha/TestActiveStandbyElector.java b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/ha/TestActiveStandbyElector.java
+index 9e3cc41..2980a45 100644
+--- a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/ha/TestActiveStandbyElector.java
++++ b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/ha/TestActiveStandbyElector.java
+@@ -450,6 +450,10 @@ public void testProcessCallbackEventNone() throws Exception {
+         Event.KeeperState.SyncConnected);
+     elector.processWatchEvent(mockZK, mockEvent);
+     verifyExistCall(1);
++    Assert.assertTrue(elector.isMonitorLockNodePending());
++    elector.processResult(Code.SESSIONEXPIRED.intValue(), ZK_LOCK_NAME,
++        mockZK, new Stat());
++    Assert.assertFalse(elector.isMonitorLockNodePending());
+ 
+     // session expired should enter safe mode and initiate re-election
+     // re-election checked via checking re-creation of new zookeeper and
+@@ -493,6 +497,13 @@ public void testProcessCallbackEventNode() throws Exception {
+         ZK_LOCK_NAME);
+     Mockito.verify(mockApp, Mockito.times(1)).becomeStandby();
+     verifyExistCall(1);
++    Assert.assertTrue(elector.isMonitorLockNodePending());
++
++    Stat stat = new Stat();
++    stat.setEphemeralOwner(0L);
++    Mockito.when(mockZK.getSessionId()).thenReturn(1L);
++    elector.processResult(Code.OK.intValue(), ZK_LOCK_NAME, mockZK, stat);
++    Assert.assertFalse(elector.isMonitorLockNodePending());
+ 
+     WatchedEvent mockEvent = Mockito.mock(WatchedEvent.class);
+     Mockito.when(mockEvent.getPath()).thenReturn(ZK_LOCK_NAME);
+@@ -502,12 +513,18 @@ public void testProcessCallbackEventNode() throws Exception {
+         Event.EventType.NodeDataChanged);
+     elector.processWatchEvent(mockZK, mockEvent);
+     verifyExistCall(2);
++    Assert.assertTrue(elector.isMonitorLockNodePending());
++    elector.processResult(Code.OK.intValue(), ZK_LOCK_NAME, mockZK, stat);
++    Assert.assertFalse(elector.isMonitorLockNodePending());
+ 
+     // monitoring should be setup again after event is received
+     Mockito.when(mockEvent.getType()).thenReturn(
+         Event.EventType.NodeChildrenChanged);
+     elector.processWatchEvent(mockZK, mockEvent);
+     verifyExistCall(3);
++    Assert.assertTrue(elector.isMonitorLockNodePending());
++    elector.processResult(Code.OK.intValue(), ZK_LOCK_NAME, mockZK, stat);
++    Assert.assertFalse(elector.isMonitorLockNodePending());
+ 
+     // lock node deletion when in standby mode should create znode again
+     // successful znode creation enters active state and sets monitor
+@@ -522,6 +539,10 @@ public void testProcessCallbackEventNode() throws Exception {
+         ZK_LOCK_NAME);
+     Mockito.verify(mockApp, Mockito.times(1)).becomeActive();
+     verifyExistCall(4);
++    Assert.assertTrue(elector.isMonitorLockNodePending());
++    stat.setEphemeralOwner(1L);
++    elector.processResult(Code.OK.intValue(), ZK_LOCK_NAME, mockZK, stat);
++    Assert.assertFalse(elector.isMonitorLockNodePending());
+ 
+     // lock node deletion in active mode should enter neutral mode and create
+     // znode again successful znode creation enters active state and sets
+@@ -536,6 +557,9 @@ public void testProcessCallbackEventNode() throws Exception {
+         ZK_LOCK_NAME);
+     Mockito.verify(mockApp, Mockito.times(2)).becomeActive();
+     verifyExistCall(5);
++    Assert.assertTrue(elector.isMonitorLockNodePending());
++    elector.processResult(Code.OK.intValue(), ZK_LOCK_NAME, mockZK, stat);
++    Assert.assertFalse(elector.isMonitorLockNodePending());
+ 
+     // bad path name results in fatal error
+     Mockito.when(mockEvent.getPath()).thenReturn(null);
+@@ -568,6 +592,13 @@ public void testSuccessiveStandbyCalls() {
+         ZK_LOCK_NAME);
+     Mockito.verify(mockApp, Mockito.times(1)).becomeStandby();
+     verifyExistCall(1);
++    Assert.assertTrue(elector.isMonitorLockNodePending());
++
++    Stat stat = new Stat();
++    stat.setEphemeralOwner(0L);
++    Mockito.when(mockZK.getSessionId()).thenReturn(1L);
++    elector.processResult(Code.OK.intValue(), ZK_LOCK_NAME, mockZK, stat);
++    Assert.assertFalse(elector.isMonitorLockNodePending());
+ 
+     WatchedEvent mockEvent = Mockito.mock(WatchedEvent.class);
+     Mockito.when(mockEvent.getPath()).thenReturn(ZK_LOCK_NAME);
+-- 
+1.7.9.5
+

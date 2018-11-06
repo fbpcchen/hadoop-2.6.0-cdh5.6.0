@@ -1,0 +1,30 @@
+From 6c68a1bb9eb86a5c66c8a2e4c6ffb2f894114a11 Mon Sep 17 00:00:00 2001
+From: Colin Patrick Mccabe <cmccabe@cloudera.com>
+Date: Wed, 17 Jun 2015 17:01:42 -0700
+Subject: [PATCH 0694/1023] HDFS-8589. Fix unused imports in BPServiceActor
+ and BlockReportLeaseManager (cmccabe)
+
+(cherry picked from commit 45ced38f10fcb9f831218b890786aaeb7987fed4)
+(cherry picked from commit 8939e3cc2d9965fb5dcaf4008ccaee6c9210e913)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BPServiceActor.java
+---
+ .../blockmanagement/BlockReportLeaseManager.java   |    1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlockReportLeaseManager.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlockReportLeaseManager.java
+index cd037f5..7db05c7 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlockReportLeaseManager.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/blockmanagement/BlockReportLeaseManager.java
+@@ -17,7 +17,6 @@
+  */
+ package org.apache.hadoop.hdfs.server.blockmanagement;
+ 
+-import com.google.common.base.Joiner;
+ import com.google.common.base.Preconditions;
+ import org.apache.hadoop.conf.Configuration;
+ import org.apache.hadoop.hdfs.DFSConfigKeys;
+-- 
+1.7.9.5
+

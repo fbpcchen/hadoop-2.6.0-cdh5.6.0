@@ -1,0 +1,34 @@
+From b6091a840ce40d7b853e7648ab175b4e28bfdefd Mon Sep 17 00:00:00 2001
+From: Ray Chiang <rchiang@cloudera.com>
+Date: Mon, 27 Jul 2015 13:32:32 -0700
+Subject: [PATCH 0686/1023] CDH-29726. CLOUDERA-BUILD. Partial backport that
+ pulls unit test fix, but not ATS-dependent tests,
+ from MAPREDUCE-6304.
+
+---
+ .../v2/app/rm/TestRMContainerAllocator.java        |    2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/test/java/org/apache/hadoop/mapreduce/v2/app/rm/TestRMContainerAllocator.java b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/test/java/org/apache/hadoop/mapreduce/v2/app/rm/TestRMContainerAllocator.java
+index 025e555..b183579 100644
+--- a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/test/java/org/apache/hadoop/mapreduce/v2/app/rm/TestRMContainerAllocator.java
++++ b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/test/java/org/apache/hadoop/mapreduce/v2/app/rm/TestRMContainerAllocator.java
+@@ -74,6 +74,7 @@
+ import org.apache.hadoop.metrics2.lib.DefaultMetricsSystem;
+ import org.apache.hadoop.net.NetUtils;
+ import org.apache.hadoop.net.NetworkTopology;
++import org.apache.hadoop.security.SecurityUtil;
+ import org.apache.hadoop.security.UserGroupInformation;
+ import org.apache.hadoop.security.token.Token;
+ import org.apache.hadoop.security.token.TokenIdentifier;
+@@ -1483,6 +1484,7 @@ public synchronized Allocation allocate(
+             .getNumContainers(), req.getRelaxLocality());
+         askCopy.add(reqCopy);
+       }
++      SecurityUtil.setTokenServiceUseIp(false);
+       lastAsk = ask;
+       lastRelease = release;
+       lastBlacklistAdditions = blacklistAdditions;
+-- 
+1.7.9.5
+

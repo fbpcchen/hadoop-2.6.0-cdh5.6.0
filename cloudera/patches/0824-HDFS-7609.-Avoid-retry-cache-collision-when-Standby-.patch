@@ -1,0 +1,518 @@
+From 2daeecd1cd8c335d312d7d3ba8e7018c3829740e Mon Sep 17 00:00:00 2001
+From: Jing Zhao <jing9@apache.org>
+Date: Fri, 29 May 2015 11:05:13 -0700
+Subject: [PATCH 0824/1023] HDFS-7609. Avoid retry cache collision when
+ Standby NameNode loading edits. Contributed by
+ Ming Ma.
+
+(cherry picked from commit 7817674a3a4d097b647dd77f1345787dd376d5ea)
+(cherry picked from commit 17fb442a4c4e43105374c97fccd68dd966729a19)
+(cherry picked from commit fad2a062ddbb955a42dd5a90d64781617287f8df)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNodeRpcServer.java
+
+Change-Id: Ib3f6eaac526e9953593bb471037a93a4a0ec4f9e
+(cherry picked from commit 1406d2e48620c5c7f3b91063fcb5510a5713904c)
+---
+ .../hadoop/hdfs/server/namenode/FSNamesystem.java  |   18 ----------
+ .../hdfs/server/namenode/NameNodeRpcServer.java    |   19 ++++++++++
+ .../server/namenode/ha/TestRetryCacheWithHA.java   |   37 ++++++++++++++++++--
+ 3 files changed, 54 insertions(+), 20 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSNamesystem.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSNamesystem.java
+index 7c6fa76..84fd5ec 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSNamesystem.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/FSNamesystem.java
+@@ -2043,7 +2043,6 @@ private void concatInt(String target, String [] srcs,
+ 
+     HdfsFileStatus resultingStat = null;
+     FSPermissionChecker pc = getPermissionChecker();
+-    checkOperation(OperationCategory.WRITE);
+     waitForLoadingFSImage();
+     writeLock();
+     try {
+@@ -2603,7 +2602,6 @@ private HdfsFileStatus startFileInt(final String srcArg,
+     boolean skipSync = false;
+     HdfsFileStatus stat = null;
+     FSPermissionChecker pc = getPermissionChecker();
+-    checkOperation(OperationCategory.WRITE);
+     if (blockSize < minBlockSize) {
+       throw new IOException("Specified block size is less than configured" +
+           " minimum value (" + DFSConfigKeys.DFS_NAMENODE_MIN_BLOCK_SIZE_KEY
+@@ -3179,7 +3177,6 @@ private LocatedBlock appendFileInt(final String srcArg, String holder,
+ 
+     LocatedBlock lb = null;
+     FSPermissionChecker pc = getPermissionChecker();
+-    checkOperation(OperationCategory.WRITE);
+     byte[][] pathComponents = FSDirectory.getPathComponentsForReservedPath(src);
+     writeLock();
+     try {
+@@ -3848,7 +3845,6 @@ private boolean renameToInt(final String srcArg, final String dstArg,
+       throw new IOException("Invalid name: " + dst);
+     }
+     FSPermissionChecker pc = getPermissionChecker();
+-    checkOperation(OperationCategory.WRITE);
+     byte[][] srcComponents = FSDirectory.getPathComponentsForReservedPath(src);
+     byte[][] dstComponents = FSDirectory.getPathComponentsForReservedPath(dst);
+     boolean status = false;
+@@ -3921,7 +3917,6 @@ void renameTo(final String srcArg, final String dstArg,
+     }
+     final FSPermissionChecker pc = getPermissionChecker();
+     
+-    checkOperation(OperationCategory.WRITE);
+     CacheEntry cacheEntry = RetryCache.waitForCompletion(retryCache);
+     if (cacheEntry != null && cacheEntry.isSuccess()) {
+       return; // Return previous response
+@@ -4045,7 +4040,6 @@ private boolean deleteInternal(String src, boolean recursive,
+     BlocksMapUpdateInfo collectedBlocks = new BlocksMapUpdateInfo();
+     List<INode> removedINodes = new ChunkedArrayList<INode>();
+     FSPermissionChecker pc = getPermissionChecker();
+-    checkOperation(OperationCategory.WRITE);
+     byte[][] pathComponents = FSDirectory.getPathComponentsForReservedPath(src);
+     boolean ret = false;
+ 
+@@ -7151,7 +7145,6 @@ LocatedBlock updateBlockForPipeline(ExtendedBlock block,
+   void updatePipeline(String clientName, ExtendedBlock oldBlock, 
+       ExtendedBlock newBlock, DatanodeID[] newNodes, String[] newStorageIDs)
+       throws IOException {
+-    checkOperation(OperationCategory.WRITE);
+     CacheEntry cacheEntry = RetryCache.waitForCompletion(retryCache);
+     if (cacheEntry != null && cacheEntry.isSuccess()) {
+       return; // Return previous response
+@@ -8261,7 +8254,6 @@ String createSnapshot(String snapshotRoot, String snapshotName)
+    */
+   void renameSnapshot(String path, String snapshotOldName,
+       String snapshotNewName) throws SafeModeException, IOException {
+-    checkOperation(OperationCategory.WRITE);
+     final FSPermissionChecker pc = getPermissionChecker();
+     CacheEntry cacheEntry = RetryCache.waitForCompletion(retryCache);
+     if (cacheEntry != null && cacheEntry.isSuccess()) {
+@@ -8375,7 +8367,6 @@ private void checkSubtreeReadPermission(final FSPermissionChecker pc,
+    */
+   void deleteSnapshot(String snapshotRoot, String snapshotName)
+       throws SafeModeException, IOException {
+-    checkOperation(OperationCategory.WRITE);
+     final FSPermissionChecker pc = getPermissionChecker();
+     
+     CacheEntry cacheEntry = RetryCache.waitForCompletion(retryCache);
+@@ -8620,7 +8611,6 @@ void finalizeRollingUpgradeInternal(long finalizeTime) {
+ 
+   long addCacheDirective(CacheDirectiveInfo directive, EnumSet<CacheFlag> flags)
+       throws IOException {
+-    checkOperation(OperationCategory.WRITE);
+     final FSPermissionChecker pc = isPermissionEnabled ?
+         getPermissionChecker() : null;
+     CacheEntryWithPayload cacheEntry =
+@@ -8664,7 +8654,6 @@ long addCacheDirective(CacheDirectiveInfo directive, EnumSet<CacheFlag> flags)
+ 
+   void modifyCacheDirective(CacheDirectiveInfo directive,
+       EnumSet<CacheFlag> flags) throws IOException {
+-    checkOperation(OperationCategory.WRITE);
+     final FSPermissionChecker pc = isPermissionEnabled ?
+         getPermissionChecker() : null;
+     boolean success = false;
+@@ -8697,7 +8686,6 @@ void modifyCacheDirective(CacheDirectiveInfo directive,
+   }
+ 
+   void removeCacheDirective(Long id) throws IOException {
+-    checkOperation(OperationCategory.WRITE);
+     final FSPermissionChecker pc = isPermissionEnabled ?
+         getPermissionChecker() : null;
+     CacheEntry cacheEntry = RetryCache.waitForCompletion(retryCache);
+@@ -8749,7 +8737,6 @@ void removeCacheDirective(Long id) throws IOException {
+   }
+ 
+   public void addCachePool(CachePoolInfo req) throws IOException {
+-    checkOperation(OperationCategory.WRITE);
+     final FSPermissionChecker pc = isPermissionEnabled ?
+         getPermissionChecker() : null;
+     CacheEntry cacheEntry = RetryCache.waitForCompletion(retryCache);
+@@ -8782,7 +8769,6 @@ public void addCachePool(CachePoolInfo req) throws IOException {
+   }
+ 
+   public void modifyCachePool(CachePoolInfo req) throws IOException {
+-    checkOperation(OperationCategory.WRITE);
+     final FSPermissionChecker pc =
+         isPermissionEnabled ? getPermissionChecker() : null;
+     CacheEntry cacheEntry = RetryCache.waitForCompletion(retryCache);
+@@ -8814,7 +8800,6 @@ public void modifyCachePool(CachePoolInfo req) throws IOException {
+   }
+ 
+   public void removeCachePool(String cachePoolName) throws IOException {
+-    checkOperation(OperationCategory.WRITE);
+     final FSPermissionChecker pc =
+         isPermissionEnabled ? getPermissionChecker() : null;
+     CacheEntry cacheEntry = RetryCache.waitForCompletion(retryCache);
+@@ -9080,7 +9065,6 @@ private void createEncryptionZoneInt(final String srcArg, String cipher,
+     String src = srcArg;
+     HdfsFileStatus resultingStat = null;
+     checkSuperuserPrivilege();
+-    checkOperation(OperationCategory.WRITE);
+     final byte[][] pathComponents =
+       FSDirectory.getPathComponentsForReservedPath(src);
+     writeLock();
+@@ -9203,7 +9187,6 @@ private void setXAttrInt(final String srcArg, XAttr xAttr,
+     FSPermissionChecker pc = getPermissionChecker();
+     XAttrPermissionFilter.checkPermissionForApi(pc, xAttr,
+         FSDirectory.isReservedRawName(src));
+-    checkOperation(OperationCategory.WRITE);
+     byte[][] pathComponents = FSDirectory.getPathComponentsForReservedPath(src);
+     writeLock();
+     try {
+@@ -9365,7 +9348,6 @@ void removeXAttrInt(final String srcArg, XAttr xAttr, boolean logRetryCache)
+     FSPermissionChecker pc = getPermissionChecker();
+     XAttrPermissionFilter.checkPermissionForApi(pc, xAttr,
+         FSDirectory.isReservedRawName(src));
+-    checkOperation(OperationCategory.WRITE);
+     byte[][] pathComponents = FSDirectory.getPathComponentsForReservedPath(src);
+     writeLock();
+     try {
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNodeRpcServer.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNodeRpcServer.java
+index eb0f364..99f2996 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNodeRpcServer.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNodeRpcServer.java
+@@ -583,6 +583,7 @@ public HdfsFileStatus create(String src, FsPermission masked,
+       throw new IOException("create: Pathname too long.  Limit "
+           + MAX_PATH_LENGTH + " characters, " + MAX_PATH_DEPTH + " levels.");
+     }
++    namesystem.checkOperation(OperationCategory.WRITE);
+     HdfsFileStatus fileStatus = namesystem.startFile(src, new PermissionStatus(
+         getRemoteUser().getShortUserName(), null, masked),
+         clientName, clientMachine, flag.get(), createParent, replication,
+@@ -601,6 +602,7 @@ public LocatedBlock append(String src, String clientName)
+       stateChangeLog.debug("*DIR* NameNode.append: file "
+           +src+" for "+clientName+" at "+clientMachine);
+     }
++    namesystem.checkOperation(OperationCategory.WRITE);
+     LocatedBlock info = namesystem.appendFile(src, clientName, clientMachine);
+     metrics.incrFilesAppended();
+     return info;
+@@ -756,6 +758,7 @@ public void updatePipeline(String clientName, ExtendedBlock oldBlock,
+       ExtendedBlock newBlock, DatanodeID[] newNodes, String[] newStorageIDs)
+       throws IOException {
+     checkNNStartup();
++    namesystem.checkOperation(OperationCategory.WRITE);
+     namesystem.updatePipeline(clientName, oldBlock, newBlock, newNodes, newStorageIDs);
+   }
+   
+@@ -788,6 +791,7 @@ public boolean rename(String src, String dst) throws IOException {
+       throw new IOException("rename: Pathname too long.  Limit "
+           + MAX_PATH_LENGTH + " characters, " + MAX_PATH_DEPTH + " levels.");
+     }
++    namesystem.checkOperation(OperationCategory.WRITE);
+     boolean ret = namesystem.renameTo(src, dst);
+     if (ret) {
+       metrics.incrFilesRenamed();
+@@ -798,6 +802,7 @@ public boolean rename(String src, String dst) throws IOException {
+   @Override // ClientProtocol
+   public void concat(String trg, String[] src) throws IOException {
+     checkNNStartup();
++    namesystem.checkOperation(OperationCategory.WRITE);
+     namesystem.concat(trg, src);
+   }
+   
+@@ -812,6 +817,7 @@ public void rename2(String src, String dst, Options.Rename... options)
+       throw new IOException("rename: Pathname too long.  Limit "
+           + MAX_PATH_LENGTH + " characters, " + MAX_PATH_DEPTH + " levels.");
+     }
++    namesystem.checkOperation(OperationCategory.WRITE);
+     namesystem.renameTo(src, dst, options);
+     metrics.incrFilesRenamed();
+   }
+@@ -823,6 +829,7 @@ public boolean delete(String src, boolean recursive) throws IOException {
+       stateChangeLog.debug("*DIR* Namenode.delete: src=" + src
+           + ", recursive=" + recursive);
+     }
++    namesystem.checkOperation(OperationCategory.WRITE);
+     boolean ret = namesystem.delete(src, recursive);
+     if (ret) 
+       metrics.incrDeleteFileOps();
+@@ -1418,6 +1425,7 @@ public String createSnapshot(String snapshotRoot, String snapshotName)
+       throw new IOException("createSnapshot: Pathname too long.  Limit "
+           + MAX_PATH_LENGTH + " characters, " + MAX_PATH_DEPTH + " levels.");
+     }
++    namesystem.checkOperation(OperationCategory.WRITE);
+     metrics.incrCreateSnapshotOps();
+     return namesystem.createSnapshot(snapshotRoot, snapshotName);
+   }
+@@ -1426,6 +1434,7 @@ public String createSnapshot(String snapshotRoot, String snapshotName)
+   public void deleteSnapshot(String snapshotRoot, String snapshotName)
+       throws IOException {
+     checkNNStartup();
++    namesystem.checkOperation(OperationCategory.WRITE);
+     metrics.incrDeleteSnapshotOps();
+     namesystem.deleteSnapshot(snapshotRoot, snapshotName);
+   }
+@@ -1454,6 +1463,7 @@ public void renameSnapshot(String snapshotRoot, String snapshotOldName,
+     if (snapshotNewName == null || snapshotNewName.isEmpty()) {
+       throw new IOException("The new snapshot name is null or empty.");
+     }
++    namesystem.checkOperation(OperationCategory.WRITE);
+     metrics.incrRenameSnapshotOps();
+     namesystem.renameSnapshot(snapshotRoot, snapshotOldName, snapshotNewName);
+   }
+@@ -1482,6 +1492,7 @@ public SnapshotDiffReport getSnapshotDiffReport(String snapshotRoot,
+   public long addCacheDirective(
+       CacheDirectiveInfo path, EnumSet<CacheFlag> flags) throws IOException {
+     checkNNStartup();
++    namesystem.checkOperation(OperationCategory.WRITE);
+     return namesystem.addCacheDirective(path, flags);
+   }
+ 
+@@ -1489,12 +1500,14 @@ public long addCacheDirective(
+   public void modifyCacheDirective(
+       CacheDirectiveInfo directive, EnumSet<CacheFlag> flags) throws IOException {
+     checkNNStartup();
++    namesystem.checkOperation(OperationCategory.WRITE);
+     namesystem.modifyCacheDirective(directive, flags);
+   }
+ 
+   @Override // ClientProtocol
+   public void removeCacheDirective(long id) throws IOException {
+     checkNNStartup();
++    namesystem.checkOperation(OperationCategory.WRITE);
+     namesystem.removeCacheDirective(id);
+   }
+ 
+@@ -1511,18 +1524,21 @@ public void removeCacheDirective(long id) throws IOException {
+   @Override //ClientProtocol
+   public void addCachePool(CachePoolInfo info) throws IOException {
+     checkNNStartup();
++    namesystem.checkOperation(OperationCategory.WRITE);
+     namesystem.addCachePool(info);
+   }
+ 
+   @Override // ClientProtocol
+   public void modifyCachePool(CachePoolInfo info) throws IOException {
+     checkNNStartup();
++    namesystem.checkOperation(OperationCategory.WRITE);
+     namesystem.modifyCachePool(info);
+   }
+ 
+   @Override // ClientProtocol
+   public void removeCachePool(String cachePoolName) throws IOException {
+     checkNNStartup();
++    namesystem.checkOperation(OperationCategory.WRITE);
+     namesystem.removeCachePool(cachePoolName);
+   }
+ 
+@@ -1575,6 +1591,7 @@ public AclStatus getAclStatus(String src) throws IOException {
+   public void createEncryptionZone(String src, String keyName)
+     throws IOException {
+     checkNNStartup();
++    namesystem.checkOperation(OperationCategory.WRITE);
+     namesystem.createEncryptionZone(src, keyName);
+   }
+ 
+@@ -1596,6 +1613,7 @@ public EncryptionZone getEZForPath(String src)
+   public void setXAttr(String src, XAttr xAttr, EnumSet<XAttrSetFlag> flag)
+       throws IOException {
+     checkNNStartup();
++    namesystem.checkOperation(OperationCategory.WRITE);
+     namesystem.setXAttr(src, xAttr, flag);
+   }
+   
+@@ -1615,6 +1633,7 @@ public void setXAttr(String src, XAttr xAttr, EnumSet<XAttrSetFlag> flag)
+   @Override // ClientProtocol
+   public void removeXAttr(String src, XAttr xAttr) throws IOException {
+     checkNNStartup();
++    namesystem.checkOperation(OperationCategory.WRITE);
+     namesystem.removeXAttr(src, xAttr);
+   }
+ 
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/ha/TestRetryCacheWithHA.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/ha/TestRetryCacheWithHA.java
+index bf889f3..7155d60 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/ha/TestRetryCacheWithHA.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/ha/TestRetryCacheWithHA.java
+@@ -213,7 +213,8 @@ private DFSClient genClientWithDummyHandler() throws IOException {
+   abstract class AtMostOnceOp {
+     private final String name;
+     final DFSClient client;
+-    
++    int expectedUpdateCount = 0;
++
+     AtMostOnceOp(String name, DFSClient client) {
+       this.name = name;
+       this.client = client;
+@@ -223,6 +224,9 @@ private DFSClient genClientWithDummyHandler() throws IOException {
+     abstract void invoke() throws Exception;
+     abstract boolean checkNamenodeBeforeReturn() throws Exception;
+     abstract Object getResult();
++    int getExpectedCacheUpdateCount() {
++      return expectedUpdateCount;
++    }
+   }
+   
+   /** createSnapshot operaiton */
+@@ -601,7 +605,7 @@ Object getResult() {
+   class DeleteOp extends AtMostOnceOp {
+     private final String target;
+     private boolean deleted;
+-    
++
+     DeleteOp(DFSClient client, String target) {
+       super("delete", client);
+       this.target = target;
+@@ -611,12 +615,14 @@ Object getResult() {
+     void prepare() throws Exception {
+       Path p = new Path(target);
+       if (!dfs.exists(p)) {
++        expectedUpdateCount++;
+         DFSTestUtil.createFile(dfs, p, BlockSize, DataNodes, 0);
+       }
+     }
+ 
+     @Override
+     void invoke() throws Exception {
++      expectedUpdateCount++;
+       deleted = client.delete(target, true);
+     }
+ 
+@@ -652,12 +658,14 @@ public CreateSymlinkOp(DFSClient client, String target, String link) {
+     void prepare() throws Exception {
+       Path p = new Path(target);
+       if (!dfs.exists(p)) {
++        expectedUpdateCount++;
+         DFSTestUtil.createFile(dfs, p, BlockSize, DataNodes, 0);
+       }
+     }
+ 
+     @Override
+     void invoke() throws Exception {
++      expectedUpdateCount++;
+       client.createSymlink(target, link, false);
+     }
+ 
+@@ -769,11 +777,13 @@ Object getResult() {
+ 
+     @Override
+     void prepare() throws Exception {
++      expectedUpdateCount++;
+       dfs.addCachePool(new CachePoolInfo(directive.getPool()));
+     }
+ 
+     @Override
+     void invoke() throws Exception {
++      expectedUpdateCount++;
+       result = client.addCacheDirective(directive, EnumSet.of(CacheFlag.FORCE));
+     }
+ 
+@@ -815,12 +825,15 @@ Object getResult() {
+ 
+     @Override
+     void prepare() throws Exception {
++      expectedUpdateCount++;
+       dfs.addCachePool(new CachePoolInfo(directive.getPool()));
++      expectedUpdateCount++;
+       id = client.addCacheDirective(directive, EnumSet.of(CacheFlag.FORCE));
+     }
+ 
+     @Override
+     void invoke() throws Exception {
++      expectedUpdateCount++;
+       client.modifyCacheDirective(
+           new CacheDirectiveInfo.Builder().
+               setId(id).
+@@ -871,12 +884,15 @@ Object getResult() {
+ 
+     @Override
+     void prepare() throws Exception {
++      expectedUpdateCount++;
+       dfs.addCachePool(new CachePoolInfo(directive.getPool()));
++      expectedUpdateCount++;
+       id = dfs.addCacheDirective(directive, EnumSet.of(CacheFlag.FORCE));
+     }
+ 
+     @Override
+     void invoke() throws Exception {
++      expectedUpdateCount++;
+       client.removeCacheDirective(id);
+     }
+ 
+@@ -918,6 +934,7 @@ void prepare() throws Exception {
+ 
+     @Override
+     void invoke() throws Exception {
++      expectedUpdateCount++;
+       client.addCachePool(new CachePoolInfo(pool));
+     }
+ 
+@@ -950,11 +967,13 @@ Object getResult() {
+ 
+     @Override
+     void prepare() throws Exception {
++      expectedUpdateCount++;
+       client.addCachePool(new CachePoolInfo(pool).setLimit(10l));
+     }
+ 
+     @Override
+     void invoke() throws Exception {
++      expectedUpdateCount++;
+       client.modifyCachePool(new CachePoolInfo(pool).setLimit(99l));
+     }
+ 
+@@ -987,11 +1006,13 @@ Object getResult() {
+ 
+     @Override
+     void prepare() throws Exception {
++      expectedUpdateCount++;
+       client.addCachePool(new CachePoolInfo(pool));
+     }
+ 
+     @Override
+     void invoke() throws Exception {
++      expectedUpdateCount++;
+       client.removeCachePool(pool);
+     }
+ 
+@@ -1026,12 +1047,14 @@ Object getResult() {
+     void prepare() throws Exception {
+       Path p = new Path(src);
+       if (!dfs.exists(p)) {
++        expectedUpdateCount++;
+         DFSTestUtil.createFile(dfs, p, BlockSize, DataNodes, 0);
+       }
+     }
+ 
+     @Override
+     void invoke() throws Exception {
++      expectedUpdateCount++;
+       client.setXAttr(src, "user.key", "value".getBytes(),
+           EnumSet.of(XAttrSetFlag.CREATE));
+     }
+@@ -1068,7 +1091,9 @@ Object getResult() {
+     void prepare() throws Exception {
+       Path p = new Path(src);
+       if (!dfs.exists(p)) {
++        expectedUpdateCount++;
+         DFSTestUtil.createFile(dfs, p, BlockSize, DataNodes, 0);
++        expectedUpdateCount++;
+         client.setXAttr(src, "user.key", "value".getBytes(),
+           EnumSet.of(XAttrSetFlag.CREATE));
+       }
+@@ -1076,6 +1101,7 @@ void prepare() throws Exception {
+ 
+     @Override
+     void invoke() throws Exception {
++      expectedUpdateCount++;
+       client.removeXAttr(src, "user.key");
+     }
+ 
+@@ -1312,6 +1338,13 @@ public void run() {
+     assertTrue("CacheUpdated on NN0: " + updatedNN0, updatedNN0 > 0);
+     // Cache updated metrics on NN0 should be >0 since NN1 applied the editlog
+     assertTrue("CacheUpdated on NN1: " + updatedNN1, updatedNN1 > 0);
++    long expectedUpdateCount = op.getExpectedCacheUpdateCount();
++    if (expectedUpdateCount > 0) {
++      assertEquals("CacheUpdated on NN0: " + updatedNN0, expectedUpdateCount,
++          updatedNN0);
++      assertEquals("CacheUpdated on NN0: " + updatedNN1, expectedUpdateCount,
++          updatedNN1);
++    }
+   }
+ 
+   /**
+-- 
+1.7.9.5
+

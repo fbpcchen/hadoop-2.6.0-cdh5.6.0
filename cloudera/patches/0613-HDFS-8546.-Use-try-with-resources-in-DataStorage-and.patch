@@ -1,0 +1,170 @@
+From 20246265b1ec6e6774533987b04a15b85f1e64bb Mon Sep 17 00:00:00 2001
+From: Andrew Wang <wang@apache.org>
+Date: Thu, 25 Jun 2015 17:50:32 -0700
+Subject: [PATCH 0613/1023] HDFS-8546. Use try with resources in DataStorage
+ and Storage.
+
+(cherry picked from commit 1403b84b122fb76ef2b085a728b5402c32499c1f)
+(cherry picked from commit 84fdd4a3a0c3e0e696f8818134e188e306948686)
+---
+ .../apache/hadoop/hdfs/server/common/Storage.java  |   24 ++++-------
+ .../hadoop/hdfs/server/datanode/DataStorage.java   |   45 ++++++--------------
+ 2 files changed, 23 insertions(+), 46 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/common/Storage.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/common/Storage.java
+index 8d0129a..e0e044e 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/common/Storage.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/common/Storage.java
+@@ -709,6 +709,7 @@ FileLock tryLock() throws IOException {
+       try {
+         res = file.getChannel().tryLock();
+         if (null == res) {
++          LOG.error("Unable to acquire file lock on path " + lockF.toString());
+           throw new OverlappingFileLockException();
+         }
+         file.write(jvmName.getBytes(Charsets.UTF_8));
+@@ -970,35 +971,28 @@ public void writeProperties(StorageDirectory sd) throws IOException {
+   public void writeProperties(File to, StorageDirectory sd) throws IOException {
+     Properties props = new Properties();
+     setPropertiesFromFields(props, sd);
+-    writeProperties(to, sd, props);
++    writeProperties(to, props);
+   }
+ 
+-  public static void writeProperties(File to, StorageDirectory sd,
+-      Properties props) throws IOException {
+-    RandomAccessFile file = new RandomAccessFile(to, "rws");
+-    FileOutputStream out = null;
+-    try {
++  public static void writeProperties(File to, Properties props)
++      throws IOException {
++    try (RandomAccessFile file = new RandomAccessFile(to, "rws");
++        FileOutputStream out = new FileOutputStream(file.getFD())) {
+       file.seek(0);
+-      out = new FileOutputStream(file.getFD());
+       /*
+-       * If server is interrupted before this line, 
++       * If server is interrupted before this line,
+        * the version file will remain unchanged.
+        */
+       props.store(out, null);
+       /*
+-       * Now the new fields are flushed to the head of the file, but file 
+-       * length can still be larger then required and therefore the file can 
++       * Now the new fields are flushed to the head of the file, but file
++       * length can still be larger then required and therefore the file can
+        * contain whole or corrupted fields from its old contents in the end.
+        * If server is interrupted here and restarted later these extra fields
+        * either should not effect server behavior or should be handled
+        * by the server correctly.
+        */
+       file.setLength(out.getChannel().position());
+-    } finally {
+-      if (out != null) {
+-        out.close();
+-      }
+-      file.close();
+     }
+   }
+ 
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataStorage.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataStorage.java
+index 33b0a04..d9b6c3f 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataStorage.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataStorage.java
+@@ -45,17 +45,15 @@
+ import org.apache.hadoop.hdfs.server.common.StorageInfo;
+ import org.apache.hadoop.hdfs.server.protocol.DatanodeStorage;
+ import org.apache.hadoop.hdfs.server.protocol.NamespaceInfo;
+-import org.apache.hadoop.io.IOUtils;
+ import org.apache.hadoop.io.nativeio.NativeIO;
+ import org.apache.hadoop.util.Daemon;
+ import org.apache.hadoop.util.DiskChecker;
+ 
+ import java.io.File;
+-import java.io.FileInputStream;
+-import java.io.FileOutputStream;
+ import java.io.IOException;
+ import java.io.RandomAccessFile;
+ import java.nio.channels.FileLock;
++import java.nio.channels.OverlappingFileLockException;
+ import java.util.ArrayList;
+ import java.util.Collection;
+ import java.util.Collections;
+@@ -85,7 +83,6 @@
+ 
+   public final static String BLOCK_SUBDIR_PREFIX = "subdir";
+   final static String BLOCK_FILE_PREFIX = "blk_";
+-  final static String COPY_FILE_PREFIX = "dncp_";
+   final static String STORAGE_DIR_DETACHED = "detach";
+   public final static String STORAGE_DIR_RBW = "rbw";
+   public final static String STORAGE_DIR_FINALIZED = "finalized";
+@@ -617,20 +614,22 @@ private void setFieldsFromProperties(Properties props, StorageDirectory sd,
+   @Override
+   public boolean isPreUpgradableLayout(StorageDirectory sd) throws IOException {
+     File oldF = new File(sd.getRoot(), "storage");
+-    if (!oldF.exists())
++    if (!oldF.exists()) {
+       return false;
++    }
+     // check the layout version inside the storage file
+     // Lock and Read old storage file
+-    RandomAccessFile oldFile = new RandomAccessFile(oldF, "rws");
+-    FileLock oldLock = oldFile.getChannel().tryLock();
+-    try {
++    try (RandomAccessFile oldFile = new RandomAccessFile(oldF, "rws");
++      FileLock oldLock = oldFile.getChannel().tryLock()) {
++      if (null == oldLock) {
++        LOG.error("Unable to acquire file lock on path " + oldF.toString());
++        throw new OverlappingFileLockException();
++      }
+       oldFile.seek(0);
+       int oldVersion = oldFile.readInt();
+-      if (oldVersion < LAST_PRE_UPGRADE_LAYOUT_VERSION)
++      if (oldVersion < LAST_PRE_UPGRADE_LAYOUT_VERSION) {
+         return false;
+-    } finally {
+-      oldLock.release();
+-      oldFile.close();
++      }
+     }
+     return true;
+   }
+@@ -1221,23 +1220,8 @@ static void linkBlocksHelper(File from, File to, int oldLV, HardLink hl,
+       return;
+     }
+     if (!from.isDirectory()) {
+-      if (from.getName().startsWith(COPY_FILE_PREFIX)) {
+-        FileInputStream in = new FileInputStream(from);
+-        try {
+-          FileOutputStream out = new FileOutputStream(to);
+-          try {
+-            IOUtils.copyBytes(in, out, 16*1024);
+-            hl.linkStats.countPhysicalFileCopies++;
+-          } finally {
+-            out.close();
+-          }
+-        } finally {
+-          in.close();
+-        }
+-      } else {
+-        HardLink.createHardLink(from, to);
+-        hl.linkStats.countSingleLinks++;
+-      }
++      HardLink.createHardLink(from, to);
++      hl.linkStats.countSingleLinks++;
+       return;
+     }
+     // from is a directory
+@@ -1288,8 +1272,7 @@ public boolean accept(File dir, String name) {
+     String[] otherNames = from.list(new java.io.FilenameFilter() {
+         @Override
+         public boolean accept(File dir, String name) {
+-          return name.startsWith(BLOCK_SUBDIR_PREFIX) 
+-            || name.startsWith(COPY_FILE_PREFIX);
++          return name.startsWith(BLOCK_SUBDIR_PREFIX);
+         }
+       });
+     for(int i = 0; i < otherNames.length; i++)
+-- 
+1.7.9.5
+

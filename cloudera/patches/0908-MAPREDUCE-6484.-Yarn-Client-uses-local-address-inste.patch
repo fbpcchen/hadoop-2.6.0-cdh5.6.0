@@ -1,0 +1,101 @@
+From 888818da7a38a3643ea7e1e1175908cb2960ed12 Mon Sep 17 00:00:00 2001
+From: Zhihai Xu <zxu@apache.org>
+Date: Thu, 24 Sep 2015 08:12:07 -0700
+Subject: [PATCH 0908/1023] MAPREDUCE-6484. Yarn Client uses local address
+ instead of RM address as token renewer in a
+ secure cluster when RM HA is enabled. Contributed
+ by Zhihai Xu
+
+(cherry picked from commit 97a08807ec328a6f455d941fe3d9a469d885caa6)
+
+Change-Id: I39dfa9165bdb60d305ddb6a43a2e9f41c96c06ee
+(cherry picked from commit da29a2f34dadc965829cdbb12f6d9cf40d933326)
+(cherry picked from commit 6e524d121529b7a6bad0572a6df952c93daec4af)
+---
+ .../main/java/org/apache/hadoop/mapred/Master.java |   27 +++++++++++++++++---
+ .../java/org/apache/hadoop/mapred/TestMaster.java  |   13 ++++++++++
+ 2 files changed, 37 insertions(+), 3 deletions(-)
+
+diff --git a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/java/org/apache/hadoop/mapred/Master.java b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/java/org/apache/hadoop/mapred/Master.java
+index 3bacc5e..d84e395 100644
+--- a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/java/org/apache/hadoop/mapred/Master.java
++++ b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/java/org/apache/hadoop/mapred/Master.java
+@@ -21,18 +21,23 @@
+ import java.io.IOException;
+ import java.net.InetSocketAddress;
+ 
++import org.apache.commons.logging.Log;
++import org.apache.commons.logging.LogFactory;
+ import org.apache.hadoop.classification.InterfaceAudience.Private;
+ import org.apache.hadoop.classification.InterfaceStability.Unstable;
+ import org.apache.hadoop.conf.Configuration;
+ import org.apache.hadoop.mapreduce.MRConfig;
+ import org.apache.hadoop.net.NetUtils;
+ import org.apache.hadoop.security.SecurityUtil;
++import org.apache.hadoop.yarn.conf.HAUtil;
+ import org.apache.hadoop.yarn.conf.YarnConfiguration;
+ 
+ @Private
+ @Unstable
+ public class Master {
+-  
++
++  private static final Log LOG = LogFactory.getLog(Master.class);
++
+   public enum State {
+     INITIALIZING, RUNNING;
+   }
+@@ -53,8 +58,24 @@ public static InetSocketAddress getMasterAddress(Configuration conf) {
+     if (framework.equals(MRConfig.CLASSIC_FRAMEWORK_NAME)) {
+       masterAddress = conf.get(MRConfig.MASTER_ADDRESS, "localhost:8012");
+       return NetUtils.createSocketAddr(masterAddress, 8012, MRConfig.MASTER_ADDRESS);
+-    } 
+-    else {
++    } else if (framework.equals(MRConfig.YARN_FRAMEWORK_NAME) &&
++        HAUtil.isHAEnabled(conf)) {
++      YarnConfiguration yarnConf = new YarnConfiguration(conf);
++      if (yarnConf.get(YarnConfiguration.RM_HA_ID) == null) {
++        String[] rmIds = yarnConf.getStrings(YarnConfiguration.RM_HA_IDS);
++        if (rmIds != null && rmIds.length > 0) {
++          // If RM_HA_ID is not configured, use the first one.
++          // Because any valid RM HA ID should work.
++          yarnConf.set(YarnConfiguration.RM_HA_ID, rmIds[0]);
++        } else {
++          LOG.warn("RM_HA_IDS is not configured when RM HA is enabled");
++        }
++      }
++      return yarnConf.getSocketAddr(
++          YarnConfiguration.RM_ADDRESS,
++          YarnConfiguration.DEFAULT_RM_ADDRESS,
++          YarnConfiguration.DEFAULT_RM_PORT);
++    } else {
+       return conf.getSocketAddr(
+           YarnConfiguration.RM_ADDRESS,
+           YarnConfiguration.DEFAULT_RM_ADDRESS,
+diff --git a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/test/java/org/apache/hadoop/mapred/TestMaster.java b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/test/java/org/apache/hadoop/mapred/TestMaster.java
+index 58bbb3e..498abbc 100644
+--- a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/test/java/org/apache/hadoop/mapred/TestMaster.java
++++ b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/test/java/org/apache/hadoop/mapred/TestMaster.java
+@@ -64,6 +64,19 @@ public void testGetMasterAddress() {
+     masterHostname = Master.getMasterAddress(conf).getHostName();
+     assertEquals(masterHostname, "foo1.com");
+ 
++    // change framework to yarn and enable HA
++    conf.set(MRConfig.FRAMEWORK_NAME, MRConfig.YARN_FRAMEWORK_NAME);
++    conf.setBoolean(YarnConfiguration.RM_HA_ENABLED, true);
++    conf.set(YarnConfiguration.RM_HA_IDS, "rm1,rm2");
++    conf.set(YarnConfiguration.RM_ADDRESS + ".rm1", "rm1.com:8192");
++    conf.set(YarnConfiguration.RM_ADDRESS + ".rm2", "rm2.com:8192");
++    masterHostname = Master.getMasterAddress(conf).getHostName();
++    // If RM_HA_ID is not configured, the first one in RM_HA_IDS will be used.
++    assertEquals(masterHostname, "rm1.com");
++    conf.set(YarnConfiguration.RM_HA_ID, "rm2");
++    masterHostname = Master.getMasterAddress(conf).getHostName();
++    // If RM_HA_ID is configured, use the given RM_HA_ID.
++    assertEquals(masterHostname, "rm2.com");
+   }
+ 
+   @Test 
+-- 
+1.7.9.5
+

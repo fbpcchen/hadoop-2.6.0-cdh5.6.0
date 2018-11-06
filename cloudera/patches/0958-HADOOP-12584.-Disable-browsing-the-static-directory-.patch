@@ -1,0 +1,35 @@
+From c22bedf2138a56c4578163fff8c78c047bf2dce4 Mon Sep 17 00:00:00 2001
+From: Haohui Mai <wheat9@apache.org>
+Date: Thu, 19 Nov 2015 15:47:31 -0800
+Subject: [PATCH 0958/1023] HADOOP-12584. Disable browsing the static
+ directory in HttpServer2. Contributed by Robert
+ Kanter.
+
+(cherry picked from commit b7e3f419bdaa4d46ffb9829dd7873b5221cab077)
+
+Conflicts:
+	hadoop-common-project/hadoop-common/CHANGES.txt
+
+Change-Id: Ia3b68f6d98ccf46a79a3c59e47c58ce0380062ed
+(cherry picked from commit 4fa7f8eaf3d8f360f7d33764437c2421bbb31c1f)
+---
+ .../java/org/apache/hadoop/http/HttpServer2.java   |    3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/http/HttpServer2.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/http/HttpServer2.java
+index 6a08c6c..259fe8a 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/http/HttpServer2.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/http/HttpServer2.java
+@@ -592,6 +592,9 @@ protected void addDefaultApps(ContextHandlerCollection parent,
+     staticContext.setResourceBase(appDir + "/static");
+     staticContext.addServlet(DefaultServlet.class, "/*");
+     staticContext.setDisplayName("static");
++    @SuppressWarnings("unchecked")
++    Map<String, String> params = staticContext.getInitParams();
++    params.put("org.mortbay.jetty.servlet.Default.dirAllowed", "false");
+     setContextAttributes(staticContext, conf);
+     defaultContexts.put(staticContext, true);
+   }
+-- 
+1.7.9.5
+

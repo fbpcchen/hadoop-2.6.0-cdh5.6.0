@@ -1,0 +1,42 @@
+From ebc861c87dba703acd421769f9eda4ae257bca10 Mon Sep 17 00:00:00 2001
+From: Kihwal Lee <kihwal@apache.org>
+Date: Thu, 19 Mar 2015 12:28:36 -0500
+Subject: [PATCH 0664/1023] HDFS-7932. Speed up the shutdown of datanode
+ during rolling upgrade. Contributed by Kihwal
+ Lee.
+
+(cherry picked from commit 61a4c7fc9891def0e85edf7e41d74c6b92c85fdb)
+(cherry picked from commit 2b9173059d5941514107150b9d0a80d9debd85c4)
+---
+ .../hadoop/hdfs/server/datanode/DataNode.java      |    7 ++++---
+ 1 file changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java
+index 7551674..e327199 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java
+@@ -1758,8 +1758,9 @@ public void shutdown() {
+         // termination of receiver threads.
+         if (!this.shutdownForUpgrade ||
+             (this.shutdownForUpgrade && (Time.monotonicNow() - timeNotified
+-                > 2500))) {
++                > 1000))) {
+           this.threadGroup.interrupt();
++          break;
+         }
+         LOG.info("Waiting for threadgroup to exit, active threads is " +
+                  this.threadGroup.activeCount());
+@@ -1770,8 +1771,8 @@ public void shutdown() {
+           Thread.sleep(sleepMs);
+         } catch (InterruptedException e) {}
+         sleepMs = sleepMs * 3 / 2; // exponential backoff
+-        if (sleepMs > 1000) {
+-          sleepMs = 1000;
++        if (sleepMs > 200) {
++          sleepMs = 200;
+         }
+       }
+       this.threadGroup = null;
+-- 
+1.7.9.5
+

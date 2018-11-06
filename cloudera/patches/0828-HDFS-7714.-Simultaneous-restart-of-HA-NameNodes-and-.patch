@@ -1,0 +1,45 @@
+From 1d9f3950aebdb2689b2530421b4f615d3c553c3c Mon Sep 17 00:00:00 2001
+From: Vinayakumar B <vinayakumarb@apache.org>
+Date: Tue, 10 Feb 2015 10:43:08 +0530
+Subject: [PATCH 0828/1023] HDFS-7714. Simultaneous restart of HA NameNodes
+ and DataNode can cause DataNode to register
+ successfully with only one NameNode.(Contributed
+ by Vinayakumar B)
+
+(cherry picked from commit 3d15728ff5301296801e541d9b23bd1687c4adad)
+(cherry picked from commit a1bf7aecf7d018c5305fa3bd7a9e3ef9af3155c1)
+(cherry picked from commit c1e65de57e8ef760586e28cd37397ea9a7ac7944)
+(cherry picked from commit 6154abfedae62f3aa505a9c8b95b7af34da962c9)
+
+Change-Id: I2bc506af3cb3605abc9ba97b8a39b92db2ce8e7b
+(cherry picked from commit c84e6414547f940c52a9b22d939b59dffd590d2c)
+---
+ .../hdfs/server/datanode/BPServiceActor.java       |    5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BPServiceActor.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BPServiceActor.java
+index 9dfd2d1..56bd9e2 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BPServiceActor.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BPServiceActor.java
+@@ -19,6 +19,7 @@
+ 
+ import static org.apache.hadoop.util.Time.monotonicNow;
+ 
++import java.io.EOFException;
+ import java.io.IOException;
+ import java.net.InetSocketAddress;
+ import java.net.SocketTimeoutException;
+@@ -777,6 +778,10 @@ void register(NamespaceInfo nsInfo) throws IOException {
+         newBpRegistration.setNamespaceInfo(nsInfo);
+         bpRegistration = newBpRegistration;
+         break;
++      } catch(EOFException e) {  // namenode might have just restarted
++        LOG.info("Problem connecting to server: " + nnAddr + " :"
++            + e.getLocalizedMessage());
++        sleepAndLogInterrupts(1000, "connecting to server");
+       } catch(SocketTimeoutException e) {  // namenode is busy
+         LOG.info("Problem connecting to server: " + nnAddr);
+         sleepAndLogInterrupts(1000, "connecting to server");
+-- 
+1.7.9.5
+

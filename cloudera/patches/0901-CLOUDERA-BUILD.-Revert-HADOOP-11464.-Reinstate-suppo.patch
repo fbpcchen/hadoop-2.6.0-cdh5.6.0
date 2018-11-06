@@ -1,0 +1,236 @@
+From 92fc658f6e733bfba30d892dbad8d05c32d072aa Mon Sep 17 00:00:00 2001
+From: Robert Kanter <rkanter@cloudera.com>
+Date: Tue, 6 Oct 2015 17:37:43 -0700
+Subject: [PATCH 0901/1023] CLOUDERA-BUILD. Revert "HADOOP-11464. Reinstate
+ support for launching Hadoop processes on Windows
+ using Cygwin. Contributed by Chris Nauroth."
+
+This reverts commit 6654ae23709fefb5f3141771273232fa8e31f9be.
+
+Change-Id: Idc023abe19def6bfa48cee50e7cd645e027747c4
+---
+ .../hadoop-common/src/main/bin/hadoop              |   22 --------------
+ .../hadoop-common/src/main/bin/hadoop-config.sh    |   10 +-----
+ hadoop-hdfs-project/hadoop-hdfs/src/main/bin/hdfs  |   18 -----------
+ hadoop-mapreduce-project/bin/mapred                |   21 -------------
+ hadoop-yarn-project/hadoop-yarn/bin/yarn           |   32 +-------------------
+ 5 files changed, 2 insertions(+), 101 deletions(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/main/bin/hadoop b/hadoop-common-project/hadoop-common/src/main/bin/hadoop
+index 804579c..eeab027 100755
+--- a/hadoop-common-project/hadoop-common/src/main/bin/hadoop
++++ b/hadoop-common-project/hadoop-common/src/main/bin/hadoop
+@@ -22,12 +22,6 @@ bin=`dirname ${bin}`
+ bin=`cd "$bin"; pwd`
+  
+ DEFAULT_LIBEXEC_DIR="$bin"/../libexec
+-
+-cygwin=false
+-case "$(uname)" in
+-CYGWIN*) cygwin=true;;
+-esac
+-
+ HADOOP_LIBEXEC_DIR=${HADOOP_LIBEXEC_DIR:-$DEFAULT_LIBEXEC_DIR}
+ . $HADOOP_LIBEXEC_DIR/hadoop-config.sh
+ 
+@@ -126,9 +120,6 @@ case $COMMAND in
+     elif [ "$COMMAND" = "classpath" ] ; then
+       if [ "$#" -eq 1 ]; then
+         # No need to bother starting up a JVM for this simple case.
+-        if $cygwin; then
+-          CLASSPATH=$(cygpath -p -w "$CLASSPATH" 2>/dev/null)
+-        fi
+         echo $CLASSPATH
+         exit
+       else
+@@ -141,19 +132,6 @@ case $COMMAND in
+     else
+       CLASS=$COMMAND
+     fi
+-
+-    # cygwin path translation
+-    if $cygwin; then
+-      CLASSPATH=$(cygpath -p -w "$CLASSPATH" 2>/dev/null)
+-      HADOOP_LOG_DIR=$(cygpath -w "$HADOOP_LOG_DIR" 2>/dev/null)
+-      HADOOP_PREFIX=$(cygpath -w "$HADOOP_PREFIX" 2>/dev/null)
+-      HADOOP_CONF_DIR=$(cygpath -w "$HADOOP_CONF_DIR" 2>/dev/null)
+-      HADOOP_COMMON_HOME=$(cygpath -w "$HADOOP_COMMON_HOME" 2>/dev/null)
+-      HADOOP_HDFS_HOME=$(cygpath -w "$HADOOP_HDFS_HOME" 2>/dev/null)
+-      HADOOP_YARN_HOME=$(cygpath -w "$HADOOP_YARN_HOME" 2>/dev/null)
+-      HADOOP_MAPRED_HOME=$(cygpath -w "$HADOOP_MAPRED_HOME" 2>/dev/null)
+-    fi
+-
+     shift
+     
+     # Always respect HADOOP_OPTS and HADOOP_CLIENT_OPTS
+diff --git a/hadoop-common-project/hadoop-common/src/main/bin/hadoop-config.sh b/hadoop-common-project/hadoop-common/src/main/bin/hadoop-config.sh
+index 15e7afa..ee83405 100644
+--- a/hadoop-common-project/hadoop-common/src/main/bin/hadoop-config.sh
++++ b/hadoop-common-project/hadoop-common/src/main/bin/hadoop-config.sh
+@@ -233,18 +233,10 @@ TOOL_PATH="${TOOL_PATH:-$HADOOP_PREFIX/share/hadoop/tools/lib/*}"
+ 
+ HADOOP_OPTS="$HADOOP_OPTS -Dhadoop.log.dir=$HADOOP_LOG_DIR"
+ HADOOP_OPTS="$HADOOP_OPTS -Dhadoop.log.file=$HADOOP_LOGFILE"
+-HADOOP_HOME=$HADOOP_PREFIX
+-if $cygwin; then
+-  HADOOP_HOME=$(cygpath -w "$HADOOP_HOME" 2>/dev/null)
+-fi
+-export HADOOP_HOME
+-HADOOP_OPTS="$HADOOP_OPTS -Dhadoop.home.dir=$HADOOP_HOME"
++HADOOP_OPTS="$HADOOP_OPTS -Dhadoop.home.dir=$HADOOP_PREFIX"
+ HADOOP_OPTS="$HADOOP_OPTS -Dhadoop.id.str=$HADOOP_IDENT_STRING"
+ HADOOP_OPTS="$HADOOP_OPTS -Dhadoop.root.logger=${HADOOP_ROOT_LOGGER:-INFO,console}"
+ if [ "x$JAVA_LIBRARY_PATH" != "x" ]; then
+-  if $cygwin; then
+-    JAVA_LIBRARY_PATH=$(cygpath -w "$JAVA_LIBRARY_PATH" 2>/dev/null)
+-  fi
+   HADOOP_OPTS="$HADOOP_OPTS -Djava.library.path=$JAVA_LIBRARY_PATH"
+   export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$JAVA_LIBRARY_PATH
+ fi  
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/bin/hdfs b/hadoop-hdfs-project/hadoop-hdfs/src/main/bin/hdfs
+index 1b73d89..4433623 100755
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/bin/hdfs
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/bin/hdfs
+@@ -30,12 +30,6 @@ bin=`dirname ${bin}`
+ bin=`cd "$bin" > /dev/null; pwd`
+ 
+ DEFAULT_LIBEXEC_DIR="$bin"/../libexec
+-
+-cygwin=false
+-case "$(uname)" in
+-CYGWIN*) cygwin=true;;
+-esac
+-
+ HADOOP_LIBEXEC_DIR=${HADOOP_LIBEXEC_DIR:-$DEFAULT_LIBEXEC_DIR}
+ . $HADOOP_LIBEXEC_DIR/hdfs-config.sh
+ 
+@@ -241,18 +235,6 @@ else
+   CLASS="$COMMAND"
+ fi
+ 
+-# cygwin path translation
+-if $cygwin; then
+-  CLASSPATH=$(cygpath -p -w "$CLASSPATH" 2>/dev/null)
+-  HADOOP_LOG_DIR=$(cygpath -w "$HADOOP_LOG_DIR" 2>/dev/null)
+-  HADOOP_PREFIX=$(cygpath -w "$HADOOP_PREFIX" 2>/dev/null)
+-  HADOOP_CONF_DIR=$(cygpath -w "$HADOOP_CONF_DIR" 2>/dev/null)
+-  HADOOP_COMMON_HOME=$(cygpath -w "$HADOOP_COMMON_HOME" 2>/dev/null)
+-  HADOOP_HDFS_HOME=$(cygpath -w "$HADOOP_HDFS_HOME" 2>/dev/null)
+-  HADOOP_YARN_HOME=$(cygpath -w "$HADOOP_YARN_HOME" 2>/dev/null)
+-  HADOOP_MAPRED_HOME=$(cygpath -w "$HADOOP_MAPRED_HOME" 2>/dev/null)
+-fi
+-
+ export CLASSPATH=$CLASSPATH
+ 
+ HADOOP_OPTS="$HADOOP_OPTS -Dhadoop.security.logger=${HADOOP_SECURITY_LOGGER:-INFO,NullAppender}"
+diff --git a/hadoop-mapreduce-project/bin/mapred b/hadoop-mapreduce-project/bin/mapred
+index 2c7617f..bde901e 100755
+--- a/hadoop-mapreduce-project/bin/mapred
++++ b/hadoop-mapreduce-project/bin/mapred
+@@ -20,12 +20,6 @@ bin=`dirname ${bin}`
+ bin=`cd "$bin"; pwd`
+ 
+ DEFAULT_LIBEXEC_DIR="$bin"/../libexec
+-
+-cygwin=false
+-case "$(uname)" in
+-CYGWIN*) cygwin=true;;
+-esac
+-
+ HADOOP_LIBEXEC_DIR=${HADOOP_LIBEXEC_DIR:-$DEFAULT_LIBEXEC_DIR}
+ if [ -e ${HADOOP_LIBEXEC_DIR}/mapred-config.sh ]; then
+   . ${HADOOP_LIBEXEC_DIR}/mapred-config.sh
+@@ -153,25 +147,10 @@ for f in $HADOOP_MAPRED_HOME/modules/*.jar; do
+ done
+ 
+ if [ "$COMMAND" = "classpath" ] ; then
+-  if $cygwin; then
+-    CLASSPATH=$(cygpath -p -w "$CLASSPATH" 2>/dev/null)
+-  fi
+   echo $CLASSPATH
+   exit
+ fi
+ 
+-# cygwin path translation
+-if $cygwin; then
+-  CLASSPATH=$(cygpath -p -w "$CLASSPATH" 2>/dev/null)
+-  HADOOP_LOG_DIR=$(cygpath -w "$HADOOP_LOG_DIR" 2>/dev/null)
+-  HADOOP_PREFIX=$(cygpath -w "$HADOOP_PREFIX" 2>/dev/null)
+-  HADOOP_CONF_DIR=$(cygpath -w "$HADOOP_CONF_DIR" 2>/dev/null)
+-  HADOOP_COMMON_HOME=$(cygpath -w "$HADOOP_COMMON_HOME" 2>/dev/null)
+-  HADOOP_HDFS_HOME=$(cygpath -w "$HADOOP_HDFS_HOME" 2>/dev/null)
+-  HADOOP_YARN_HOME=$(cygpath -w "$HADOOP_YARN_HOME" 2>/dev/null)
+-  HADOOP_MAPRED_HOME=$(cygpath -w "$HADOOP_MAPRED_HOME" 2>/dev/null)
+-fi
+-
+ HADOOP_OPTS="$HADOOP_OPTS -Dhadoop.security.logger=${HADOOP_SECURITY_LOGGER:-INFO,NullAppender}"
+ 
+ export CLASSPATH
+diff --git a/hadoop-yarn-project/hadoop-yarn/bin/yarn b/hadoop-yarn-project/hadoop-yarn/bin/yarn
+index 0ef794f..4298c0d 100644
+--- a/hadoop-yarn-project/hadoop-yarn/bin/yarn
++++ b/hadoop-yarn-project/hadoop-yarn/bin/yarn
+@@ -55,12 +55,6 @@ bin=`dirname "${BASH_SOURCE-$0}"`
+ bin=`cd "$bin"; pwd`
+ 
+ DEFAULT_LIBEXEC_DIR="$bin"/../libexec
+-
+-cygwin=false
+-case "$(uname)" in
+-CYGWIN*) cygwin=true;;
+-esac
+-
+ HADOOP_LIBEXEC_DIR=${HADOOP_LIBEXEC_DIR:-$DEFAULT_LIBEXEC_DIR}
+ . $HADOOP_LIBEXEC_DIR/yarn-config.sh
+ 
+@@ -208,9 +202,6 @@ unset IFS
+ 
+ # figure out which class to run
+ if [ "$COMMAND" = "classpath" ] ; then
+-  if $cygwin; then
+-    CLASSPATH=$(cygpath -p -w "$CLASSPATH" 2>/dev/null)
+-  fi
+   echo $CLASSPATH
+   exit
+ elif [ "$COMMAND" = "rmadmin" ] ; then
+@@ -309,36 +300,15 @@ else
+   CLASS=$COMMAND
+ fi
+ 
+-# cygwin path translation
+-if $cygwin; then
+-  CLASSPATH=$(cygpath -p -w "$CLASSPATH" 2>/dev/null)
+-  HADOOP_LOG_DIR=$(cygpath -w "$HADOOP_LOG_DIR" 2>/dev/null)
+-  HADOOP_PREFIX=$(cygpath -w "$HADOOP_PREFIX" 2>/dev/null)
+-  HADOOP_CONF_DIR=$(cygpath -w "$HADOOP_CONF_DIR" 2>/dev/null)
+-  HADOOP_COMMON_HOME=$(cygpath -w "$HADOOP_COMMON_HOME" 2>/dev/null)
+-  HADOOP_HDFS_HOME=$(cygpath -w "$HADOOP_HDFS_HOME" 2>/dev/null)
+-  HADOOP_YARN_HOME=$(cygpath -w "$HADOOP_YARN_HOME" 2>/dev/null)
+-  HADOOP_MAPRED_HOME=$(cygpath -w "$HADOOP_MAPRED_HOME" 2>/dev/null)
+-  YARN_LOG_DIR=$(cygpath -w "$YARN_LOG_DIR" 2>/dev/null)
+-fi
+-
+ YARN_OPTS="$YARN_OPTS -Dhadoop.log.dir=$YARN_LOG_DIR"
+ YARN_OPTS="$YARN_OPTS -Dyarn.log.dir=$YARN_LOG_DIR"
+ YARN_OPTS="$YARN_OPTS -Dhadoop.log.file=$YARN_LOGFILE"
+ YARN_OPTS="$YARN_OPTS -Dyarn.log.file=$YARN_LOGFILE"
+ YARN_OPTS="$YARN_OPTS -Dyarn.home.dir=$HADOOP_YARN_HOME"
+-HADOOP_HOME=$HADOOP_PREFIX
+-if $cygwin; then
+-  HADOOP_HOME=$(cygpath -w "$HADOOP_HOME" 2>/dev/null)
+-fi
+-export HADOOP_HOME
+-YARN_OPTS="$YARN_OPTS -Dhadoop.home.dir=$HADOOP_HOME"
++YARN_OPTS="$YARN_OPTS -Dhadoop.home.dir=$HADOOP_YARN_HOME"
+ YARN_OPTS="$YARN_OPTS -Dhadoop.root.logger=${YARN_ROOT_LOGGER:-INFO,console}"
+ YARN_OPTS="$YARN_OPTS -Dyarn.root.logger=${YARN_ROOT_LOGGER:-INFO,console}"
+ if [ "x$JAVA_LIBRARY_PATH" != "x" ]; then
+-  if $cygwin; then
+-    JAVA_LIBRARY_PATH=$(cygpath -w "$JAVA_LIBRARY_PATH" 2>/dev/null)
+-  fi
+   YARN_OPTS="$YARN_OPTS -Djava.library.path=$JAVA_LIBRARY_PATH"
+ fi  
+ 
+-- 
+1.7.9.5
+

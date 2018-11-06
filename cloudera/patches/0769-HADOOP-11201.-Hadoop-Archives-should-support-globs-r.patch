@@ -1,0 +1,185 @@
+From f5088a94d20ddba36d284478e944c756f9b81221 Mon Sep 17 00:00:00 2001
+From: cnauroth <cnauroth@apache.org>
+Date: Tue, 18 Nov 2014 17:05:48 -0800
+Subject: [PATCH 0769/1023] HADOOP-11201. Hadoop Archives should support globs
+ resolving to files. Contributed by Gera Shegalov.
+
+(cherry picked from commit 79301e80d7510f055c01a06970bb409607a4197c)
+(cherry picked from commit 00a06e28d46dc46553da7d3a9056df95c191825f)
+
+Conflicts:
+	hadoop-common-project/hadoop-common/CHANGES.txt
+
+Change-Id: Ib6be3448bda07ec2a270d4fd3f61e4db583f1749
+(cherry picked from commit b6a9892ce0292b35d4e21682a1d798a8e54f9e5c)
+---
+ .../org/apache/hadoop/tools/HadoopArchives.java    |   17 ++---
+ .../apache/hadoop/tools/TestHadoopArchives.java    |   77 +++++++++++++++++---
+ 2 files changed, 72 insertions(+), 22 deletions(-)
+
+diff --git a/hadoop-tools/hadoop-archives/src/main/java/org/apache/hadoop/tools/HadoopArchives.java b/hadoop-tools/hadoop-archives/src/main/java/org/apache/hadoop/tools/HadoopArchives.java
+index a997ee9..fd7f2d7 100644
+--- a/hadoop-tools/hadoop-archives/src/main/java/org/apache/hadoop/tools/HadoopArchives.java
++++ b/hadoop-tools/hadoop-archives/src/main/java/org/apache/hadoop/tools/HadoopArchives.java
+@@ -103,7 +103,7 @@
+   short repl = 3;
+ 
+   private static final String usage = "archive"
+-  + " -archiveName NAME -p <parent path> [-r <replication factor>]" +
++  + " -archiveName <NAME>.har -p <parent path> [-r <replication factor>]" +
+       "<src>* <dest>" +
+   "\n";
+   
+@@ -350,15 +350,10 @@ else if (fullPath.depth() > root.depth()) {
+    */
+   private void writeTopLevelDirs(SequenceFile.Writer srcWriter, 
+       List<Path> paths, Path parentPath) throws IOException {
+-    //add all the directories 
+-    List<Path> justDirs = new ArrayList<Path>();
++    // extract paths from absolute URI's
++    List<Path> justPaths = new ArrayList<Path>();
+     for (Path p: paths) {
+-      if (!p.getFileSystem(getConf()).isFile(p)) {
+-        justDirs.add(new Path(p.toUri().getPath()));
+-      }
+-      else {
+-        justDirs.add(new Path(p.getParent().toUri().getPath()));
+-      }
++      justPaths.add(new Path(p.toUri().getPath()));
+     }
+     /* find all the common parents of paths that are valid archive
+      * paths. The below is done so that we do not add a common path
+@@ -374,7 +369,7 @@ private void writeTopLevelDirs(SequenceFile.Writer srcWriter,
+     Path root = new Path(Path.SEPARATOR);
+     for (int i = parentPath.depth(); i < deepest.depth(); i++) {
+       List<Path> parents = new ArrayList<Path>();
+-      for (Path p: justDirs) {
++      for (Path p: justPaths) {
+         if (p.compareTo(root) == 0){
+           //do nothing
+         }
+@@ -394,7 +389,7 @@ private void writeTopLevelDirs(SequenceFile.Writer srcWriter,
+           }
+         }
+       }
+-      justDirs = parents;
++      justPaths = parents;
+     }
+     Set<Map.Entry<String, HashSet<String>>> keyVals = allpaths.entrySet();
+     for (Map.Entry<String, HashSet<String>> entry : keyVals) {
+diff --git a/hadoop-tools/hadoop-archives/src/test/java/org/apache/hadoop/tools/TestHadoopArchives.java b/hadoop-tools/hadoop-archives/src/test/java/org/apache/hadoop/tools/TestHadoopArchives.java
+index d543143..0752fcc 100644
+--- a/hadoop-tools/hadoop-archives/src/test/java/org/apache/hadoop/tools/TestHadoopArchives.java
++++ b/hadoop-tools/hadoop-archives/src/test/java/org/apache/hadoop/tools/TestHadoopArchives.java
+@@ -201,9 +201,58 @@ public void testPathWithSpaces() throws Exception {
+     Assert.assertEquals(originalPaths, harPaths);
+   }
+ 
+-  private static List<String> lsr(final FsShell shell, String dir)
+-      throws Exception {
+-    System.out.println("lsr root=" + dir);
++  @Test
++  public void testSingleFile() throws Exception {
++    final Path sub1 = new Path(inputPath, "dir1");
++    fs.mkdirs(sub1);
++    String singleFileName = "a";
++    createFile(inputPath, fs, sub1.getName(), singleFileName);
++    final FsShell shell = new FsShell(conf);
++
++    final List<String> originalPaths = lsr(shell, sub1.toString());
++    System.out.println("originalPaths: " + originalPaths);
++
++    // make the archive:
++    final String fullHarPathStr = makeArchive(sub1, singleFileName);
++
++    // compare results:
++    final List<String> harPaths = lsr(shell, fullHarPathStr);
++    Assert.assertEquals(originalPaths, harPaths);
++  }
++
++  @Test
++  public void testGlobFiles() throws Exception {
++    final Path sub1 = new Path(inputPath, "dir1");
++    final Path sub2 = new Path(inputPath, "dir2");
++    fs.mkdirs(sub1);
++    String fileName = "a";
++    createFile(inputPath, fs, sub1.getName(), fileName);
++    createFile(inputPath, fs, sub2.getName(), fileName);
++    createFile(inputPath, fs, sub1.getName(), "b"); // not part of result
++
++    final String glob =  "dir{1,2}/a";
++    final FsShell shell = new FsShell(conf);
++    final List<String> originalPaths = lsr(shell, inputPath.toString(),
++        inputPath + "/" + glob);
++    System.out.println("originalPaths: " + originalPaths);
++
++    // make the archive:
++    final String fullHarPathStr = makeArchive(inputPath, glob);
++
++    // compare results:
++    final List<String> harPaths = lsr(shell, fullHarPathStr,
++        fullHarPathStr + "/" + glob);
++    Assert.assertEquals(originalPaths, harPaths);
++  }
++
++  private static List<String> lsr(final FsShell shell, String rootDir) throws Exception {
++    return lsr(shell, rootDir, null);
++  }
++
++  private static List<String> lsr(final FsShell shell, String rootDir,
++      String glob) throws Exception {
++    final String dir = glob == null ? rootDir : glob;
++    System.out.println("lsr root=" + rootDir);
+     final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+     final PrintStream out = new PrintStream(bytes);
+     final PrintStream oldOut = System.out;
+@@ -220,9 +269,9 @@ public void testPathWithSpaces() throws Exception {
+       System.setErr(oldErr);
+     }
+     System.out.println("lsr results:\n" + results);
+-    String dirname = dir;
+-    if (dir.lastIndexOf(Path.SEPARATOR) != -1) {
+-      dirname = dir.substring(dir.lastIndexOf(Path.SEPARATOR));
++    String dirname = rootDir;
++    if (rootDir.lastIndexOf(Path.SEPARATOR) != -1) {
++      dirname = rootDir.substring(rootDir.lastIndexOf(Path.SEPARATOR));
+     }
+ 
+     final List<String> paths = new ArrayList<String>();
+@@ -619,13 +668,19 @@ private static long skipUntilZero(final FilterInputStream fis,
+     return bb;
+   }
+ 
++
++  private String makeArchive() throws Exception {
++    return makeArchive(inputPath, null);
++  }
++
+   /*
+    * Run the HadoopArchives tool to create an archive on the 
+    * given file system.
+    */
+-  private String makeArchive() throws Exception {
+-    final String inputPathStr = inputPath.toUri().getPath();
+-    System.out.println("inputPathStr = " + inputPathStr);
++  private String makeArchive(Path parentPath, String relGlob) throws Exception {
++    final String parentPathStr = parentPath.toUri().getPath();
++    final String relPathGlob = relGlob == null ? "*" : relGlob;
++    System.out.println("parentPathStr = " + parentPathStr);
+ 
+     final URI uri = fs.getUri();
+     final String prefix = "har://hdfs-" + uri.getHost() + ":" + uri.getPort()
+@@ -633,8 +688,8 @@ private String makeArchive() throws Exception {
+ 
+     final String harName = "foo.har";
+     final String fullHarPathStr = prefix + harName;
+-    final String[] args = { "-archiveName", harName, "-p", inputPathStr, "*",
+-        archivePath.toString() };
++    final String[] args = { "-archiveName", harName, "-p", parentPathStr,
++        relPathGlob, archivePath.toString() };
+     System.setProperty(HadoopArchives.TEST_HADOOP_ARCHIVES_JAR_PATH,
+         HADOOP_ARCHIVES_JAR);
+     final HadoopArchives har = new HadoopArchives(conf);
+-- 
+1.7.9.5
+

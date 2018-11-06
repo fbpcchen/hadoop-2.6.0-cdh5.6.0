@@ -1,0 +1,31 @@
+From 4ad3b9856e436d5fe191a0d72a35f7b5d0854312 Mon Sep 17 00:00:00 2001
+From: Junping Du <junping_du@apache.org>
+Date: Fri, 15 May 2015 06:39:39 -0700
+Subject: [PATCH 0765/1023] YARN-3505 addendum: fix an issue in previous
+ patch. (cherry picked from commit
+ 03a293aed6de101b0cae1a294f506903addcaa75)
+
+(cherry picked from commit cc671349bc1c56d597aedd244d939dc248353d8c)
+
+Change-Id: I8a246ff32621661df121ac4003ea1d62438a4976
+(cherry picked from commit 453b12394c90df0d7dae87e3ccc4775437ce639e)
+---
+ .../logaggregation/AppLogAggregatorImpl.java       |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/containermanager/logaggregation/AppLogAggregatorImpl.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/containermanager/logaggregation/AppLogAggregatorImpl.java
+index 444ecb0..671ed00 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/containermanager/logaggregation/AppLogAggregatorImpl.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-nodemanager/src/main/java/org/apache/hadoop/yarn/server/nodemanager/containermanager/logaggregation/AppLogAggregatorImpl.java
+@@ -352,7 +352,7 @@ public Object run() throws Exception {
+         finalReport.setApplicationId(appId);
+         finalReport.setLogAggregationStatus(renameTemporaryLogFileFailed
+             ? LogAggregationStatus.FAILED : LogAggregationStatus.SUCCEEDED);
+-        this.context.getLogAggregationStatusForApps().add(report);
++        this.context.getLogAggregationStatusForApps().add(finalReport);
+       }
+     } finally {
+       if (writer != null) {
+-- 
+1.7.9.5
+

@@ -1,0 +1,24 @@
+From b9771be8dfad826b88b4de639dc3e229b0a39153 Mon Sep 17 00:00:00 2001
+From: Andrew Wang <andrew.wang@cloudera.com>
+Date: Thu, 13 Aug 2015 12:02:03 -0700
+Subject: [PATCH 0714/1023] fixup
+
+---
+ .../hadoop/hdfs/TestDistributedFileSystem.java     |    1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDistributedFileSystem.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDistributedFileSystem.java
+index 3f2193a..c5e20c0 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDistributedFileSystem.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDistributedFileSystem.java
+@@ -68,7 +68,6 @@
+ import org.apache.hadoop.hdfs.net.Peer;
+ import org.apache.hadoop.hdfs.server.datanode.DataNode;
+ import org.apache.hadoop.hdfs.server.datanode.DataNodeFaultInjector;
+-import org.apache.hadoop.hdfs.server.datanode.fsdataset.FsDatasetSpi;
+ import org.apache.hadoop.hdfs.server.datanode.fsdataset.FsVolumeSpi;
+ import org.apache.hadoop.hdfs.server.namenode.ha.HATestUtil;
+ import org.apache.hadoop.hdfs.web.HftpFileSystem;
+-- 
+1.7.9.5
+

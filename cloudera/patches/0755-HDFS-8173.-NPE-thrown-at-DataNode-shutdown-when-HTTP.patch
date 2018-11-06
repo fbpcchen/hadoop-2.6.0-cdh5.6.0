@@ -1,0 +1,42 @@
+From 09a9781ab13cf0798cffd234b5e98661026ef751 Mon Sep 17 00:00:00 2001
+From: Vinayakumar B <vinayakumarb@apache.org>
+Date: Mon, 20 Apr 2015 14:58:04 +0530
+Subject: [PATCH 0755/1023] HDFS-8173. NPE thrown at DataNode shutdown when
+ HTTP server was not able to create (Contributed
+ by surendra singh lilhore)
+
+(cherry picked from commit c17cd4f7c163cf97d6e42865df25709f29d39e3d)
+(cherry picked from commit c562e1b19be435733d405f80f0f5b27e11dc2e7b)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt
+
+Change-Id: I5526b744066ae1ac11e11b0f7843df62a83925fc
+---
+ .../hadoop/hdfs/server/datanode/DataNode.java      |   10 ++++++----
+ 1 file changed, 6 insertions(+), 4 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java
+index e7cb208..c8969b4 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java
+@@ -1728,10 +1728,12 @@ public void shutdown() {
+         LOG.warn("Exception shutting down DataNode", e);
+       }
+     }
+-    try {
+-      httpServer.close();
+-    } catch (Exception e) {
+-      LOG.warn("Exception shutting down DataNode HttpServer", e);
++    if (httpServer != null) {
++      try {
++        httpServer.close();
++      } catch (Exception e) {
++        LOG.warn("Exception shutting down DataNode HttpServer", e);
++      }
+     }
+ 
+     if (pauseMonitor != null) {
+-- 
+1.7.9.5
+

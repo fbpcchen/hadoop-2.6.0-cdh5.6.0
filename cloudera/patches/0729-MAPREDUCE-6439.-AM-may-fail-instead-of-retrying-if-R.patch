@@ -1,0 +1,339 @@
+From f3cb7130f2d1409938d1777be708622b5f56fc61 Mon Sep 17 00:00:00 2001
+From: Karthik Kambatla <kasha@apache.org>
+Date: Sat, 15 Aug 2015 00:52:11 -0700
+Subject: [PATCH 0729/1023] MAPREDUCE-6439. AM may fail instead of retrying if
+ RM shuts down during the allocate call. (Anubhav
+ Dhoot via kasha) (cherry picked from commit
+ 8dfec7a1979e8f70f8355c096874921d368342ef)
+
+(cherry picked from commit 20734320a18f12a28e6e4cd7b73dfcb5df869696)
+
+Conflicts:
+	hadoop-mapreduce-project/CHANGES.txt
+	hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/test/java/org/apache/hadoop/mapreduce/v2/app/rm/TestRMContainerAllocator.java
+
+Change-Id: Ib73857cb144a1189f01b9b294de8bf82d229020e
+---
+ .../hadoop/mapreduce/v2/app/rm/RMCommunicator.java |   51 +++++-----
+ .../v2/app/rm/RMContainerAllocationException.java  |   31 ++++++
+ .../mapreduce/v2/app/rm/RMContainerAllocator.java  |    4 +-
+ .../mapreduce/v2/app/rm/TestRMCommunicator.java    |   99 ++++++++++++++++++++
+ .../v2/app/rm/TestRMContainerAllocator.java        |   48 ++++++++--
+ 5 files changed, 199 insertions(+), 34 deletions(-)
+ create mode 100644 hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/main/java/org/apache/hadoop/mapreduce/v2/app/rm/RMContainerAllocationException.java
+ create mode 100644 hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/test/java/org/apache/hadoop/mapreduce/v2/app/rm/TestRMCommunicator.java
+
+diff --git a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/main/java/org/apache/hadoop/mapreduce/v2/app/rm/RMCommunicator.java b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/main/java/org/apache/hadoop/mapreduce/v2/app/rm/RMCommunicator.java
+index 6c58a68..8f870b9 100644
+--- a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/main/java/org/apache/hadoop/mapreduce/v2/app/rm/RMCommunicator.java
++++ b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/main/java/org/apache/hadoop/mapreduce/v2/app/rm/RMCommunicator.java
+@@ -271,35 +271,38 @@ protected void serviceStop() throws Exception {
+     super.serviceStop();
+   }
+ 
+-  protected void startAllocatorThread() {
+-    allocatorThread = new Thread(new Runnable() {
+-      @Override
+-      public void run() {
+-        while (!stopped.get() && !Thread.currentThread().isInterrupted()) {
++  @VisibleForTesting
++  public class AllocatorRunnable implements Runnable {
++    @Override
++    public void run() {
++      while (!stopped.get() && !Thread.currentThread().isInterrupted()) {
++        try {
++          Thread.sleep(rmPollInterval);
+           try {
+-            Thread.sleep(rmPollInterval);
+-            try {
+-              heartbeat();
+-            } catch (YarnRuntimeException e) {
+-              LOG.error("Error communicating with RM: " + e.getMessage() , e);
+-              return;
+-            } catch (Exception e) {
+-              LOG.error("ERROR IN CONTACTING RM. ", e);
+-              continue;
+-              // TODO: for other exceptions
+-            }
+-
+-            lastHeartbeatTime = context.getClock().getTime();
+-            executeHeartbeatCallbacks();
+-          } catch (InterruptedException e) {
+-            if (!stopped.get()) {
+-              LOG.warn("Allocated thread interrupted. Returning.");
+-            }
++            heartbeat();
++          } catch (RMContainerAllocationException e) {
++            LOG.error("Error communicating with RM: " + e.getMessage() , e);
+             return;
++          } catch (Exception e) {
++            LOG.error("ERROR IN CONTACTING RM. ", e);
++            continue;
++            // TODO: for other exceptions
++          }
++
++          lastHeartbeatTime = context.getClock().getTime();
++          executeHeartbeatCallbacks();
++        } catch (InterruptedException e) {
++          if (!stopped.get()) {
++            LOG.warn("Allocated thread interrupted. Returning.");
+           }
++          return;
+         }
+       }
+-    });
++    }
++  }
++
++  protected void startAllocatorThread() {
++    allocatorThread = new Thread(new AllocatorRunnable());
+     allocatorThread.setName("RMCommunicator Allocator");
+     allocatorThread.start();
+   }
+diff --git a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/main/java/org/apache/hadoop/mapreduce/v2/app/rm/RMContainerAllocationException.java b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/main/java/org/apache/hadoop/mapreduce/v2/app/rm/RMContainerAllocationException.java
+new file mode 100644
+index 0000000..3c10944
+--- /dev/null
++++ b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/main/java/org/apache/hadoop/mapreduce/v2/app/rm/RMContainerAllocationException.java
+@@ -0,0 +1,31 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package org.apache.hadoop.mapreduce.v2.app.rm;
++
++/**
++ * Exception to denote fatal failure in allocating containers from RM.
++ */
++public class RMContainerAllocationException extends Exception {
++  private static final long serialVersionUID = 1L;
++  public RMContainerAllocationException(Throwable cause) { super(cause); }
++  public RMContainerAllocationException(String message) { super(message); }
++  public RMContainerAllocationException(String message, Throwable cause) {
++    super(message, cause);
++  }
++}
+diff --git a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/main/java/org/apache/hadoop/mapreduce/v2/app/rm/RMContainerAllocator.java b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/main/java/org/apache/hadoop/mapreduce/v2/app/rm/RMContainerAllocator.java
+index 00dd32a..dc1295f 100644
+--- a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/main/java/org/apache/hadoop/mapreduce/v2/app/rm/RMContainerAllocator.java
++++ b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/main/java/org/apache/hadoop/mapreduce/v2/app/rm/RMContainerAllocator.java
+@@ -673,7 +673,7 @@ public void rampDownReduces(int rampDown) {
+       // this application must clean itself up.
+       eventHandler.handle(new JobEvent(this.getJob().getID(),
+         JobEventType.JOB_AM_REBOOT));
+-      throw new YarnRuntimeException(
++      throw new RMContainerAllocationException(
+         "Resource Manager doesn't recognize AttemptId: "
+             + this.getContext().getApplicationID(), e);
+     } catch (ApplicationMasterNotRegisteredException e) {
+@@ -691,7 +691,7 @@ public void rampDownReduces(int rampDown) {
+         LOG.error("Could not contact RM after " + retryInterval + " milliseconds.");
+         eventHandler.handle(new JobEvent(this.getJob().getID(),
+                                          JobEventType.JOB_AM_REBOOT));
+-        throw new YarnRuntimeException("Could not contact RM after " +
++        throw new RMContainerAllocationException("Could not contact RM after " +
+                                 retryInterval + " milliseconds.");
+       }
+       // Throw this up to the caller, which may decide to ignore it and
+diff --git a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/test/java/org/apache/hadoop/mapreduce/v2/app/rm/TestRMCommunicator.java b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/test/java/org/apache/hadoop/mapreduce/v2/app/rm/TestRMCommunicator.java
+new file mode 100644
+index 0000000..a7c63c2
+--- /dev/null
++++ b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/test/java/org/apache/hadoop/mapreduce/v2/app/rm/TestRMCommunicator.java
+@@ -0,0 +1,99 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package org.apache.hadoop.mapreduce.v2.app.rm;
++
++import org.apache.hadoop.mapreduce.v2.app.AppContext;
++import org.apache.hadoop.mapreduce.v2.app.client.ClientService;
++import org.apache.hadoop.mapreduce.v2.app.rm.RMCommunicator.AllocatorRunnable;
++import org.apache.hadoop.yarn.exceptions.YarnRuntimeException;
++import org.apache.hadoop.yarn.util.Clock;
++import org.junit.Test;
++import org.mockito.invocation.InvocationOnMock;
++import org.mockito.stubbing.Answer;
++
++import static org.mockito.Mockito.doThrow;
++import static org.mockito.Mockito.mock;
++import static org.mockito.Mockito.spy;
++import static org.mockito.Mockito.times;
++import static org.mockito.Mockito.verify;
++import static org.mockito.Mockito.when;
++
++public class TestRMCommunicator {
++
++  class MockRMCommunicator extends RMCommunicator {
++    public MockRMCommunicator(ClientService clientService, AppContext context) {
++      super(clientService, context);
++    }
++
++    @Override
++    protected void heartbeat() throws Exception {
++    }
++  }
++
++  @Test(timeout = 2000)
++  public void testRMContainerAllocatorExceptionIsHandled() throws Exception {
++    ClientService mockClientService = mock(ClientService.class);
++    AppContext mockContext = mock(AppContext.class);
++    MockRMCommunicator mockRMCommunicator =
++        new MockRMCommunicator(mockClientService, mockContext);
++    RMCommunicator communicator = spy(mockRMCommunicator);
++    Clock mockClock = mock(Clock.class);
++    when(mockContext.getClock()).thenReturn(mockClock);
++
++    doThrow(new RMContainerAllocationException("Test")).doNothing()
++        .when(communicator).heartbeat();
++
++    when(mockClock.getTime()).thenReturn(1L).thenThrow(new AssertionError(
++        "GetClock called second time, when it should not have since the " +
++        "thread should have quit"));
++
++    AllocatorRunnable testRunnable = communicator.new AllocatorRunnable();
++    testRunnable.run();
++  }
++
++  @Test(timeout = 2000)
++  public void testRMContainerAllocatorYarnRuntimeExceptionIsHandled()
++      throws Exception {
++    ClientService mockClientService = mock(ClientService.class);
++    AppContext mockContext = mock(AppContext.class);
++    MockRMCommunicator mockRMCommunicator =
++        new MockRMCommunicator(mockClientService, mockContext);
++    final RMCommunicator communicator = spy(mockRMCommunicator);
++    Clock mockClock = mock(Clock.class);
++    when(mockContext.getClock()).thenReturn(mockClock);
++
++    doThrow(new YarnRuntimeException("Test")).doNothing()
++        .when(communicator).heartbeat();
++
++    when(mockClock.getTime()).thenReturn(1L).thenAnswer(new Answer<Integer>() {
++      @Override
++      public Integer answer(InvocationOnMock invocation) throws Throwable {
++        communicator.stop();
++        return 2;
++      }
++    }).thenThrow(new AssertionError(
++        "GetClock called second time, when it should not have since the thread " +
++        "should have quit"));
++
++    AllocatorRunnable testRunnable = communicator.new AllocatorRunnable();
++    testRunnable.run();
++
++    verify(mockClock, times(2)).getTime();
++  }
++}
+diff --git a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/test/java/org/apache/hadoop/mapreduce/v2/app/rm/TestRMContainerAllocator.java b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/test/java/org/apache/hadoop/mapreduce/v2/app/rm/TestRMContainerAllocator.java
+index 88d9cf8..fba6679 100644
+--- a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/test/java/org/apache/hadoop/mapreduce/v2/app/rm/TestRMContainerAllocator.java
++++ b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/test/java/org/apache/hadoop/mapreduce/v2/app/rm/TestRMContainerAllocator.java
+@@ -1730,12 +1730,7 @@ public Boolean get() {
+         }
+       }, 100, 10000);
+       // run the scheduler
+-      try {
+-        super.heartbeat();
+-      } catch (Exception e) {
+-        LOG.error("error in heartbeat ", e);
+-        throw new YarnRuntimeException(e);
+-      }
++      super.heartbeat();
+ 
+       List<TaskAttemptContainerAssignedEvent> result
+         = new ArrayList<TaskAttemptContainerAssignedEvent>(events);
+@@ -1785,7 +1780,7 @@ public MyContainerAllocator2(MyResourceManager rm, Configuration conf,
+     @Override
+     protected AllocateResponse makeRemoteRequest() throws IOException,
+       YarnException {
+-      throw new YarnRuntimeException("for testing");
++      throw new IOException("for testing");
+     }
+   }
+ 
+@@ -2348,7 +2343,7 @@ public void testRMUnavailable()
+     try {
+       allocator.schedule();
+       Assert.fail("Should Have Exception");
+-    } catch (YarnRuntimeException e) {
++    } catch (RMContainerAllocationException e) {
+       Assert.assertTrue(e.getMessage().contains("Could not contact RM after"));
+     }
+     dispatcher.await();
+@@ -2445,6 +2440,43 @@ public void testAMRMTokenUpdate() throws Exception {
+         new Text(rmAddr), ugiToken.getService());
+   }
+ 
++  @Test(expected = RMContainerAllocationException.class)
++  public void testAttemptNotFoundCausesRMCommunicatorException()
++      throws Exception {
++
++    Configuration conf = new Configuration();
++    MyResourceManager rm = new MyResourceManager(conf);
++    rm.start();
++    DrainDispatcher dispatcher = (DrainDispatcher) rm.getRMContext()
++        .getDispatcher();
++
++    // Submit the application
++    RMApp app = rm.submitApp(1024);
++    dispatcher.await();
++
++    MockNM amNodeManager = rm.registerNode("amNM:1234", 2048);
++    amNodeManager.nodeHeartbeat(true);
++    dispatcher.await();
++
++    ApplicationAttemptId appAttemptId = app.getCurrentAppAttempt()
++        .getAppAttemptId();
++    rm.sendAMLaunched(appAttemptId);
++    dispatcher.await();
++
++    JobId jobId = MRBuilderUtils.newJobId(appAttemptId.getApplicationId(), 0);
++    Job mockJob = mock(Job.class);
++    when(mockJob.getReport()).thenReturn(
++        MRBuilderUtils.newJobReport(jobId, "job", "user", JobState.RUNNING, 0,
++            0, 0, 0, 0, 0, 0, "jobfile", null, false, ""));
++    MyContainerAllocator allocator = new MyContainerAllocator(rm, conf,
++        appAttemptId, mockJob);
++
++    // Now kill the application
++    rm.killApp(app.getApplicationId());
++
++    allocator.schedule();
++  }
++
+   public static void main(String[] args) throws Exception {
+     TestRMContainerAllocator t = new TestRMContainerAllocator();
+     t.testSimple();
+-- 
+1.7.9.5
+

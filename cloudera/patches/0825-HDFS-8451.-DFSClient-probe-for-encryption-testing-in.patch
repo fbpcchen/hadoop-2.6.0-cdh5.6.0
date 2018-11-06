@@ -1,0 +1,147 @@
+From aa58c2cdaf8f394cc7fc4f7e19c928f0cf61033e Mon Sep 17 00:00:00 2001
+From: Xiaoyu Yao <xyao@apache.org>
+Date: Thu, 21 May 2015 11:58:00 -0700
+Subject: [PATCH 0825/1023] HDFS-8451. DFSClient probe for encryption testing
+ interprets empty URI property for enabled.
+ Contributed by Steve Loughran.
+
+(cherry picked from commit 05e04f34f27149537fdb89f46af26bee14531ca4)
+(cherry picked from commit 61d7ccb27e9834a42992c2a59637062fcf84a5a4)
+
+Change-Id: Ic3020322e555ed33895cf8a84e61bf0b2e72ba4e
+(cherry picked from commit 334e5ff592471e0ed3a5612ddbfae5a7af3a953e)
+---
+ .../java/org/apache/hadoop/hdfs/DFSClient.java     |    9 ++++++--
+ .../main/java/org/apache/hadoop/hdfs/DFSUtil.java  |   22 ++++++++++++++++----
+ .../org/apache/hadoop/hdfs/KeyProviderCache.java   |    4 ++--
+ .../java/org/apache/hadoop/hdfs/TestDFSUtil.java   |   18 ++++++++++++++++
+ .../apache/hadoop/hdfs/TestEncryptionZones.java    |    2 +-
+ 5 files changed, 46 insertions(+), 9 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSClient.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSClient.java
+index 562ff28..3793233 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSClient.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSClient.java
+@@ -3496,10 +3496,15 @@ public void setKeyProvider(KeyProvider provider) {
+     }
+   }
+ 
++  /**
++   * Probe for encryption enabled on this filesystem.
++   * See {@link DFSUtil#isHDFSEncryptionEnabled(Configuration)}
++   * @return true if encryption is enabled
++   */
+   public boolean isHDFSEncryptionEnabled() {
+-    return conf.get(
+-        DFSConfigKeys.DFS_ENCRYPTION_KEY_PROVIDER_URI, null) != null;
++    return DFSUtil.isHDFSEncryptionEnabled(this.conf);
+   }
++
+   /**
+    * Returns the SaslDataTransferClient configured for this DFSClient.
+    *
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSUtil.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSUtil.java
+index bcdeaf1..bd28a72 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSUtil.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSUtil.java
+@@ -183,8 +183,8 @@ public int compare(DatanodeInfo a, DatanodeInfo b) {
+           a.isDecommissioned() ? 1 : -1;
+       }
+     };
+-    
+-      
++
++
+   /**
+    * Comparator for sorting DataNodeInfo[] based on decommissioned/stale states.
+    * Decommissioned/stale nodes are moved to the end of the array on sorting
+@@ -1829,9 +1829,9 @@ public static void assertAllResultsEqual(Collection<?> objects)
+   public static KeyProvider createKeyProvider(
+       final Configuration conf) throws IOException {
+     final String providerUriStr =
+-        conf.get(DFSConfigKeys.DFS_ENCRYPTION_KEY_PROVIDER_URI, null);
++        conf.getTrimmed(DFSConfigKeys.DFS_ENCRYPTION_KEY_PROVIDER_URI, "");
+     // No provider set in conf
+-    if (providerUriStr == null) {
++    if (providerUriStr.isEmpty()) {
+       return null;
+     }
+     final URI providerUri;
+@@ -1872,4 +1872,18 @@ public static KeyProviderCryptoExtension createKeyProviderCryptoExtension(
+         .createKeyProviderCryptoExtension(keyProvider);
+     return cryptoProvider;
+   }
++
++  /**
++   * Probe for HDFS Encryption being enabled; this uses the value of
++   * the option {@link DFSConfigKeys.DFS_ENCRYPTION_KEY_PROVIDER_URI},
++   * returning true if that property contains a non-empty, non-whitespace
++   * string.
++   * @param conf configuration to probe
++   * @return true if encryption is considered enabled.
++   */
++  public static boolean isHDFSEncryptionEnabled(Configuration conf) {
++    return !conf.getTrimmed(
++        DFSConfigKeys.DFS_ENCRYPTION_KEY_PROVIDER_URI, "").isEmpty();
++  }
++
+ }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/KeyProviderCache.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/KeyProviderCache.java
+index 68ff554..ca4c30c 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/KeyProviderCache.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/KeyProviderCache.java
+@@ -81,9 +81,9 @@ public KeyProvider call() throws Exception {
+ 
+   private URI createKeyProviderURI(Configuration conf) {
+     final String providerUriStr =
+-        conf.get(DFSConfigKeys.DFS_ENCRYPTION_KEY_PROVIDER_URI, null);
++        conf.getTrimmed(DFSConfigKeys.DFS_ENCRYPTION_KEY_PROVIDER_URI, "");
+     // No provider set in conf
+-    if (providerUriStr == null) {
++    if (providerUriStr.isEmpty()) {
+       LOG.error("Could not find uri with key ["
+           + DFSConfigKeys.DFS_ENCRYPTION_KEY_PROVIDER_URI
+           + "] to create a keyProvider !!");
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDFSUtil.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDFSUtil.java
+index 046265f..bcb9484 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDFSUtil.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDFSUtil.java
+@@ -893,4 +893,22 @@ public void testGetNNServiceRpcAddressesForNsIds() throws IOException {
+     } catch (IOException ignored) {
+     }
+   }
++
++  @Test
++  public void testEncryptionProbe() throws Throwable {
++    Configuration conf = new Configuration(false);
++    conf.unset(DFSConfigKeys.DFS_ENCRYPTION_KEY_PROVIDER_URI);
++    assertFalse("encryption enabled on no provider key",
++        DFSUtil.isHDFSEncryptionEnabled(conf));
++    conf.set(DFSConfigKeys.DFS_ENCRYPTION_KEY_PROVIDER_URI, "");
++    assertFalse("encryption enabled on empty provider key",
++        DFSUtil.isHDFSEncryptionEnabled(conf));
++    conf.set(DFSConfigKeys.DFS_ENCRYPTION_KEY_PROVIDER_URI, "\n\t\n");
++    assertFalse("encryption enabled on whitespace provider key",
++        DFSUtil.isHDFSEncryptionEnabled(conf));
++    conf.set(DFSConfigKeys.DFS_ENCRYPTION_KEY_PROVIDER_URI, "http://hadoop.apache.org");
++    assertTrue("encryption disabled on valid provider key",
++        DFSUtil.isHDFSEncryptionEnabled(conf));
++
++  }
+ }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestEncryptionZones.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestEncryptionZones.java
+index 46c5b01..a6a7c0e 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestEncryptionZones.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestEncryptionZones.java
+@@ -702,7 +702,7 @@ public void testVersionAndSuiteNegotiation() throws Exception {
+     // Flushing the KP on the NN, since it caches, and init a test one
+     cluster.getNamesystem().getProvider().flush();
+     KeyProvider provider = KeyProviderFactory
+-        .get(new URI(conf.get(DFSConfigKeys.DFS_ENCRYPTION_KEY_PROVIDER_URI)),
++        .get(new URI(conf.getTrimmed(DFSConfigKeys.DFS_ENCRYPTION_KEY_PROVIDER_URI)),
+             conf);
+     List<String> keys = provider.getKeys();
+     assertEquals("Expected NN to have created one key per zone", 1,
+-- 
+1.7.9.5
+

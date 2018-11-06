@@ -1,0 +1,36 @@
+From 7049f7ad988db3c301684e3cc5339f79c5a5120c Mon Sep 17 00:00:00 2001
+From: Uma Maheswara Rao G <umamahesh@apache.org>
+Date: Fri, 8 May 2015 11:01:51 +0530
+Subject: [PATCH 0819/1023] HDFS-8174. Update replication count to live rep
+ count in fsck report. Contributed by  J.Andreina
+
+(cherry picked from commit 2ea0f2fc938febd7fbbe03656a91ae3db1409c50)
+(cherry picked from commit 7fe1d74005d8dd90e5d87c47b5b750230dc6201d)
+
+Conflicts:
+	hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt
+	hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NamenodeFsck.java
+
+Change-Id: I647a324ecd219765966e4fac2de4cf89b772acbe
+(cherry picked from commit d9df994732a34269daab82b3a471cad7ec86f9a6)
+(cherry picked from commit 0c757752b73dc443a3b6dc16329f2abbc909c277)
+---
+ .../hadoop/hdfs/server/namenode/NamenodeFsck.java  |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NamenodeFsck.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NamenodeFsck.java
+index 1d6408e..cbb51a9 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NamenodeFsck.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NamenodeFsck.java
+@@ -435,7 +435,7 @@ void check(String parent, HdfsFileStatus file, Result res) throws IOException {
+         missing++;
+         missize += block.getNumBytes();
+       } else {
+-        report.append(" repl=" + liveReplicas);
++        report.append(" Live_repl=" + liveReplicas);
+         if (showLocations || showRacks) {
+           StringBuilder sb = new StringBuilder("[");
+           for (int j = 0; j < locs.length; j++) {
+-- 
+1.7.9.5
+

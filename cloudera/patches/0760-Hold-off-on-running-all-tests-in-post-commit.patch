@@ -1,0 +1,86 @@
+From 291498540a446a0c63fcb4c5caf72e4343ce2bf3 Mon Sep 17 00:00:00 2001
+From: Karthik Kambatla <kasha@apache.org>
+Date: Thu, 3 Sep 2015 20:58:20 -0700
+Subject: [PATCH 0760/1023] Hold off on running all tests in post-commit.
+
+Change-Id: I4ff1ca0c38cfeada8a305f55d098d95ce6d2de31
+---
+ cloudera/post_commit_hook.sh     |   29 -----------------------------
+ cloudera/post_commit_hook.sh.bak |   29 +++++++++++++++++++++++++++++
+ 2 files changed, 29 insertions(+), 29 deletions(-)
+ delete mode 100755 cloudera/post_commit_hook.sh
+ create mode 100644 cloudera/post_commit_hook.sh.bak
+
+diff --git a/cloudera/post_commit_hook.sh b/cloudera/post_commit_hook.sh
+deleted file mode 100755
+index 1c64900..0000000
+--- a/cloudera/post_commit_hook.sh
++++ /dev/null
+@@ -1,29 +0,0 @@
+-#!/bin/bash
+-set -xe
+-
+-SCRIPTS="jenkins-job-scripts"
+-DIR="$( cd $( dirname $( dirname ${BASH_SOURCE[0]} ) ) && pwd )"
+-cd $DIR
+-
+-if [[ -d $SCRIPTS ]]; then
+-    echo "Cleaning up remnants from a previous run"
+-    rm -rf $SCRIPTS
+-fi
+-
+-# Clone the jenkins script repo
+-git clone --depth 1 git://github.mtv.cloudera.com/CDH/$SCRIPTS.git $SCRIPTS || true
+-
+-# Fetch the right branch
+-cd $SCRIPTS
+-git fetch --depth 1 origin
+-git checkout -f origin/master
+-git ls-tree -r HEAD
+-cd ..
+-
+-# Run the build and tests
+-export CONF_NAME=CDH5-Hadoop-2.6.0
+-./jenkins-job-scripts/run.sh
+-
+-if [[ -d $SCRIPTS ]]; then
+-    rm -rf $SCRIPTS
+-fi
+diff --git a/cloudera/post_commit_hook.sh.bak b/cloudera/post_commit_hook.sh.bak
+new file mode 100644
+index 0000000..1c64900
+--- /dev/null
++++ b/cloudera/post_commit_hook.sh.bak
+@@ -0,0 +1,29 @@
++#!/bin/bash
++set -xe
++
++SCRIPTS="jenkins-job-scripts"
++DIR="$( cd $( dirname $( dirname ${BASH_SOURCE[0]} ) ) && pwd )"
++cd $DIR
++
++if [[ -d $SCRIPTS ]]; then
++    echo "Cleaning up remnants from a previous run"
++    rm -rf $SCRIPTS
++fi
++
++# Clone the jenkins script repo
++git clone --depth 1 git://github.mtv.cloudera.com/CDH/$SCRIPTS.git $SCRIPTS || true
++
++# Fetch the right branch
++cd $SCRIPTS
++git fetch --depth 1 origin
++git checkout -f origin/master
++git ls-tree -r HEAD
++cd ..
++
++# Run the build and tests
++export CONF_NAME=CDH5-Hadoop-2.6.0
++./jenkins-job-scripts/run.sh
++
++if [[ -d $SCRIPTS ]]; then
++    rm -rf $SCRIPTS
++fi
+-- 
+1.7.9.5
+

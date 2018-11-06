@@ -1,0 +1,38 @@
+From 342adcf0ad6fbfa9d4fd22225fc38d8bcce91d14 Mon Sep 17 00:00:00 2001
+From: Daniel Templeton <templedf@gmail.com>
+Date: Wed, 30 Sep 2015 12:05:33 -0700
+Subject: [PATCH 0882/1023] HDFS-9065. Fixed broken backport of HDFS-9065.
+
+ - Removed extraneous code from upstream
+ - Changed syntax to adjust for CDH branch
+
+Change-Id: I7c6019eceb0cf9b4c6bc8e57f0957922b39411dd
+(cherry picked from commit 335f07abf1100f6f0fd7b7c0e698c3ab6b9c189b)
+(cherry picked from commit 41b35396799cd44661e51e8f8f0146a5c5ab52ac)
+---
+ .../hadoop-hdfs/src/main/webapps/hdfs/dfshealth.js |    9 +--------
+ 1 file changed, 1 insertion(+), 8 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/webapps/hdfs/dfshealth.js b/hadoop-hdfs-project/hadoop-hdfs/src/main/webapps/hdfs/dfshealth.js
+index 5f18a55..04e43d2 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/webapps/hdfs/dfshealth.js
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/webapps/hdfs/dfshealth.js
+@@ -72,14 +72,7 @@
+           data[k] = k === 'nn' ? workaround(d[k].beans[0]) : d[k].beans[0];
+         }
+ 
+-        var blockstats = data['blockstats'];
+-        for (var k in blockstats.StorageTypeStats) {
+-          var b = blockstats.StorageTypeStats[k].value;
+-          b.capacityUsedPercentage = b.capacityUsed * 100.0 / b.capacityTotal;
+-          b.capacityRemainingPercentage = b.capacityRemaining * 100.0 / b.capacityTotal;
+-        }
+-
+-        data.fs.ObjectsTotal = data.fs.FilesTotal + data.fs.BlocksTotal;
++        data['fs'].ObjectsTotal = data['fs'].FilesTotal + data['fs'].BlocksTotal;
+ 
+         render();
+       }),
+-- 
+1.7.9.5
+

@@ -1,0 +1,32 @@
+From cbdf721e976bce4dee0dcddf1fce398c2694eccd Mon Sep 17 00:00:00 2001
+From: Lei Xu <lei@apache.org>
+Date: Wed, 4 Nov 2015 10:27:35 -0800
+Subject: [PATCH 0957/1023] HDFS-9331. Modify
+ TestNameNodeMXBean#testNameNodeMXBeanInfo() to
+ account for filesystem entirely allocated for DFS
+ use. (Tony Wu via lei)
+
+(cherry picked from commit e2a5441b062fd0758138079d24a2740fc5e5e350)
+(cherry picked from commit 8ed1fd2171269c1bf7efac417f84484f61dd2c5b)
+
+Change-Id: I42ed08f5c5bcacb922cab9c65e1ded6c623ef1b1
+---
+ .../hdfs/server/namenode/TestNameNodeMXBean.java   |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestNameNodeMXBean.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestNameNodeMXBean.java
+index 2f38cd0..c33753f 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestNameNodeMXBean.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestNameNodeMXBean.java
+@@ -150,7 +150,7 @@ public void testNameNodeMXBeanInfo() throws Exception {
+       assertTrue(liveNodes.size() > 0);
+       for (Map<String, Object> liveNode : liveNodes.values()) {
+         assertTrue(liveNode.containsKey("nonDfsUsedSpace"));
+-        assertTrue(((Long)liveNode.get("nonDfsUsedSpace")) > 0);
++        assertTrue(((Long)liveNode.get("nonDfsUsedSpace")) >= 0);
+         assertTrue(liveNode.containsKey("capacity"));
+         assertTrue(((Long)liveNode.get("capacity")) > 0);
+         assertTrue(liveNode.containsKey("numBlocks"));
+-- 
+1.7.9.5
+

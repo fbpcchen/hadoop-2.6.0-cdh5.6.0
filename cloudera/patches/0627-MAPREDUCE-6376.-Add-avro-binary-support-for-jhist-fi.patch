@@ -1,0 +1,212 @@
+From b8be756a4d85d7de0b739191b9b79ae7d701e9ec Mon Sep 17 00:00:00 2001
+From: Jason Lowe <jlowe@apache.org>
+Date: Wed, 1 Jul 2015 16:00:03 +0000
+Subject: [PATCH 0627/1023] MAPREDUCE-6376. Add avro binary support for jhist
+ files. Contributed by Ray Chiang
+
+(cherry picked from commit 2ac87df578accb6e612f70ded76271cb5082ee10)
+
+Conflicts:
+	hadoop-mapreduce-project/CHANGES.txt
+	hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-common/src/main/java/org/apache/hadoop/mapreduce/v2/jobhistory/JHAdminConfig.java
+	hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/resources/mapred-default.xml
+---
+ .../jobhistory/JobHistoryEventHandler.java         |   20 ++++++++++++--
+ .../hadoop/mapreduce/jobhistory/TestEvents.java    |    3 +-
+ .../mapreduce/v2/jobhistory/JHAdminConfig.java     |    7 +++++
+ .../hadoop/mapreduce/jobhistory/EventReader.java   |   12 ++++----
+ .../hadoop/mapreduce/jobhistory/EventWriter.java   |   29 ++++++++++++++++----
+ .../src/main/resources/mapred-default.xml          |   11 ++++++++
+ 6 files changed, 69 insertions(+), 13 deletions(-)
+
+diff --git a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/main/java/org/apache/hadoop/mapreduce/jobhistory/JobHistoryEventHandler.java b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/main/java/org/apache/hadoop/mapreduce/jobhistory/JobHistoryEventHandler.java
+index 0363669..96c8f46 100644
+--- a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/main/java/org/apache/hadoop/mapreduce/jobhistory/JobHistoryEventHandler.java
++++ b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/main/java/org/apache/hadoop/mapreduce/jobhistory/JobHistoryEventHandler.java
+@@ -55,6 +55,7 @@
+ import org.apache.hadoop.mapreduce.v2.app.job.Job;
+ import org.apache.hadoop.mapreduce.v2.app.job.JobStateInternal;
+ import org.apache.hadoop.mapreduce.v2.jobhistory.FileNameIndexUtils;
++import org.apache.hadoop.mapreduce.v2.jobhistory.JHAdminConfig;
+ import org.apache.hadoop.mapreduce.v2.jobhistory.JobHistoryUtils;
+ import org.apache.hadoop.mapreduce.v2.jobhistory.JobIndexInfo;
+ import org.apache.hadoop.security.UserGroupInformation;
+@@ -102,7 +103,8 @@
+ 
+   private int numUnflushedCompletionEvents = 0;
+   private boolean isTimerActive;
+-
++  private EventWriter.WriteMode jhistMode =
++      EventWriter.WriteMode.JSON;
+ 
+   protected BlockingQueue<JobHistoryEvent> eventQueue =
+     new LinkedBlockingQueue<JobHistoryEvent>();
+@@ -251,6 +253,20 @@ protected void serviceInit(Configuration conf) throws Exception {
+       LOG.info("Emitting job history data to the timeline server is not enabled");
+     }
+ 
++    // Flag for setting
++    String jhistFormat = conf.get(JHAdminConfig.MR_HS_JHIST_FORMAT,
++        JHAdminConfig.DEFAULT_MR_HS_JHIST_FORMAT);
++    if (jhistFormat.equals("json")) {
++      jhistMode = EventWriter.WriteMode.JSON;
++    } else if (jhistFormat.equals("binary")) {
++      jhistMode = EventWriter.WriteMode.BINARY;
++    } else {
++      LOG.warn("Unrecognized value '" + jhistFormat + "' for property " +
++          JHAdminConfig.MR_HS_JHIST_FORMAT + ".  Valid values are " +
++          "'json' or 'binary'.  Falling back to default value '" +
++          JHAdminConfig.DEFAULT_MR_HS_JHIST_FORMAT + "'.");
++    }
++
+     super.serviceInit(conf);
+   }
+ 
+@@ -410,7 +426,7 @@ protected void serviceStop() throws Exception {
+   protected EventWriter createEventWriter(Path historyFilePath)
+       throws IOException {
+     FSDataOutputStream out = stagingDirFS.create(historyFilePath, true);
+-    return new EventWriter(out);
++    return new EventWriter(out, this.jhistMode);
+   }
+   
+   /**
+diff --git a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/test/java/org/apache/hadoop/mapreduce/jobhistory/TestEvents.java b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/test/java/org/apache/hadoop/mapreduce/jobhistory/TestEvents.java
+index 00be4b8..33448b0 100644
+--- a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/test/java/org/apache/hadoop/mapreduce/jobhistory/TestEvents.java
++++ b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-app/src/test/java/org/apache/hadoop/mapreduce/jobhistory/TestEvents.java
+@@ -189,7 +189,8 @@ public void testEvents() throws Exception {
+     ByteArrayOutputStream output = new ByteArrayOutputStream();
+     FSDataOutputStream fsOutput = new FSDataOutputStream(output,
+         new FileSystem.Statistics("scheme"));
+-    EventWriter writer = new EventWriter(fsOutput);
++    EventWriter writer = new EventWriter(fsOutput,
++        EventWriter.WriteMode.JSON);
+     writer.write(getJobPriorityChangedEvent());
+     writer.write(getJobStatusChangedEvent());
+     writer.write(getTaskUpdatedEvent());
+diff --git a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-common/src/main/java/org/apache/hadoop/mapreduce/v2/jobhistory/JHAdminConfig.java b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-common/src/main/java/org/apache/hadoop/mapreduce/v2/jobhistory/JHAdminConfig.java
+index e5a49b5..38562d4 100644
+--- a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-common/src/main/java/org/apache/hadoop/mapreduce/v2/jobhistory/JHAdminConfig.java
++++ b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-common/src/main/java/org/apache/hadoop/mapreduce/v2/jobhistory/JHAdminConfig.java
+@@ -207,4 +207,11 @@
+    */
+   public static boolean DEFAULT_MR_HISTORY_MINICLUSTER_FIXED_PORTS = false;
+ 
++  /**
++   * Settings for .jhist file format.
++   */
++  public static final String MR_HS_JHIST_FORMAT =
++      MR_HISTORY_PREFIX + "jhist.format";
++  public static final String DEFAULT_MR_HS_JHIST_FORMAT =
++      "json";
+ }
+diff --git a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/java/org/apache/hadoop/mapreduce/jobhistory/EventReader.java b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/java/org/apache/hadoop/mapreduce/jobhistory/EventReader.java
+index 84743e7..a68b775 100644
+--- a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/java/org/apache/hadoop/mapreduce/jobhistory/EventReader.java
++++ b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/java/org/apache/hadoop/mapreduce/jobhistory/EventReader.java
+@@ -66,15 +66,17 @@ public EventReader(FileSystem fs, Path name) throws IOException {
+   public EventReader(DataInputStream in) throws IOException {
+     this.in = in;
+     this.version = in.readLine();
+-    
+-    if (!EventWriter.VERSION.equals(version)) {
+-      throw new IOException("Incompatible event log version: "+version);
+-    }
+ 
+     Schema myschema = new SpecificData(Event.class.getClassLoader()).getSchema(Event.class);
+     this.schema = Schema.parse(in.readLine());
+     this.reader = new SpecificDatumReader(schema, myschema);
+-    this.decoder = DecoderFactory.get().jsonDecoder(schema, in);
++    if (EventWriter.VERSION.equals(version)) {
++      this.decoder = DecoderFactory.get().jsonDecoder(schema, in);
++    } else if (EventWriter.VERSION_BINARY.equals(version)) {
++      this.decoder = DecoderFactory.get().binaryDecoder(in, null);
++    } else {
++      throw new IOException("Incompatible event log version: " + version);
++    }
+   }
+   
+   /**
+diff --git a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/java/org/apache/hadoop/mapreduce/jobhistory/EventWriter.java b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/java/org/apache/hadoop/mapreduce/jobhistory/EventWriter.java
+index b953da1..0fea02c 100644
+--- a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/java/org/apache/hadoop/mapreduce/jobhistory/EventWriter.java
++++ b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/java/org/apache/hadoop/mapreduce/jobhistory/EventWriter.java
+@@ -43,20 +43,37 @@
+  */
+ class EventWriter {
+   static final String VERSION = "Avro-Json";
++  static final String VERSION_BINARY = "Avro-Binary";
+ 
+   private FSDataOutputStream out;
+   private DatumWriter<Event> writer =
+     new SpecificDatumWriter<Event>(Event.class);
+   private Encoder encoder;
+   private static final Log LOG = LogFactory.getLog(EventWriter.class);
+-  
+-  EventWriter(FSDataOutputStream out) throws IOException {
++  public enum WriteMode { JSON, BINARY }
++  private final WriteMode writeMode;
++  private final boolean jsonOutput;  // Cache value while we have 2 modes
++
++  EventWriter(FSDataOutputStream out, WriteMode mode) throws IOException {
+     this.out = out;
+-    out.writeBytes(VERSION);
++    this.writeMode = mode;
++    if (this.writeMode==WriteMode.JSON) {
++      this.jsonOutput = true;
++      out.writeBytes(VERSION);
++    } else if (this.writeMode==WriteMode.BINARY) {
++      this.jsonOutput = false;
++      out.writeBytes(VERSION_BINARY);
++    } else {
++      throw new IOException("Unknown mode: " + mode);
++    }
+     out.writeBytes("\n");
+     out.writeBytes(Event.SCHEMA$.toString());
+     out.writeBytes("\n");
+-    this.encoder =  EncoderFactory.get().jsonEncoder(Event.SCHEMA$, out);
++    if (!this.jsonOutput) {
++      this.encoder = EncoderFactory.get().binaryEncoder(out, null);
++    } else {
++      this.encoder = EncoderFactory.get().jsonEncoder(Event.SCHEMA$, out);
++    }
+   }
+   
+   synchronized void write(HistoryEvent event) throws IOException { 
+@@ -65,7 +82,9 @@ synchronized void write(HistoryEvent event) throws IOException {
+     wrapper.event = event.getDatum();
+     writer.write(wrapper, encoder);
+     encoder.flush();
+-    out.writeBytes("\n");
++    if (this.jsonOutput) {
++      out.writeBytes("\n");
++    }
+   }
+   
+   void flush() throws IOException {
+diff --git a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/resources/mapred-default.xml b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/resources/mapred-default.xml
+index b02f318..37d284c 100644
+--- a/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/resources/mapred-default.xml
++++ b/hadoop-mapreduce-project/hadoop-mapreduce-client/hadoop-mapreduce-client-core/src/main/resources/mapred-default.xml
+@@ -2014,6 +2014,17 @@
+ </property>
+ 
+ <property>
++
++<property>
++  <description>
++  File format the AM will use when generating the .jhist file.  Valid
++  values are "json" for text output and "binary" for faster parsing.
++  </description>
++  <name>mapreduce.jobhistory.jhist.format</name>
++  <value>json</value>
++</property>
++
++<property>
+   <name>mapreduce.job.heap.memory-mb.ratio</name>
+   <value>0.8</value>
+   <description>The ratio of heap-size to container-size. If no -Xmx is
+-- 
+1.7.9.5
+

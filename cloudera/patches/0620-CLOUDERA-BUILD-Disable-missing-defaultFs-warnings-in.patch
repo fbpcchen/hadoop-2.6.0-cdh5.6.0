@@ -1,0 +1,35 @@
+From b3d18bac3aa67b2679d899750fdad034330c5d76 Mon Sep 17 00:00:00 2001
+From: Lei Xu <lei@apache.org>
+Date: Tue, 30 Jun 2015 16:47:33 -0700
+Subject: [PATCH 0620/1023] CLOUDERA-BUILD: Disable missing defaultFs warnings
+ in test to make jenkins green.
+
+---
+ .../apache/hadoop/fs/TestFsShellReturnCode.java    |    4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/TestFsShellReturnCode.java b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/TestFsShellReturnCode.java
+index c68def6..66c0cfc 100644
+--- a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/TestFsShellReturnCode.java
++++ b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/TestFsShellReturnCode.java
+@@ -18,6 +18,7 @@
+ 
+ package org.apache.hadoop.fs;
+ 
++import static org.apache.hadoop.fs.CommonConfigurationKeysPublic.HADOOP_SHELL_MISSING_DEFAULT_FS_WARNING_KEY;
+ import static org.junit.Assert.assertEquals;
+ import static org.junit.Assert.assertTrue;
+ import static org.junit.Assert.fail;
+@@ -335,6 +336,9 @@ public void testRmWithNonexistentGlob() throws Exception {
+   @Test (timeout = 30000)
+   public void testRmForceWithNonexistentGlob() throws Exception {
+     Configuration conf = new Configuration();
++    // CLOUDERA-BUILD: This test fails in CDH because CDH display warnings by
++    // default. So we should disable warnings in this test.
++    conf.setBoolean(HADOOP_SHELL_MISSING_DEFAULT_FS_WARNING_KEY, false);
+     FsShell shell = new FsShell();
+     shell.setConf(conf);
+     final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+-- 
+1.7.9.5
+

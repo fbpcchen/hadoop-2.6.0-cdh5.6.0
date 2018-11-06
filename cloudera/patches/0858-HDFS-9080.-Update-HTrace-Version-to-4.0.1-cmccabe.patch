@@ -1,0 +1,4174 @@
+From a1ca904400596acbbdbd385001c5b6ca38ca405d Mon Sep 17 00:00:00 2001
+From: Colin Patrick Mccabe <cmccabe@cloudera.com>
+Date: Mon, 28 Sep 2015 11:02:29 -0700
+Subject: [PATCH 0858/1023] HDFS-9080. Update HTrace Version to 4.0.1
+ (cmccabe)
+
+Conflicts:
+    hadoop-common-project/hadoop-common/pom.xml
+    hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/CommonConfigurationKeys.java
+    hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/FsShell.java
+    hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/Client.java
+    hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/Server.java
+    hadoop-common-project/hadoop-common/src/main/resources/core-default.xml
+    hadoop-hdfs-project/hadoop-hdfs-client/src/main/java/org/apache/hadoop/hdfs/DFSPacket.java
+    hadoop-hdfs-project/hadoop-hdfs-client/src/main/java/org/apache/hadoop/hdfs/DataStreamer.java
+    hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/BlockReaderFactory.java
+    hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/BlockReaderLocal.java
+    hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/BlockReaderLocalLegacy.java
+    hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/BlockStorageLocationUtil.java
+    hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSClient.java
+    hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSInputStream.java
+    hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/RemoteBlockReader2.java
+    hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/datatransfer/DataTransferProtoUtil.java
+    hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/datatransfer/Receiver.java
+    hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/datatransfer/Sender.java
+    hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NamenodeFsck.java
+    hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDFSOutputStream.java
+    hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tools/TestHdfsConfigFields.java
+    hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracing.java
+    hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracingShortCircuitLocalRead.java
+
+Change-Id: I67091ad74ed8767abce3951010832d6599d0b1f9
+(cherry picked from commit a3c99431f58a0f50e8b478bdbec20ec18a205580)
+---
+ hadoop-common-project/hadoop-common/pom.xml        |    2 +-
+ .../apache/hadoop/fs/CommonConfigurationKeys.java  |    3 +
+ .../java/org/apache/hadoop/fs/FSOutputSummer.java  |   12 +-
+ .../java/org/apache/hadoop/fs/FileContext.java     |    7 +
+ .../main/java/org/apache/hadoop/fs/FileSystem.java |   21 +-
+ .../main/java/org/apache/hadoop/fs/FsShell.java    |   25 +--
+ .../main/java/org/apache/hadoop/fs/FsTracer.java   |   64 ++++++
+ .../main/java/org/apache/hadoop/fs/Globber.java    |   15 +-
+ .../main/java/org/apache/hadoop/ipc/Client.java    |   13 +-
+ .../org/apache/hadoop/ipc/ProtobufRpcEngine.java   |   17 +-
+ .../main/java/org/apache/hadoop/ipc/Server.java    |   51 ++---
+ .../org/apache/hadoop/ipc/WritableRpcEngine.java   |    9 +-
+ .../apache/hadoop/tracing/SpanReceiverHost.java    |  208 --------------------
+ .../java/org/apache/hadoop/tracing/TraceUtils.java |   24 ++-
+ .../hadoop/tracing/TracerConfigurationManager.java |  100 ++++++++++
+ .../java/org/apache/hadoop/util/ProtoUtil.java     |   13 +-
+ .../src/main/resources/core-default.xml            |   15 ++
+ .../java/org/apache/hadoop/fs/TestFsShell.java     |   11 +-
+ .../org/apache/hadoop/tracing/SetSpanReceiver.java |   13 +-
+ .../org/apache/hadoop/tracing/TestTraceUtils.java  |    2 +-
+ hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt        |    2 +
+ hadoop-hdfs-project/hadoop-hdfs/pom.xml            |    2 +-
+ .../org/apache/hadoop/hdfs/BlockReaderFactory.java |   18 +-
+ .../org/apache/hadoop/hdfs/BlockReaderLocal.java   |   21 +-
+ .../apache/hadoop/hdfs/BlockReaderLocalLegacy.java |   29 +--
+ .../hadoop/hdfs/BlockStorageLocationUtil.java      |   29 +--
+ .../java/org/apache/hadoop/hdfs/DFSClient.java     |  198 +++++++++----------
+ .../java/org/apache/hadoop/hdfs/DFSConfigKeys.java |    7 -
+ .../hadoop/hdfs/DFSInotifyEventInputStream.java    |   29 ++-
+ .../org/apache/hadoop/hdfs/DFSInputStream.java     |   22 ++-
+ .../org/apache/hadoop/hdfs/DFSOutputStream.java    |  122 ++++++------
+ .../org/apache/hadoop/hdfs/RemoteBlockReader.java  |   20 +-
+ .../org/apache/hadoop/hdfs/RemoteBlockReader2.java |   23 ++-
+ .../hdfs/protocol/CacheDirectiveIterator.java      |   13 +-
+ .../hadoop/hdfs/protocol/CachePoolIterator.java    |   13 +-
+ .../hdfs/protocol/EncryptionZoneIterator.java      |   14 +-
+ .../datatransfer/DataTransferProtoUtil.java        |   42 ++--
+ .../hdfs/protocol/datatransfer/Receiver.java       |   35 +++-
+ .../hadoop/hdfs/protocol/datatransfer/Sender.java  |   22 ++-
+ .../hadoop/hdfs/qjournal/server/JournalNode.java   |   13 +-
+ .../hdfs/qjournal/server/JournalNodeRpcServer.java |    1 +
+ .../hadoop/hdfs/server/datanode/BlockSender.java   |    9 +-
+ .../hadoop/hdfs/server/datanode/DataNode.java      |   41 ++--
+ .../hadoop/hdfs/server/datanode/DataXceiver.java   |    2 +-
+ .../hadoop/hdfs/server/namenode/NameNode.java      |   25 ++-
+ .../hdfs/server/namenode/NameNodeRpcServer.java    |   10 +-
+ .../hadoop/hdfs/server/namenode/NamenodeFsck.java  |    8 +
+ .../src/main/resources/hdfs-default.xml            |   13 +-
+ .../apache/hadoop/hdfs/BlockReaderTestUtil.java    |    2 +
+ .../apache/hadoop/hdfs/TestBlockReaderLocal.java   |    2 +
+ .../apache/hadoop/hdfs/TestDFSOutputStream.java    |    1 +
+ .../java/org/apache/hadoop/hdfs/TestDFSPacket.java |   25 +--
+ .../hdfs/server/namenode/TestCacheDirectives.java  |    4 +-
+ .../hadoop/hdfs/server/namenode/TestFsck.java      |    1 +
+ .../org/apache/hadoop/tracing/TestTraceAdmin.java  |    9 +-
+ .../org/apache/hadoop/tracing/TestTracing.java     |   83 ++++----
+ .../tracing/TestTracingShortCircuitLocalRead.java  |   19 +-
+ hadoop-project/pom.xml                             |    4 +-
+ 58 files changed, 827 insertions(+), 731 deletions(-)
+ create mode 100644 hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/FsTracer.java
+ delete mode 100644 hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/tracing/SpanReceiverHost.java
+ create mode 100644 hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/tracing/TracerConfigurationManager.java
+
+diff --git a/hadoop-common-project/hadoop-common/pom.xml b/hadoop-common-project/hadoop-common/pom.xml
+index 2da8b14..164a69d 100644
+--- a/hadoop-common-project/hadoop-common/pom.xml
++++ b/hadoop-common-project/hadoop-common/pom.xml
+@@ -256,7 +256,7 @@
+ 
+     <dependency>
+       <groupId>org.apache.htrace</groupId>
+-      <artifactId>htrace-core</artifactId>
++      <artifactId>htrace-core4</artifactId>
+     </dependency>
+     <dependency>
+       <groupId>org.apache.zookeeper</groupId>
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/CommonConfigurationKeys.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/CommonConfigurationKeys.java
+index 63b6d14..a3d4bb5 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/CommonConfigurationKeys.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/CommonConfigurationKeys.java
+@@ -283,4 +283,7 @@
+   public static final String NFS_EXPORTS_ALLOWED_HOSTS_SEPARATOR = ";";
+   public static final String NFS_EXPORTS_ALLOWED_HOSTS_KEY = "nfs.exports.allowed.hosts";
+   public static final String NFS_EXPORTS_ALLOWED_HOSTS_KEY_DEFAULT = "* rw";
++
++  // HDFS client HTrace configuration.
++  public static final String  FS_CLIENT_HTRACE_PREFIX = "fs.client.htrace.";
+ }
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/FSOutputSummer.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/FSOutputSummer.java
+index 88efcf1..3a07cd6 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/FSOutputSummer.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/FSOutputSummer.java
+@@ -21,8 +21,8 @@
+ import org.apache.hadoop.classification.InterfaceAudience;
+ import org.apache.hadoop.classification.InterfaceStability;
+ import org.apache.hadoop.util.DataChecksum;
+-import org.apache.htrace.NullScope;
+-import org.apache.htrace.TraceScope;
++import org.apache.htrace.core.TraceScope;
++import org.apache.htrace.core.Tracer;
+ 
+ import java.io.IOException;
+ import java.io.OutputStream;
+@@ -43,6 +43,8 @@
+   private byte checksum[];
+   // The number of valid bytes in the buffer.
+   private int count;
++  // The HTrace tracer to use
++  private Tracer tracer;
+   
+   // We want this value to be a multiple of 3 because the native code checksums
+   // 3 chunks simultaneously. The chosen value of 9 strikes a balance between
+@@ -197,7 +199,7 @@ protected int getChecksumSize() {
+   }
+ 
+   protected TraceScope createWriteTraceScope() {
+-    return NullScope.INSTANCE;
++    return null;
+   }
+ 
+   /** Generate checksums for the given data chunks and output chunks & checksums
+@@ -215,7 +217,9 @@ private void writeChecksumChunks(byte b[], int off, int len)
+             getChecksumSize());
+       }
+     } finally {
+-      scope.close();
++      if (scope != null) {
++        scope.close();
++      }
+     }
+   }
+ 
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/FileContext.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/FileContext.java
+index 40d271d..6d0ace2 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/FileContext.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/FileContext.java
+@@ -57,6 +57,7 @@
+ import org.apache.hadoop.security.UserGroupInformation;
+ import org.apache.hadoop.security.token.Token;
+ import org.apache.hadoop.util.ShutdownHookManager;
++import org.apache.htrace.core.Tracer;
+ 
+ /**
+  * The FileContext class provides an interface to the application writer for
+@@ -228,12 +229,14 @@ public boolean accept(final Path file) {
+   private final Configuration conf;
+   private final UserGroupInformation ugi;
+   final boolean resolveSymlinks;
++  private final Tracer tracer;
+ 
+   private FileContext(final AbstractFileSystem defFs,
+     final FsPermission theUmask, final Configuration aConf) {
+     defaultFS = defFs;
+     umask = FsPermission.getUMask(aConf);
+     conf = aConf;
++    tracer = FsTracer.get(aConf);
+     try {
+       ugi = UserGroupInformation.getCurrentUser();
+     } catch (IOException e) {
+@@ -2518,4 +2521,8 @@ public Void next(final AbstractFileSystem fs, final Path p)
+       }
+     }.resolve(this, absF);
+   }
++
++  Tracer getTracer() {
++    return tracer;
++  }
+ }
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/FileSystem.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/FileSystem.java
+index 5f5b6de..a44b7ed 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/FileSystem.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/FileSystem.java
+@@ -65,9 +65,8 @@
+ import org.apache.hadoop.util.Progressable;
+ import org.apache.hadoop.util.ReflectionUtils;
+ import org.apache.hadoop.util.ShutdownHookManager;
+-import org.apache.htrace.Span;
+-import org.apache.htrace.Trace;
+-import org.apache.htrace.TraceScope;
++import org.apache.htrace.core.Tracer;
++import org.apache.htrace.core.TraceScope;
+ 
+ import com.google.common.annotations.VisibleForTesting;
+ 
+@@ -127,6 +126,13 @@
+   private Set<Path> deleteOnExit = new TreeSet<Path>();
+   
+   boolean resolveSymlinks;
++
++  private Tracer tracer;
++
++  protected final Tracer getTracer() {
++    return tracer;
++  }
++
+   /**
+    * This method adds a file system for testing so that we can find it later. It
+    * is only for testing.
+@@ -2621,17 +2627,16 @@ private static void loadFileSystems() {
+ 
+   private static FileSystem createFileSystem(URI uri, Configuration conf
+       ) throws IOException {
+-    TraceScope scope = Trace.startSpan("FileSystem#createFileSystem");
+-    Span span = scope.getSpan();
+-    if (span != null) {
+-      span.addKVAnnotation("scheme", uri.getScheme());
+-    }
++    Tracer tracer = FsTracer.get(conf);
++    TraceScope scope = tracer.newScope("FileSystem#createFileSystem");
++    scope.addKVAnnotation("scheme", uri.getScheme());
+     try {
+       Class<?> clazz = getFileSystemClass(uri.getScheme(), conf);
+       if (clazz == null) {
+         throw new IOException("No FileSystem for scheme: " + uri.getScheme());
+       }
+       FileSystem fs = (FileSystem)ReflectionUtils.newInstance(clazz, conf);
++      fs.tracer = tracer;
+       fs.initialize(uri, conf);
+       return fs;
+     } finally {
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/FsShell.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/FsShell.java
+index a0510be..9a5b651 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/FsShell.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/FsShell.java
+@@ -32,16 +32,13 @@
+ import org.apache.hadoop.fs.shell.Command;
+ import org.apache.hadoop.fs.shell.CommandFactory;
+ import org.apache.hadoop.fs.shell.FsCommand;
+-import org.apache.hadoop.tracing.SpanReceiverHost;
+ import org.apache.hadoop.tools.TableListing;
+ import org.apache.hadoop.tracing.TraceUtils;
+ import org.apache.hadoop.util.StringUtils;
+ import org.apache.hadoop.util.Tool;
+ import org.apache.hadoop.util.ToolRunner;
+-import org.apache.htrace.Sampler;
+-import org.apache.htrace.SamplerBuilder;
+-import org.apache.htrace.Trace;
+-import org.apache.htrace.TraceScope;
++import org.apache.htrace.core.TraceScope;
++import org.apache.htrace.core.Tracer;
+ 
+ /** Provide command line access to a FileSystem. */
+ @InterfaceAudience.Private
+@@ -54,13 +51,12 @@
+   private FileSystem fs;
+   private Trash trash;
+   protected CommandFactory commandFactory;
+-  private Sampler traceSampler;
+ 
+   private final String usagePrefix =
+     "Usage: hadoop fs [generic options]";
+ 
+-  private SpanReceiverHost spanReceiverHost;
+-  static final String SEHLL_HTRACE_PREFIX = "dfs.shell.htrace.";
++  private Tracer tracer;
++  static final String SHELL_HTRACE_PREFIX = "fs.shell.htrace.";
+ 
+   /**
+    * Default ctor with no configuration.  Be sure to invoke
+@@ -102,8 +98,9 @@ protected void init() throws IOException {
+       commandFactory.addObject(new Usage(), "-usage");
+       registerCommands(commandFactory);
+     }
+-    this.spanReceiverHost =
+-        SpanReceiverHost.get(getConf(), SEHLL_HTRACE_PREFIX);
++    this.tracer = new Tracer.Builder("FsShell").
++        conf(TraceUtils.wrapHadoopConf(SHELL_HTRACE_PREFIX, getConf())).
++        build();
+   }
+ 
+   protected void registerCommands(CommandFactory factory) {
+@@ -285,8 +282,6 @@ private TableListing createOptionTableListing() {
+   public int run(String argv[]) throws Exception {
+     // initialize FsShell
+     init();
+-    traceSampler = new SamplerBuilder(TraceUtils.
+-        wrapHadoopConf(SEHLL_HTRACE_PREFIX, getConf())).build();
+     int exitCode = -1;
+     if (argv.length < 1) {
+       printUsage(System.err);
+@@ -298,7 +293,7 @@ public int run(String argv[]) throws Exception {
+         if (instance == null) {
+           throw new UnknownCommandException();
+         }
+-        TraceScope scope = Trace.startSpan(instance.getCommandName(), traceSampler);
++        TraceScope scope = tracer.newScope(instance.getCommandName());
+         if (scope.getSpan() != null) {
+           String args = StringUtils.join(" ", argv);
+           if (args.length() > 2048) {
+@@ -323,6 +318,7 @@ public int run(String argv[]) throws Exception {
+         e.printStackTrace(System.err);
+       }
+     }
++    tracer.close();
+     return exitCode;
+   }
+   
+@@ -349,9 +345,6 @@ public void close() throws IOException {
+       fs.close();
+       fs = null;
+     }
+-    if (this.spanReceiverHost != null) {
+-      this.spanReceiverHost.closeReceivers();
+-    }
+   }
+ 
+   /**
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/FsTracer.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/FsTracer.java
+new file mode 100644
+index 0000000..e422336
+--- /dev/null
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/FsTracer.java
+@@ -0,0 +1,64 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.apache.hadoop.fs;
++
++import com.google.common.annotations.VisibleForTesting;
++import org.apache.hadoop.classification.InterfaceAudience;
++import org.apache.hadoop.classification.InterfaceStability;
++import org.apache.hadoop.conf.Configuration;
++import org.apache.hadoop.tracing.TraceUtils;
++import org.apache.htrace.core.Tracer;
++
++/**
++ * Holds the HTrace Tracer used for FileSystem operations.
++ *
++ * Ideally, this would be owned by the DFSClient, rather than global.  However,
++ * the FileContext API may create a new DFSClient for each operation in some
++ * cases.  Because of this, we cannot store this Tracer inside DFSClient.  See
++ * HADOOP-6356 for details.
++ */
++@InterfaceAudience.Private
++@InterfaceStability.Unstable
++public final class FsTracer {
++  private static Tracer instance;
++
++  public static synchronized Tracer get(Configuration conf) {
++    if (instance == null) {
++      instance = new Tracer.Builder("FSClient").
++          conf(TraceUtils.wrapHadoopConf(CommonConfigurationKeys.
++              FS_CLIENT_HTRACE_PREFIX, conf)).
++          build();
++    }
++    return instance;
++  }
++
++  @VisibleForTesting
++  public static synchronized void clear() {
++    if (instance == null) {
++      return;
++    }
++    try {
++      instance.close();
++    } finally {
++      instance = null;
++    }
++  }
++
++  private FsTracer() {
++  }
++}
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/Globber.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/Globber.java
+index 48639b4..7a01575 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/Globber.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/fs/Globber.java
+@@ -28,9 +28,8 @@
+ import org.apache.hadoop.classification.InterfaceAudience;
+ import org.apache.hadoop.classification.InterfaceStability;
+ 
+-import org.apache.htrace.Span;
+-import org.apache.htrace.Trace;
+-import org.apache.htrace.TraceScope;
++import org.apache.htrace.core.TraceScope;
++import org.apache.htrace.core.Tracer;
+ 
+ @InterfaceAudience.Private
+ @InterfaceStability.Unstable
+@@ -41,12 +40,14 @@
+   private final FileContext fc;
+   private final Path pathPattern;
+   private final PathFilter filter;
++  private final Tracer tracer;
+   
+   public Globber(FileSystem fs, Path pathPattern, PathFilter filter) {
+     this.fs = fs;
+     this.fc = null;
+     this.pathPattern = pathPattern;
+     this.filter = filter;
++    this.tracer = fs.getTracer();
+   }
+ 
+   public Globber(FileContext fc, Path pathPattern, PathFilter filter) {
+@@ -54,6 +55,7 @@ public Globber(FileContext fc, Path pathPattern, PathFilter filter) {
+     this.fc = fc;
+     this.pathPattern = pathPattern;
+     this.filter = filter;
++    this.tracer = fc.getTracer();
+   }
+ 
+   private FileStatus getFileStatus(Path path) throws IOException {
+@@ -140,11 +142,8 @@ private String authorityFromPath(Path path) throws IOException {
+   }
+ 
+   public FileStatus[] glob() throws IOException {
+-    TraceScope scope = Trace.startSpan("Globber#glob");
+-    Span span = scope.getSpan();
+-    if (span != null) {
+-      span.addKVAnnotation("pattern", pathPattern.toUri().getPath());
+-    }
++    TraceScope scope = tracer.newScope("Globber#glob");
++    scope.addKVAnnotation("pattern", pathPattern.toUri().getPath());
+     try {
+       return doGlob();
+     } finally {
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/Client.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/Client.java
+index c9ac8cd..6c1765a 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/Client.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/Client.java
+@@ -89,7 +89,8 @@
+ import org.apache.hadoop.util.ReflectionUtils;
+ import org.apache.hadoop.util.StringUtils;
+ import org.apache.hadoop.util.Time;
+-import org.apache.htrace.Trace;
++import org.apache.htrace.core.Span;
++import org.apache.htrace.core.Tracer;
+ 
+ import com.google.common.annotations.VisibleForTesting;
+ import com.google.common.base.Preconditions;
+@@ -697,8 +698,9 @@ private synchronized void setupIOstreams(
+         if (LOG.isDebugEnabled()) {
+           LOG.debug("Connecting to "+server);
+         }
+-        if (Trace.isTracing()) {
+-          Trace.addTimelineAnnotation("IPC client connecting to " + server);
++        Span span = Tracer.getCurrentSpan();
++        if (span != null) {
++          span.addTimelineAnnotation("IPC client connecting to " + server);
+         }
+         short numRetries = 0;
+         Random rand = null;
+@@ -771,8 +773,9 @@ public AuthMethod run()
+           // update last activity time
+           touch();
+ 
+-          if (Trace.isTracing()) {
+-            Trace.addTimelineAnnotation("IPC client connected to " + server);
++          span = Tracer.getCurrentSpan();
++          if (span != null) {
++            span.addTimelineAnnotation("IPC client connected to " + server);
+           }
+ 
+           // start the receiver thread after the socket connection has been set
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/ProtobufRpcEngine.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/ProtobufRpcEngine.java
+index 76be837..a6711d7 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/ProtobufRpcEngine.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/ProtobufRpcEngine.java
+@@ -49,8 +49,8 @@
+ import org.apache.hadoop.security.token.TokenIdentifier;
+ import org.apache.hadoop.util.ProtoUtil;
+ import org.apache.hadoop.util.Time;
+-import org.apache.htrace.Trace;
+-import org.apache.htrace.TraceScope;
++import org.apache.htrace.core.TraceScope;
++import org.apache.htrace.core.Tracer;
+ 
+ import com.google.common.annotations.VisibleForTesting;
+ import com.google.protobuf.BlockingService;
+@@ -206,12 +206,13 @@ public Object invoke(Object proxy, Method method, Object[] args)
+             + method.getName() + "]");
+       }
+ 
+-      TraceScope traceScope = null;
+       // if Tracing is on then start a new span for this rpc.
+       // guard it in the if statement to make sure there isn't
+       // any extra string manipulation.
+-      if (Trace.isTracing()) {
+-        traceScope = Trace.startSpan(RpcClientUtil.methodToTraceString(method));
++      Tracer tracer = Tracer.curThreadTracer();
++      TraceScope traceScope = null;
++      if (tracer != null) {
++        traceScope = tracer.newScope(RpcClientUtil.methodToTraceString(method));
+       }
+ 
+       RequestHeaderProto rpcRequestHeader = constructRpcRequestHeader(method);
+@@ -236,9 +237,9 @@ public Object invoke(Object proxy, Method method, Object[] args)
+               remoteId + ": " + method.getName() +
+                 " {" + e + "}");
+         }
+-        if (Trace.isTracing()) {
+-          traceScope.getSpan().addTimelineAnnotation(
+-              "Call got exception: " + e.getMessage());
++        if (traceScope != null) {
++          traceScope.addTimelineAnnotation("Call got exception: " +
++              e.getMessage());
+         }
+         throw new ServiceException(e);
+       } finally {
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/Server.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/Server.java
+index ffa3cf5..b931120 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/Server.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/Server.java
+@@ -115,10 +115,9 @@
+ import org.apache.hadoop.util.ReflectionUtils;
+ import org.apache.hadoop.util.StringUtils;
+ import org.apache.hadoop.util.Time;
+-import org.apache.htrace.Span;
+-import org.apache.htrace.Trace;
+-import org.apache.htrace.TraceInfo;
+-import org.apache.htrace.TraceScope;
++import org.apache.htrace.core.SpanId;
++import org.apache.htrace.core.TraceScope;
++import org.apache.htrace.core.Tracer;
+ 
+ import com.google.common.annotations.VisibleForTesting;
+ import com.google.protobuf.ByteString;
+@@ -137,6 +136,7 @@
+   private List<AuthMethod> enabledAuthMethods;
+   private RpcSaslProto negotiateResponse;
+   private ExceptionsHandler exceptionsHandler = new ExceptionsHandler();
++  private Tracer tracer;
+   
+   public void addTerseExceptions(Class<?>... exceptionClass) {
+     exceptionsHandler.addTerseExceptions(exceptionClass);
+@@ -519,7 +519,7 @@ static boolean getClientBackoffEnable(
+     private ByteBuffer rpcResponse;       // the response for this call
+     private final RPC.RpcKind rpcKind;
+     private final byte[] clientId;
+-    private final Span traceSpan; // the tracing span on the server side
++    private final TraceScope traceScope; // the HTrace scope on the server side
+ 
+     public Call(int id, int retryCount, Writable param, 
+         Connection connection) {
+@@ -533,7 +533,7 @@ public Call(int id, int retryCount, Writable param, Connection connection,
+     }
+ 
+     public Call(int id, int retryCount, Writable param, Connection connection,
+-        RPC.RpcKind kind, byte[] clientId, Span span) {
++        RPC.RpcKind kind, byte[] clientId, TraceScope traceScope) {
+       this.callId = id;
+       this.retryCount = retryCount;
+       this.rpcRequest = param;
+@@ -542,7 +542,7 @@ public Call(int id, int retryCount, Writable param, Connection connection,
+       this.rpcResponse = null;
+       this.rpcKind = kind;
+       this.clientId = clientId;
+-      this.traceSpan = span;
++      this.traceScope = traceScope;
+     }
+     
+     @Override
+@@ -1865,19 +1865,24 @@ private void processRpcRequest(RpcRequestHeaderProto header,
+             RpcErrorCodeProto.FATAL_DESERIALIZING_REQUEST, err);
+       }
+         
+-      Span traceSpan = null;
++      TraceScope traceScope = null;
+       if (header.hasTraceInfo()) {
+-        // If the incoming RPC included tracing info, always continue the trace
+-        TraceInfo parentSpan = new TraceInfo(header.getTraceInfo().getTraceId(),
+-                                             header.getTraceInfo().getParentId());
+-        traceSpan = Trace.startSpan(
+-            RpcClientUtil.toTraceName(rpcRequest.toString()),
+-            parentSpan).detach();
++        if (tracer != null) {
++          // If the incoming RPC included tracing info, always continue the
++          // trace
++          SpanId parentSpanId = new SpanId(
++              header.getTraceInfo().getTraceId(),
++              header.getTraceInfo().getParentId());
++          traceScope = tracer.newScope(
++              RpcClientUtil.toTraceName(rpcRequest.toString()),
++              parentSpanId);
++          traceScope.detach();
++        }
+       }
+ 
+       Call call = new Call(header.getCallId(), header.getRetryCount(),
+           rpcRequest, this, ProtoUtil.convert(header.getRpcKind()),
+-          header.getClientId().toByteArray(), traceSpan);
++          header.getClientId().toByteArray(), traceScope);
+ 
+       if (callQueue.isClientBackoffEnabled()) {
+         // if RPC queue is full, we will ask the RPC client to back off by
+@@ -2059,8 +2064,9 @@ public void run() {
+           Writable value = null;
+ 
+           CurCall.set(call);
+-          if (call.traceSpan != null) {
+-            traceScope = Trace.continueSpan(call.traceSpan);
++          if (call.traceScope != null) {
++            call.traceScope.reattach();
++            traceScope = call.traceScope;
+             traceScope.getSpan().addTimelineAnnotation("called");
+           }
+ 
+@@ -2137,21 +2143,18 @@ public Writable run() throws Exception {
+         } catch (InterruptedException e) {
+           if (running) {                          // unexpected -- log it
+             LOG.info(Thread.currentThread().getName() + " unexpectedly interrupted", e);
+-            if (Trace.isTracing()) {
++            if (traceScope != null) {
+               traceScope.getSpan().addTimelineAnnotation("unexpectedly interrupted: " +
+                   StringUtils.stringifyException(e));
+             }
+           }
+         } catch (Exception e) {
+           LOG.info(Thread.currentThread().getName() + " caught an exception", e);
+-          if (Trace.isTracing()) {
++          if (traceScope != null) {
+             traceScope.getSpan().addTimelineAnnotation("Exception: " +
+                 StringUtils.stringifyException(e));
+           }
+         } finally {
+-          if (traceScope != null) {
+-            traceScope.close();
+-          }
+           IOUtils.cleanup(LOG, traceScope);
+         }
+       }
+@@ -2461,6 +2464,10 @@ Configuration getConf() {
+   /** Sets the socket buffer size used for responding to RPCs */
+   public void setSocketSendBufSize(int size) { this.socketSendBufferSize = size; }
+ 
++  public void setTracer(Tracer t) {
++    this.tracer = t;
++  }
++
+   /** Starts the service.  Must be called before any calls will be handled. */
+   public synchronized void start() {
+     responder.start();
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/WritableRpcEngine.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/WritableRpcEngine.java
+index fa13631..51f97f8 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/WritableRpcEngine.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/ipc/WritableRpcEngine.java
+@@ -42,8 +42,8 @@
+ import org.apache.hadoop.classification.InterfaceAudience;
+ import org.apache.hadoop.classification.InterfaceStability;
+ import org.apache.hadoop.conf.*;
+-import org.apache.htrace.Trace;
+-import org.apache.htrace.TraceScope;
++import org.apache.htrace.core.TraceScope;
++import org.apache.htrace.core.Tracer;
+ 
+ /** An RpcEngine implementation for Writable data. */
+ @InterfaceStability.Evolving
+@@ -233,9 +233,10 @@ public Object invoke(Object proxy, Method method, Object[] args)
+       if (LOG.isDebugEnabled()) {
+         startTime = Time.now();
+       }
++      Tracer tracer = Tracer.curThreadTracer();
+       TraceScope traceScope = null;
+-      if (Trace.isTracing()) {
+-        traceScope = Trace.startSpan(RpcClientUtil.methodToTraceString(method));
++      if (tracer != null) {
++        traceScope = tracer.newScope(RpcClientUtil.methodToTraceString(method));
+       }
+       ObjectWritable value;
+       try {
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/tracing/SpanReceiverHost.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/tracing/SpanReceiverHost.java
+deleted file mode 100644
+index 9a99e05..0000000
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/tracing/SpanReceiverHost.java
++++ /dev/null
+@@ -1,208 +0,0 @@
+-/**
+- * Licensed to the Apache Software Foundation (ASF) under one
+- * or more contributor license agreements.  See the NOTICE file
+- * distributed with this work for additional information
+- * regarding copyright ownership.  The ASF licenses this file
+- * to you under the Apache License, Version 2.0 (the
+- * "License"); you may not use this file except in compliance
+- * with the License.  You may obtain a copy of the License at
+- *
+- *     http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-package org.apache.hadoop.tracing;
+-
+-import java.io.IOException;
+-import java.util.Collections;
+-import java.util.HashMap;
+-import java.util.List;
+-import java.util.Map;
+-import java.util.TreeMap;
+-
+-import org.apache.commons.logging.Log;
+-import org.apache.commons.logging.LogFactory;
+-import org.apache.hadoop.classification.InterfaceAudience;
+-import org.apache.hadoop.conf.Configuration;
+-import org.apache.hadoop.tracing.SpanReceiverInfo.ConfigurationPair;
+-import org.apache.hadoop.util.ShutdownHookManager;
+-import org.apache.htrace.SpanReceiver;
+-import org.apache.htrace.SpanReceiverBuilder;
+-import org.apache.htrace.Trace;
+-import org.apache.htrace.impl.LocalFileSpanReceiver;
+-
+-/**
+- * This class provides functions for reading the names of SpanReceivers from
+- * the Hadoop configuration, adding those SpanReceivers to the Tracer,
+- * and closing those SpanReceivers when appropriate.
+- * This class does nothing If no SpanReceiver is configured.
+- */
+-@InterfaceAudience.Private
+-public class SpanReceiverHost implements TraceAdminProtocol {
+-  public static final String SPAN_RECEIVERS_CONF_SUFFIX =
+-      "spanreceiver.classes";
+-  private static final Log LOG = LogFactory.getLog(SpanReceiverHost.class);
+-  private static final HashMap<String, SpanReceiverHost> hosts =
+-      new HashMap<String, SpanReceiverHost>(1);
+-  private final TreeMap<Long, SpanReceiver> receivers =
+-      new TreeMap<Long, SpanReceiver>();
+-  private final String confPrefix;
+-  private Configuration config;
+-  private boolean closed = false;
+-  private long highestId = 1;
+-
+-  private final static String LOCAL_FILE_SPAN_RECEIVER_PATH_SUFFIX =
+-      "local-file-span-receiver.path";
+-
+-  public static SpanReceiverHost get(Configuration conf, String confPrefix) {
+-    synchronized (SpanReceiverHost.class) {
+-      SpanReceiverHost host = hosts.get(confPrefix);
+-      if (host != null) {
+-        return host;
+-      }
+-      final SpanReceiverHost newHost = new SpanReceiverHost(confPrefix);
+-      newHost.loadSpanReceivers(conf);
+-      ShutdownHookManager.get().addShutdownHook(new Runnable() {
+-          public void run() {
+-            newHost.closeReceivers();
+-          }
+-        }, 0);
+-      hosts.put(confPrefix, newHost);
+-      return newHost;
+-    }
+-  }
+-
+-  private static List<ConfigurationPair> EMPTY = Collections.emptyList();
+-
+-  private SpanReceiverHost(String confPrefix) {
+-    this.confPrefix = confPrefix;
+-  }
+-
+-  /**
+-   * Reads the names of classes specified in the
+-   * "hadoop.htrace.spanreceiver.classes" property and instantiates and registers
+-   * them with the Tracer as SpanReceiver's.
+-   *
+-   * The nullary constructor is called during construction, but if the classes
+-   * specified implement the Configurable interface, setConfiguration() will be
+-   * called on them. This allows SpanReceivers to use values from the Hadoop
+-   * configuration.
+-   */
+-  public synchronized void loadSpanReceivers(Configuration conf) {
+-    config = new Configuration(conf);
+-    String receiverKey = confPrefix + SPAN_RECEIVERS_CONF_SUFFIX;
+-    String[] receiverNames = config.getTrimmedStrings(receiverKey);
+-    if (receiverNames == null || receiverNames.length == 0) {
+-      if (LOG.isTraceEnabled()) {
+-        LOG.trace("No span receiver names found in " + receiverKey + ".");
+-      }
+-      return;
+-    }
+-    // It's convenient to have each daemon log to a random trace file when
+-    // testing.
+-    String pathKey = confPrefix + LOCAL_FILE_SPAN_RECEIVER_PATH_SUFFIX;
+-    if (config.get(pathKey) == null) {
+-      String uniqueFile = LocalFileSpanReceiver.getUniqueLocalTraceFileName();
+-      config.set(pathKey, uniqueFile);
+-      if (LOG.isTraceEnabled()) {
+-        LOG.trace("Set " + pathKey + " to " + uniqueFile);
+-      }
+-    }
+-    for (String className : receiverNames) {
+-      try {
+-        SpanReceiver rcvr = loadInstance(className, EMPTY);
+-        Trace.addReceiver(rcvr);
+-        receivers.put(highestId++, rcvr);
+-        LOG.info("Loaded SpanReceiver " + className + " successfully.");
+-      } catch (IOException e) {
+-        LOG.error("Failed to load SpanReceiver", e);
+-      }
+-    }
+-  }
+-
+-  private synchronized SpanReceiver loadInstance(String className,
+-      List<ConfigurationPair> extraConfig) throws IOException {
+-    SpanReceiverBuilder builder =
+-        new SpanReceiverBuilder(TraceUtils.
+-            wrapHadoopConf(confPrefix, config, extraConfig));
+-    SpanReceiver rcvr = builder.spanReceiverClass(className.trim()).build();
+-    if (rcvr == null) {
+-      throw new IOException("Failed to load SpanReceiver " + className);
+-    }
+-    return rcvr;
+-  }
+-
+-  /**
+-   * Calls close() on all SpanReceivers created by this SpanReceiverHost.
+-   */
+-  public synchronized void closeReceivers() {
+-    if (closed) return;
+-    closed = true;
+-    for (SpanReceiver rcvr : receivers.values()) {
+-      try {
+-        rcvr.close();
+-      } catch (IOException e) {
+-        LOG.warn("Unable to close SpanReceiver correctly: " + e.getMessage(), e);
+-      }
+-    }
+-    receivers.clear();
+-  }
+-
+-  public synchronized SpanReceiverInfo[] listSpanReceivers()
+-      throws IOException {
+-    SpanReceiverInfo[] info = new SpanReceiverInfo[receivers.size()];
+-    int i = 0;
+-
+-    for(Map.Entry<Long, SpanReceiver> entry : receivers.entrySet()) {
+-      info[i] = new SpanReceiverInfo(entry.getKey(),
+-          entry.getValue().getClass().getName());
+-      i++;
+-    }
+-    return info;
+-  }
+-
+-  public synchronized long addSpanReceiver(SpanReceiverInfo info)
+-      throws IOException {
+-    StringBuilder configStringBuilder = new StringBuilder();
+-    String prefix = "";
+-    for (ConfigurationPair pair : info.configPairs) {
+-      configStringBuilder.append(prefix).append(pair.getKey()).
+-          append(" = ").append(pair.getValue());
+-      prefix = ", ";
+-    }
+-    SpanReceiver rcvr = null;
+-    try {
+-      rcvr = loadInstance(info.getClassName(), info.configPairs);
+-    } catch (IOException e) {
+-      LOG.info("Failed to add SpanReceiver " + info.getClassName() +
+-          " with configuration " + configStringBuilder.toString(), e);
+-      throw e;
+-    } catch (RuntimeException e) {
+-      LOG.info("Failed to add SpanReceiver " + info.getClassName() +
+-          " with configuration " + configStringBuilder.toString(), e);
+-      throw e;
+-    }
+-    Trace.addReceiver(rcvr);
+-    long newId = highestId++;
+-    receivers.put(newId, rcvr);
+-    LOG.info("Successfully added SpanReceiver " + info.getClassName() +
+-        " with configuration " + configStringBuilder.toString());
+-    return newId;
+-  }
+-
+-  public synchronized void removeSpanReceiver(long spanReceiverId)
+-      throws IOException {
+-    SpanReceiver rcvr = receivers.remove(spanReceiverId);
+-    if (rcvr == null) {
+-      throw new IOException("There is no span receiver with id " + spanReceiverId);
+-    }
+-    Trace.removeReceiver(rcvr);
+-    rcvr.close();
+-    LOG.info("Successfully removed SpanReceiver " + spanReceiverId +
+-        " with class " + rcvr.getClass().getName());
+-  }
+-}
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/tracing/TraceUtils.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/tracing/TraceUtils.java
+index 52b5d47..09acb35 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/tracing/TraceUtils.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/tracing/TraceUtils.java
+@@ -24,7 +24,7 @@
+ import org.apache.hadoop.classification.InterfaceAudience;
+ import org.apache.hadoop.conf.Configuration;
+ import org.apache.hadoop.tracing.SpanReceiverInfo.ConfigurationPair;
+-import org.apache.htrace.HTraceConfiguration;
++import org.apache.htrace.core.HTraceConfiguration;
+ 
+ /**
+  * This class provides utility functions for tracing.
+@@ -32,6 +32,7 @@
+ @InterfaceAudience.Private
+ public class TraceUtils {
+   private static List<ConfigurationPair> EMPTY = Collections.emptyList();
++  static final String DEFAULT_HADOOP_PREFIX = "hadoop.htrace.";
+ 
+   public static HTraceConfiguration wrapHadoopConf(final String prefix,
+         final Configuration conf) {
+@@ -47,16 +48,27 @@ public static HTraceConfiguration wrapHadoopConf(final String prefix,
+     return new HTraceConfiguration() {
+       @Override
+       public String get(String key) {
+-        return get(key, "");
++        String ret = getInternal(prefix + key);
++        if (ret != null) {
++          return ret;
++        }
++        return getInternal(DEFAULT_HADOOP_PREFIX  + key);
+       }
+ 
+       @Override
+       public String get(String key, String defaultValue) {
+-        String prefixedKey = prefix + key;
+-        if (extraMap.containsKey(prefixedKey)) {
+-          return extraMap.get(prefixedKey);
++        String ret = get(key);
++        if (ret != null) {
++          return ret;
++        }
++        return defaultValue;
++      }
++
++      private String getInternal(String key) {
++        if (extraMap.containsKey(key)) {
++          return extraMap.get(key);
+         }
+-        return conf.get(prefixedKey, defaultValue);
++        return conf.get(key);
+       }
+     };
+   }
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/tracing/TracerConfigurationManager.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/tracing/TracerConfigurationManager.java
+new file mode 100644
+index 0000000..75601ad
+--- /dev/null
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/tracing/TracerConfigurationManager.java
+@@ -0,0 +1,100 @@
++/**
++ * Licensed to the Apache Software Foundation (ASF) under one
++ * or more contributor license agreements.  See the NOTICE file
++ * distributed with this work for additional information
++ * regarding copyright ownership.  The ASF licenses this file
++ * to you under the Apache License, Version 2.0 (the
++ * "License"); you may not use this file except in compliance
++ * with the License.  You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.apache.hadoop.tracing;
++
++import java.io.IOException;
++
++import org.apache.commons.logging.Log;
++import org.apache.commons.logging.LogFactory;
++import org.apache.hadoop.classification.InterfaceAudience;
++import org.apache.hadoop.conf.Configuration;
++import org.apache.hadoop.tracing.SpanReceiverInfo.ConfigurationPair;
++import org.apache.htrace.core.SpanReceiver;
++import org.apache.htrace.core.TracerPool;
++
++/**
++ * This class provides functions for managing the tracer configuration at
++ * runtime via an RPC protocol.
++ */
++@InterfaceAudience.Private
++public class TracerConfigurationManager implements TraceAdminProtocol {
++  private static final Log LOG =
++      LogFactory.getLog(TracerConfigurationManager.class);
++
++  private final String confPrefix;
++  private final Configuration conf;
++
++  public TracerConfigurationManager(String confPrefix, Configuration conf) {
++    this.confPrefix = confPrefix;
++    this.conf = conf;
++  }
++
++  public synchronized SpanReceiverInfo[] listSpanReceivers()
++      throws IOException {
++    TracerPool pool = TracerPool.getGlobalTracerPool();
++    SpanReceiver[] receivers = pool.getReceivers();
++    SpanReceiverInfo[] info = new SpanReceiverInfo[receivers.length];
++    for (int i = 0; i < receivers.length; i++) {
++      SpanReceiver receiver = receivers[i];
++      info[i] = new SpanReceiverInfo(receiver.getId(),
++          receiver.getClass().getName());
++    }
++    return info;
++  }
++
++  public synchronized long addSpanReceiver(SpanReceiverInfo info)
++      throws IOException {
++    StringBuilder configStringBuilder = new StringBuilder();
++    String prefix = "";
++    for (ConfigurationPair pair : info.configPairs) {
++      configStringBuilder.append(prefix).append(pair.getKey()).
++          append(" = ").append(pair.getValue());
++      prefix = ", ";
++    }
++    SpanReceiver rcvr = null;
++    try {
++      rcvr = new SpanReceiver.Builder(TraceUtils.wrapHadoopConf(
++              confPrefix, conf, info.configPairs)).
++          className(info.getClassName().trim()).
++          build();
++    } catch (RuntimeException e) {
++      LOG.info("Failed to add SpanReceiver " + info.getClassName() +
++          " with configuration " + configStringBuilder.toString(), e);
++      throw e;
++    }
++    TracerPool.getGlobalTracerPool().addReceiver(rcvr);
++    LOG.info("Successfully added SpanReceiver " + info.getClassName() +
++        " with configuration " + configStringBuilder.toString());
++    return rcvr.getId();
++  }
++
++  public synchronized void removeSpanReceiver(long spanReceiverId)
++      throws IOException {
++    SpanReceiver[] receivers =
++        TracerPool.getGlobalTracerPool().getReceivers();
++    for (SpanReceiver receiver : receivers) {
++      if (receiver.getId() == spanReceiverId) {
++        TracerPool.getGlobalTracerPool().removeAndCloseReceiver(receiver);
++        LOG.info("Successfully removed SpanReceiver " + spanReceiverId +
++            " with class " + receiver.getClass().getName());
++        return;
++      }
++    }
++    throw new IOException("There is no span receiver with id " + spanReceiverId);
++  }
++}
+diff --git a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/util/ProtoUtil.java b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/util/ProtoUtil.java
+index 4b3b7ef..3a6bf90 100644
+--- a/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/util/ProtoUtil.java
++++ b/hadoop-common-project/hadoop-common/src/main/java/org/apache/hadoop/util/ProtoUtil.java
+@@ -27,8 +27,8 @@
+ import org.apache.hadoop.ipc.protobuf.RpcHeaderProtos.*;
+ import org.apache.hadoop.security.SaslRpcServer.AuthMethod;
+ import org.apache.hadoop.security.UserGroupInformation;
+-import org.apache.htrace.Span;
+-import org.apache.htrace.Trace;
++import org.apache.htrace.core.Span;
++import org.apache.htrace.core.Tracer;
+ 
+ import com.google.protobuf.ByteString;
+ 
+@@ -169,11 +169,12 @@ public static RpcRequestHeaderProto makeRpcRequestHeader(RPC.RpcKind rpcKind,
+         .setRetryCount(retryCount).setClientId(ByteString.copyFrom(uuid));
+ 
+     // Add tracing info if we are currently tracing.
+-    if (Trace.isTracing()) {
+-      Span s = Trace.currentSpan();
++    Span span = Tracer.getCurrentSpan();
++    if (span != null) {
+       result.setTraceInfo(RPCTraceInfoProto.newBuilder()
+-          .setParentId(s.getSpanId())
+-          .setTraceId(s.getTraceId()).build());
++          .setTraceId(span.getSpanId().getHigh())
++          .setParentId(span.getSpanId().getLow())
++            .build());
+     }
+ 
+     return result.build();
+diff --git a/hadoop-common-project/hadoop-common/src/main/resources/core-default.xml b/hadoop-common-project/hadoop-common/src/main/resources/core-default.xml
+index d2f65d9..b967e4a 100644
+--- a/hadoop-common-project/hadoop-common/src/main/resources/core-default.xml
++++ b/hadoop-common-project/hadoop-common/src/main/resources/core-default.xml
+@@ -185,6 +185,21 @@ You also need to configure other properties like
+ for ldap providers in the same way as above does.
+ 
+ -->
++
++<property>
++  <name>fs.client.htrace.sampler.classes</name>
++  <value></value>
++  <description>The class names of the HTrace Samplers to use for Hadoop
++    filesystem clients.
++  </description>
++</property>
++
++<property>
++  <name>hadoop.htrace.span.receiver.classes</name>
++  <value></value>
++  <description>The class names of the Span Receivers to use for Hadoop.
++  </description>
++</property>
+  
+ <property>
+   <name>hadoop.security.groups.cache.secs</name>
+diff --git a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/TestFsShell.java b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/TestFsShell.java
+index 59fcbe5..2a7538f 100644
+--- a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/TestFsShell.java
++++ b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/fs/TestFsShell.java
+@@ -20,10 +20,9 @@
+ import junit.framework.AssertionFailedError;
+ import org.apache.hadoop.conf.Configuration;
+ import org.apache.hadoop.tracing.SetSpanReceiver;
+-import org.apache.hadoop.tracing.SpanReceiverHost;
+ import org.apache.hadoop.util.ToolRunner;
+-import org.apache.htrace.SamplerBuilder;
+-import org.apache.htrace.impl.AlwaysSampler;
++import org.apache.htrace.core.AlwaysSampler;
++import org.apache.htrace.core.Tracer;
+ import org.junit.Assert;
+ import org.junit.Test;
+ 
+@@ -49,10 +48,10 @@ public void testConfWithInvalidFile() throws Throwable {
+   @Test
+   public void testTracing() throws Throwable {
+     Configuration conf = new Configuration();
+-    String prefix = FsShell.SEHLL_HTRACE_PREFIX;
+-    conf.set(prefix + SpanReceiverHost.SPAN_RECEIVERS_CONF_SUFFIX,
++    String prefix = "fs.shell.htrace.";
++    conf.set(prefix + Tracer.SPAN_RECEIVER_CLASSES_KEY,
+         SetSpanReceiver.class.getName());
+-    conf.set(prefix + SamplerBuilder.SAMPLER_CONF_KEY,
++    conf.set(prefix + Tracer.SAMPLER_CLASSES_KEY,
+         AlwaysSampler.class.getName());
+     conf.setQuietMode(false);
+     FsShell shell = new FsShell(conf);
+diff --git a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/tracing/SetSpanReceiver.java b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/tracing/SetSpanReceiver.java
+index 97ca7c4..2bc68ce 100644
+--- a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/tracing/SetSpanReceiver.java
++++ b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/tracing/SetSpanReceiver.java
+@@ -19,9 +19,10 @@
+ 
+ import com.google.common.base.Supplier;
+ import org.apache.hadoop.test.GenericTestUtils;
+-import org.apache.htrace.Span;
+-import org.apache.htrace.SpanReceiver;
+-import org.apache.htrace.HTraceConfiguration;
++import org.apache.htrace.core.Span;
++import org.apache.htrace.core.SpanId;
++import org.apache.htrace.core.SpanReceiver;
++import org.apache.htrace.core.HTraceConfiguration;
+ import java.util.Collection;
+ import java.util.HashMap;
+ import java.util.LinkedList;
+@@ -39,7 +40,7 @@
+  * push all the metrics to a static place, and would make testing
+  * SpanReceiverHost harder.
+  */
+-public class SetSpanReceiver implements SpanReceiver {
++public class SetSpanReceiver extends SpanReceiver {
+ 
+   public SetSpanReceiver(HTraceConfiguration conf) {
+   }
+@@ -68,8 +69,8 @@ public static int size() {
+   }
+ 
+   public static class SetHolder {
+-    public static ConcurrentHashMap<Long, Span> spans =
+-        new ConcurrentHashMap<Long, Span>();
++    public static ConcurrentHashMap<SpanId, Span> spans =
++        new ConcurrentHashMap<SpanId, Span>();
+ 
+     public static Map<String, List<Span>> getMap() {
+       Map<String, List<Span>> map = new HashMap<String, List<Span>>();
+diff --git a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/tracing/TestTraceUtils.java b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/tracing/TestTraceUtils.java
+index 400d003..75411da 100644
+--- a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/tracing/TestTraceUtils.java
++++ b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/tracing/TestTraceUtils.java
+@@ -21,7 +21,7 @@
+ import java.util.LinkedList;
+ import org.apache.hadoop.conf.Configuration;
+ import org.apache.hadoop.tracing.SpanReceiverInfo.ConfigurationPair;
+-import org.apache.htrace.HTraceConfiguration;
++import org.apache.htrace.core.HTraceConfiguration;
+ import org.junit.Test;
+ 
+ public class TestTraceUtils {
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt b/hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt
+index 08151b0..70000fd 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt
++++ b/hadoop-hdfs-project/hadoop-hdfs/CHANGES.txt
+@@ -311,6 +311,8 @@ Release 2.6.0 - 2014-11-18
+ 
+     HDFS-7221. TestDNFencingWithReplication fails consistently. (Charles Lamb via wang)
+ 
++    HDFS-9080. Update htrace version to 4.0.1 (cmccabe)
++
+   OPTIMIZATIONS
+ 
+     HDFS-6690. Deduplicate xattr names in memory. (wang)
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/pom.xml b/hadoop-hdfs-project/hadoop-hdfs/pom.xml
+index b16694e..cc983c3 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/pom.xml
++++ b/hadoop-hdfs-project/hadoop-hdfs/pom.xml
+@@ -197,7 +197,7 @@ http://maven.apache.org/xsd/maven-4.0.0.xsd">
+     </dependency>
+     <dependency>
+       <groupId>org.apache.htrace</groupId>
+-      <artifactId>htrace-core</artifactId>
++      <artifactId>htrace-core4</artifactId>
+     </dependency>
+     <dependency>
+       <groupId>org.apache.hadoop</groupId>
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/BlockReaderFactory.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/BlockReaderFactory.java
+index a301f2c..97e1185 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/BlockReaderFactory.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/BlockReaderFactory.java
+@@ -66,6 +66,7 @@
+ 
+ import com.google.common.annotations.VisibleForTesting;
+ import com.google.common.base.Preconditions;
++import org.apache.htrace.core.Tracer;
+ 
+ 
+ /** 
+@@ -176,6 +177,11 @@ public boolean getSupportsReceiptVerification() {
+   private Configuration configuration;
+ 
+   /**
++   * The HTrace tracer to use.
++   */
++  private Tracer tracer;
++
++  /**
+    * Information about the domain socket path we should use to connect to the
+    * local peer-- or null if we haven't examined the local domain socket.
+    */
+@@ -280,6 +286,11 @@ public BlockReaderFactory setConfiguration(
+     return this;
+   }
+ 
++  public BlockReaderFactory setTracer(Tracer tracer) {
++    this.tracer = tracer;
++    return this;
++  }
++
+   /**
+    * Build a BlockReader with the given options.
+    *
+@@ -429,7 +440,7 @@ private BlockReader getLegacyBlockReaderLocal() throws IOException {
+     try {
+       return BlockReaderLocalLegacy.newBlockReader(conf,
+           userGroupInformation, configuration, fileName, block, token,
+-          datanode, startOffset, length, storageType);
++          datanode, startOffset, length, storageType, tracer);
+     } catch (RemoteException remoteException) {
+       ioe = remoteException.unwrapRemoteException(
+                 InvalidToken.class, AccessControlException.class);
+@@ -490,6 +501,7 @@ private BlockReader getBlockReaderLocal() throws InvalidToken {
+         setVerifyChecksum(verifyChecksum).
+         setCachingStrategy(cachingStrategy).
+         setStorageType(storageType).
++        setTracer(tracer).
+         build();
+   }
+ 
+@@ -861,12 +873,12 @@ private BlockReader getRemoteBlockReader(Peer peer) throws IOException {
+       return RemoteBlockReader.newBlockReader(fileName,
+           block, token, startOffset, length, conf.ioBufferSize,
+           verifyChecksum, clientName, peer, datanode,
+-          clientContext.getPeerCache(), cachingStrategy);
++          clientContext.getPeerCache(), cachingStrategy, tracer);
+     } else {
+       return RemoteBlockReader2.newBlockReader(
+           fileName, block, token, startOffset, length,
+           verifyChecksum, clientName, peer, datanode,
+-          clientContext.getPeerCache(), cachingStrategy);
++          clientContext.getPeerCache(), cachingStrategy, tracer);
+     }
+   }
+ 
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/BlockReaderLocal.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/BlockReaderLocal.java
+index 5b697e0..e8b2e0d 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/BlockReaderLocal.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/BlockReaderLocal.java
+@@ -33,9 +33,8 @@
+ import org.apache.hadoop.hdfs.shortcircuit.ShortCircuitReplica;
+ import org.apache.hadoop.util.DirectBufferPool;
+ import org.apache.hadoop.util.DataChecksum;
+-import org.apache.htrace.Sampler;
+-import org.apache.htrace.Trace;
+-import org.apache.htrace.TraceScope;
++import org.apache.htrace.core.TraceScope;
++import org.apache.htrace.core.Tracer;
+ 
+ import com.google.common.annotations.VisibleForTesting;
+ import com.google.common.base.Preconditions;
+@@ -70,6 +69,7 @@
+     private long dataPos;
+     private ExtendedBlock block;
+     private StorageType storageType;
++    private Tracer tracer;
+ 
+     public Builder(Conf conf) {
+       this.maxReadahead = Integer.MAX_VALUE;
+@@ -115,6 +115,11 @@ public Builder setStorageType(StorageType storageType) {
+       return this;
+     }
+ 
++    public Builder setTracer(Tracer tracer) {
++      this.tracer = tracer;
++      return this;
++    }
++
+     public BlockReaderLocal build() {
+       Preconditions.checkNotNull(replica);
+       return new BlockReaderLocal(this);
+@@ -223,6 +228,11 @@ public BlockReaderLocal build() {
+    */
+   private StorageType storageType;
+ 
++  /**
++   * The Tracer to use.
++   */
++  private final Tracer tracer;
++
+   private BlockReaderLocal(Builder builder) {
+     this.replica = builder.replica;
+     this.dataIn = replica.getDataStream().getChannel();
+@@ -252,6 +262,7 @@ private BlockReaderLocal(Builder builder) {
+     }
+     this.maxReadaheadLength = maxReadaheadChunks * bytesPerChecksum;
+     this.storageType = builder.storageType;
++    this.tracer = builder.tracer;
+   }
+ 
+   private synchronized void createDataBufIfNeeded() {
+@@ -319,8 +330,8 @@ private synchronized int drainDataBuf(ByteBuffer buf) {
+    */
+   private synchronized int fillBuffer(ByteBuffer buf, boolean canSkipChecksum)
+       throws IOException {
+-    TraceScope scope = Trace.startSpan("BlockReaderLocal#fillBuffer(" +
+-        block.getBlockId() + ")", Sampler.NEVER);
++    TraceScope scope = tracer.newScope(
++        "BlockReaderLocal#fillBuffer(" + block.getBlockId() + ")");
+     try {
+       int total = 0;
+       long startDataPos = dataPos;
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/BlockReaderLocalLegacy.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/BlockReaderLocalLegacy.java
+index 3582f67..24fa91d 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/BlockReaderLocalLegacy.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/BlockReaderLocalLegacy.java
+@@ -46,9 +46,8 @@
+ import org.apache.hadoop.security.UserGroupInformation;
+ import org.apache.hadoop.security.token.Token;
+ import org.apache.hadoop.util.DataChecksum;
+-import org.apache.htrace.Sampler;
+-import org.apache.htrace.Trace;
+-import org.apache.htrace.TraceScope;
++import org.apache.htrace.core.TraceScope;
++import org.apache.htrace.core.Tracer;
+ 
+ /**
+  * BlockReaderLocalLegacy enables local short circuited reads. If the DFS client is on
+@@ -173,7 +172,8 @@ private void removeBlockLocalPathInfo(ExtendedBlock b) {
+   private long startOffset;
+   private final String filename;
+   private long blockId;
+-  
++  private final Tracer tracer;
++
+   /**
+    * The only way this object can be instantiated.
+    */
+@@ -181,8 +181,8 @@ static BlockReaderLocalLegacy newBlockReader(DFSClient.Conf conf,
+       UserGroupInformation userGroupInformation,
+       Configuration configuration, String file, ExtendedBlock blk,
+       Token<BlockTokenIdentifier> token, DatanodeInfo node, 
+-      long startOffset, long length, StorageType storageType)
+-      throws IOException {
++      long startOffset, long length, StorageType storageType,
++      Tracer tracer) throws IOException {
+     LocalDatanodeInfo localDatanodeInfo = getLocalDatanodeInfo(node
+         .getIpcPort());
+     // check the cache first
+@@ -229,10 +229,10 @@ static BlockReaderLocalLegacy newBlockReader(DFSClient.Conf conf,
+             - (startOffset % checksum.getBytesPerChecksum());
+         localBlockReader = new BlockReaderLocalLegacy(conf, file, blk, token,
+             startOffset, length, pathinfo, checksum, true, dataIn,
+-            firstChunkOffset, checksumIn);
++            firstChunkOffset, checksumIn, tracer);
+       } else {
+         localBlockReader = new BlockReaderLocalLegacy(conf, file, blk, token,
+-            startOffset, length, pathinfo, dataIn);
++            startOffset, length, pathinfo, dataIn, tracer);
+       }
+     } catch (IOException e) {
+       // remove from cache
+@@ -311,18 +311,18 @@ private static int getSlowReadBufferNumChunks(int bufferSizeBytes,
+ 
+   private BlockReaderLocalLegacy(DFSClient.Conf conf, String hdfsfile,
+       ExtendedBlock block, Token<BlockTokenIdentifier> token, long startOffset,
+-      long length, BlockLocalPathInfo pathinfo, FileInputStream dataIn)
+-      throws IOException {
++      long length, BlockLocalPathInfo pathinfo, FileInputStream dataIn,
++      Tracer tracer) throws IOException {
+     this(conf, hdfsfile, block, token, startOffset, length, pathinfo,
+         DataChecksum.newDataChecksum(DataChecksum.Type.NULL, 4), false,
+-        dataIn, startOffset, null);
++        dataIn, startOffset, null, tracer);
+   }
+ 
+   private BlockReaderLocalLegacy(DFSClient.Conf conf, String hdfsfile,
+       ExtendedBlock block, Token<BlockTokenIdentifier> token, long startOffset,
+       long length, BlockLocalPathInfo pathinfo, DataChecksum checksum,
+       boolean verifyChecksum, FileInputStream dataIn, long firstChunkOffset,
+-      FileInputStream checksumIn) throws IOException {
++      FileInputStream checksumIn, Tracer tracer) throws IOException {
+     this.filename = hdfsfile;
+     this.checksum = checksum;
+     this.verifyChecksum = verifyChecksum;
+@@ -358,6 +358,7 @@ private BlockReaderLocalLegacy(DFSClient.Conf conf, String hdfsfile,
+         bufferPool.returnBuffer(checksumBuff);
+       }
+     }
++    this.tracer = tracer;
+   }
+ 
+   /**
+@@ -365,8 +366,8 @@ private BlockReaderLocalLegacy(DFSClient.Conf conf, String hdfsfile,
+    */
+   private int fillBuffer(FileInputStream stream, ByteBuffer buf)
+       throws IOException {
+-    TraceScope scope = Trace.startSpan("BlockReaderLocalLegacy#fillBuffer(" +
+-        blockId + ")", Sampler.NEVER);
++    TraceScope scope = tracer.
++        newScope("BlockReaderLocalLegacy#fillBuffer(" + blockId + ")");
+     try {
+       int bytesRead = stream.getChannel().read(buf);
+       if (bytesRead < 0) {
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/BlockStorageLocationUtil.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/BlockStorageLocationUtil.java
+index c809017..8196850 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/BlockStorageLocationUtil.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/BlockStorageLocationUtil.java
+@@ -48,10 +48,9 @@
+ import org.apache.hadoop.hdfs.security.token.block.InvalidBlockTokenException;
+ import org.apache.hadoop.ipc.RPC;
+ import org.apache.hadoop.security.token.Token;
+-import org.apache.htrace.Sampler;
+-import org.apache.htrace.Span;
+-import org.apache.htrace.Trace;
+-import org.apache.htrace.TraceScope;
++import org.apache.htrace.core.SpanId;
++import org.apache.htrace.core.TraceScope;
++import org.apache.htrace.core.Tracer;
+ 
+ import com.google.common.collect.Lists;
+ import com.google.common.collect.Maps;
+@@ -75,7 +74,8 @@
+    */
+   private static List<VolumeBlockLocationCallable> createVolumeBlockLocationCallables(
+       Configuration conf, Map<DatanodeInfo, List<LocatedBlock>> datanodeBlocks,
+-      int timeout, boolean connectToDnViaHostname, Span parent) {
++      int timeout, boolean connectToDnViaHostname,
++      Tracer tracer, SpanId parentSpanId) {
+     
+     if (datanodeBlocks.isEmpty()) {
+       return Lists.newArrayList();
+@@ -115,7 +115,7 @@
+       }
+       VolumeBlockLocationCallable callable = new VolumeBlockLocationCallable(
+           conf, datanode, poolId, blockIds, dnTokens, timeout, 
+-          connectToDnViaHostname, parent);
++          connectToDnViaHostname, tracer, parentSpanId);
+       callables.add(callable);
+     }
+     return callables;
+@@ -134,12 +134,12 @@
+    */
+   static Map<DatanodeInfo, HdfsBlocksMetadata> queryDatanodesForHdfsBlocksMetadata(
+       Configuration conf, Map<DatanodeInfo, List<LocatedBlock>> datanodeBlocks,
+-      int poolsize, int timeoutMs, boolean connectToDnViaHostname)
+-        throws InvalidBlockTokenException {
++      int poolsize, int timeoutMs, boolean connectToDnViaHostname,
++      Tracer tracer, SpanId parentSpanId) throws InvalidBlockTokenException {
+ 
+     List<VolumeBlockLocationCallable> callables = 
+         createVolumeBlockLocationCallables(conf, datanodeBlocks, timeoutMs, 
+-            connectToDnViaHostname, Trace.currentSpan());
++            connectToDnViaHostname, tracer, parentSpanId);
+     
+     // Use a thread pool to execute the Callables in parallel
+     List<Future<HdfsBlocksMetadata>> futures = 
+@@ -323,12 +323,14 @@ else if (t instanceof UnsupportedOperationException) {
+     private final long[] blockIds;
+     private final List<Token<BlockTokenIdentifier>> dnTokens;
+     private final boolean connectToDnViaHostname;
+-    private final Span parentSpan;
++    private final Tracer tracer;
++    private final SpanId parentSpanId;
+     
+     VolumeBlockLocationCallable(Configuration configuration,
+         DatanodeInfo datanode, String poolId, long []blockIds,
+         List<Token<BlockTokenIdentifier>> dnTokens, int timeout, 
+-        boolean connectToDnViaHostname, Span parentSpan) {
++        boolean connectToDnViaHostname,
++        Tracer tracer, SpanId parentSpanId) {
+       this.configuration = configuration;
+       this.timeout = timeout;
+       this.datanode = datanode;
+@@ -336,7 +338,8 @@ else if (t instanceof UnsupportedOperationException) {
+       this.blockIds = blockIds;
+       this.dnTokens = dnTokens;
+       this.connectToDnViaHostname = connectToDnViaHostname;
+-      this.parentSpan = parentSpan;
++      this.tracer = tracer;
++      this.parentSpanId = parentSpanId;
+     }
+     
+     public DatanodeInfo getDatanodeInfo() {
+@@ -349,7 +352,7 @@ public HdfsBlocksMetadata call() throws Exception {
+       // Create the RPC proxy and make the RPC
+       ClientDatanodeProtocol cdp = null;
+       TraceScope scope =
+-          Trace.startSpan("getHdfsBlocksMetadata", parentSpan);
++          tracer.newScope("getHdfsBlocksMetadata", parentSpanId);
+       try {
+         cdp = DFSUtil.createClientDatanodeProtocolProxy(datanode, configuration,
+             timeout, connectToDnViaHostname);
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSClient.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSClient.java
+index 5ffef7b..594056e 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSClient.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSClient.java
+@@ -118,6 +118,7 @@
+ import org.apache.hadoop.fs.FileSystem;
+ import org.apache.hadoop.fs.FsServerDefaults;
+ import org.apache.hadoop.fs.FsStatus;
++import org.apache.hadoop.fs.FsTracer;
+ import org.apache.hadoop.fs.HdfsBlockLocation;
+ import org.apache.hadoop.fs.InvalidPathException;
+ import org.apache.hadoop.fs.MD5MD5CRC32CastagnoliFileChecksum;
+@@ -211,24 +212,19 @@
+ import org.apache.hadoop.security.token.SecretManager.InvalidToken;
+ import org.apache.hadoop.security.token.Token;
+ import org.apache.hadoop.security.token.TokenRenewer;
+-import org.apache.hadoop.tracing.SpanReceiverHost;
+-import org.apache.hadoop.tracing.TraceUtils;
+ import org.apache.hadoop.util.Daemon;
+ import org.apache.hadoop.util.DataChecksum;
+ import org.apache.hadoop.util.DataChecksum.Type;
+ import org.apache.hadoop.util.Progressable;
+ import org.apache.hadoop.util.Time;
+-import org.apache.htrace.Sampler;
+-import org.apache.htrace.SamplerBuilder;
+-import org.apache.htrace.Span;
+-import org.apache.htrace.Trace;
+-import org.apache.htrace.TraceScope;
++import org.apache.htrace.core.TraceScope;
+ 
+ import com.google.common.annotations.VisibleForTesting;
+ import com.google.common.base.Joiner;
+ import com.google.common.base.Preconditions;
+ import com.google.common.collect.Lists;
+ import com.google.common.net.InetAddresses;
++import org.apache.htrace.core.Tracer;
+ 
+ /********************************************************
+  * DFSClient can connect to a Hadoop Filesystem and 
+@@ -249,6 +245,7 @@
+   static final int TCP_WINDOW_SIZE = 128 * 1024; // 128 KB
+ 
+   private final Configuration conf;
++  private final Tracer tracer;
+   private final Conf dfsClientConf;
+   final ClientProtocol namenode;
+   /* The service used for delegation tokens */
+@@ -278,7 +275,6 @@
+ 
+   @VisibleForTesting
+   KeyProvider provider;
+-  private final Sampler<?> traceSampler;
+ 
+   /**
+    * DFSClient configuration 
+@@ -666,10 +662,8 @@ public DFSClient(URI nameNodeUri, Configuration conf,
+   public DFSClient(URI nameNodeUri, ClientProtocol rpcNamenode,
+       Configuration conf, FileSystem.Statistics stats)
+     throws IOException {
+-    SpanReceiverHost.get(conf, DFSConfigKeys.DFS_CLIENT_HTRACE_PREFIX);
+-    traceSampler = new SamplerBuilder(TraceUtils.
+-        wrapHadoopConf(DFSConfigKeys.DFS_CLIENT_HTRACE_PREFIX, conf)).build();
+     // Copy only the required DFSClient configuration
++    this.tracer = FsTracer.get(conf);
+     this.dfsClientConf = new Conf(conf);
+     if (this.dfsClientConf.useLegacyBlockReaderLocal) {
+       LOG.debug("Using legacy short-circuit local reads.");
+@@ -1017,7 +1011,7 @@ public long getDefaultBlockSize() {
+    * @see ClientProtocol#getPreferredBlockSize(String)
+    */
+   public long getBlockSize(String f) throws IOException {
+-    TraceScope scope = getPathTraceScope("getBlockSize", f);
++    TraceScope scope = newPathTraceScope("getBlockSize", f);
+     try {
+       return namenode.getPreferredBlockSize(f);
+     } catch (IOException ie) {
+@@ -1059,7 +1053,7 @@ public String getCanonicalServiceName() {
+   public Token<DelegationTokenIdentifier> getDelegationToken(Text renewer)
+       throws IOException {
+     assert dtService != null;
+-    TraceScope scope = Trace.startSpan("getDelegationToken", traceSampler);
++    TraceScope scope = tracer.newScope("getDelegationToken");
+     try {
+       Token<DelegationTokenIdentifier> token =
+         namenode.getDelegationToken(renewer);
+@@ -1243,7 +1237,7 @@ public LocatedBlocks getLocatedBlocks(String src, long start)
+   @VisibleForTesting
+   public LocatedBlocks getLocatedBlocks(String src, long start, long length)
+       throws IOException {
+-    TraceScope scope = getPathTraceScope("getBlockLocations", src);
++    TraceScope scope = newPathTraceScope("getBlockLocations", src);
+     try {
+       return callGetBlockLocations(namenode, src, start, length);
+     } finally {
+@@ -1275,7 +1269,7 @@ static LocatedBlocks callGetBlockLocations(ClientProtocol namenode,
+   boolean recoverLease(String src) throws IOException {
+     checkOpen();
+ 
+-    TraceScope scope = getPathTraceScope("recoverLease", src);
++    TraceScope scope = newPathTraceScope("recoverLease", src);
+     try {
+       return namenode.recoverLease(src, clientName);
+     } catch (RemoteException re) {
+@@ -1301,7 +1295,7 @@ boolean recoverLease(String src) throws IOException {
+    */
+   public BlockLocation[] getBlockLocations(String src, long start, 
+         long length) throws IOException, UnresolvedLinkException {
+-    TraceScope scope = getPathTraceScope("getBlockLocations", src);
++    TraceScope scope = newPathTraceScope("getBlockLocations", src);
+     try {
+       LocatedBlocks blocks = getLocatedBlocks(src, start, length);
+       BlockLocation[] locations =  DFSUtil.locatedBlocks2Locations(blocks);
+@@ -1367,14 +1361,14 @@ boolean recoverLease(String src) throws IOException {
+         
+     // Make RPCs to the datanodes to get volume locations for its replicas
+     TraceScope scope =
+-      Trace.startSpan("getBlockStorageLocations", traceSampler);
++      tracer.newScope("getBlockStorageLocations");
+     Map<DatanodeInfo, HdfsBlocksMetadata> metadatas;
+     try {
+       metadatas = BlockStorageLocationUtil.
+           queryDatanodesForHdfsBlocksMetadata(conf, datanodeBlocks,
+               getConf().getFileBlockStorageLocationsNumThreads,
+               getConf().getFileBlockStorageLocationsTimeoutMs,
+-              getConf().connectToDnViaHostname);
++              getConf().connectToDnViaHostname, tracer, scope.getSpanId());
+       if (LOG.isTraceEnabled()) {
+         LOG.trace("metadata returned: "
+             + Joiner.on("\n").withKeyValueSeparator("=").join(metadatas));
+@@ -1400,7 +1394,7 @@ boolean recoverLease(String src) throws IOException {
+    */
+   private KeyVersion decryptEncryptedDataEncryptionKey(FileEncryptionInfo
+       feInfo) throws IOException {
+-    TraceScope scope = Trace.startSpan("decryptEDEK", traceSampler);
++    TraceScope scope = tracer.newScope("decryptEDEK");
+     try {
+       KeyProvider provider = getKeyProvider();
+       if (provider == null) {
+@@ -1556,7 +1550,7 @@ public DFSInputStream open(String src, int buffersize, boolean verifyChecksum)
+       throws IOException, UnresolvedLinkException {
+     checkOpen();
+     //    Get block info from namenode
+-    TraceScope scope = getPathTraceScope("newDFSInputStream", src);
++    TraceScope scope = newPathTraceScope("newDFSInputStream", src);
+     try {
+       return new DFSInputStream(this, src, verifyChecksum);
+     } finally {
+@@ -1794,7 +1788,7 @@ public DFSOutputStream primitiveCreate(String src,
+    */
+   public void createSymlink(String target, String link, boolean createParent)
+       throws IOException {
+-    TraceScope scope = getPathTraceScope("createSymlink", target);
++    TraceScope scope = newPathTraceScope("createSymlink", target);
+     try {
+       FsPermission dirPerm = 
+           FsPermission.getDefault().applyUMask(dfsClientConf.uMask); 
+@@ -1820,7 +1814,7 @@ public void createSymlink(String target, String link, boolean createParent)
+    */
+   public String getLinkTarget(String path) throws IOException { 
+     checkOpen();
+-    TraceScope scope = getPathTraceScope("getLinkTarget", path);
++    TraceScope scope = newPathTraceScope("getLinkTarget", path);
+     try {
+       return namenode.getLinkTarget(path);
+     } catch (RemoteException re) {
+@@ -1886,7 +1880,7 @@ private DFSOutputStream append(String src, int buffersize, Progressable progress
+    */
+   public boolean setReplication(String src, short replication)
+       throws IOException {
+-    TraceScope scope = getPathTraceScope("setReplication", src);
++    TraceScope scope = newPathTraceScope("setReplication", src);
+     try {
+       return namenode.setReplication(src, replication);
+     } catch(RemoteException re) {
+@@ -1908,7 +1902,7 @@ public boolean setReplication(String src, short replication)
+    */
+   public void setStoragePolicy(String src, String policyName)
+       throws IOException {
+-    TraceScope scope = getPathTraceScope("setStoragePolicy", src);
++    TraceScope scope = newPathTraceScope("setStoragePolicy", src);
+     try {
+       namenode.setStoragePolicy(src, policyName);
+     } catch (RemoteException e) {
+@@ -1927,7 +1921,7 @@ public void setStoragePolicy(String src, String policyName)
+    * @return All the existing storage policies
+    */
+   public BlockStoragePolicy[] getStoragePolicies() throws IOException {
+-    TraceScope scope = Trace.startSpan("getStoragePolicies", traceSampler);
++    TraceScope scope = tracer.newScope("getStoragePolicies");
+     try {
+       return namenode.getStoragePolicies();
+     } finally {
+@@ -1943,7 +1937,7 @@ public void setStoragePolicy(String src, String policyName)
+   @Deprecated
+   public boolean rename(String src, String dst) throws IOException {
+     checkOpen();
+-    TraceScope scope = getSrcDstTraceScope("rename", src, dst);
++    TraceScope scope = newSrcDstTraceScope("rename", src, dst);
+     try {
+       return namenode.rename(src, dst);
+     } catch(RemoteException re) {
+@@ -1963,7 +1957,7 @@ public boolean rename(String src, String dst) throws IOException {
+    */
+   public void concat(String trg, String [] srcs) throws IOException {
+     checkOpen();
+-    TraceScope scope = Trace.startSpan("concat", traceSampler);
++    TraceScope scope = tracer.newScope("concat");
+     try {
+       namenode.concat(trg, srcs);
+     } catch(RemoteException re) {
+@@ -1981,7 +1975,7 @@ public void concat(String trg, String [] srcs) throws IOException {
+   public void rename(String src, String dst, Options.Rename... options)
+       throws IOException {
+     checkOpen();
+-    TraceScope scope = getSrcDstTraceScope("rename2", src, dst);
++    TraceScope scope = newSrcDstTraceScope("rename2", src, dst);
+     try {
+       namenode.rename2(src, dst, options);
+     } catch(RemoteException re) {
+@@ -2017,7 +2011,7 @@ public boolean delete(String src) throws IOException {
+    */
+   public boolean delete(String src, boolean recursive) throws IOException {
+     checkOpen();
+-    TraceScope scope = getPathTraceScope("delete", src);
++    TraceScope scope = newPathTraceScope("delete", src);
+     try {
+       return namenode.delete(src, recursive);
+     } catch(RemoteException re) {
+@@ -2059,7 +2053,7 @@ public DirectoryListing listPaths(String src,  byte[] startAfter)
+   public DirectoryListing listPaths(String src,  byte[] startAfter,
+       boolean needLocation) throws IOException {
+     checkOpen();
+-    TraceScope scope = getPathTraceScope("listPaths", src);
++    TraceScope scope = newPathTraceScope("listPaths", src);
+     try {
+       return namenode.getListing(src, startAfter, needLocation);
+     } catch(RemoteException re) {
+@@ -2081,7 +2075,7 @@ public DirectoryListing listPaths(String src,  byte[] startAfter,
+    */
+   public HdfsFileStatus getFileInfo(String src) throws IOException {
+     checkOpen();
+-    TraceScope scope = getPathTraceScope("getFileInfo", src);
++    TraceScope scope = newPathTraceScope("getFileInfo", src);
+     try {
+       return namenode.getFileInfo(src);
+     } catch(RemoteException re) {
+@@ -2099,7 +2093,7 @@ public HdfsFileStatus getFileInfo(String src) throws IOException {
+    */
+   public boolean isFileClosed(String src) throws IOException{
+     checkOpen();
+-    TraceScope scope = getPathTraceScope("isFileClosed", src);
++    TraceScope scope = newPathTraceScope("isFileClosed", src);
+     try {
+       return namenode.isFileClosed(src);
+     } catch(RemoteException re) {
+@@ -2121,7 +2115,7 @@ public boolean isFileClosed(String src) throws IOException{
+    */
+   public HdfsFileStatus getFileLinkInfo(String src) throws IOException {
+     checkOpen();
+-    TraceScope scope = getPathTraceScope("getFileLinkInfo", src);
++    TraceScope scope = newPathTraceScope("getFileLinkInfo", src);
+     try {
+       return namenode.getFileLinkInfo(src);
+     } catch(RemoteException re) {
+@@ -2429,7 +2423,7 @@ private Type inferChecksumTypeByReading(LocatedBlock lb, DatanodeInfo dn)
+   public void setPermission(String src, FsPermission permission)
+       throws IOException {
+     checkOpen();
+-    TraceScope scope = getPathTraceScope("setPermission", src);
++    TraceScope scope = newPathTraceScope("setPermission", src);
+     try {
+       namenode.setPermission(src, permission);
+     } catch(RemoteException re) {
+@@ -2454,7 +2448,7 @@ public void setPermission(String src, FsPermission permission)
+   public void setOwner(String src, String username, String groupname)
+       throws IOException {
+     checkOpen();
+-    TraceScope scope = getPathTraceScope("setOwner", src);
++    TraceScope scope = newPathTraceScope("setOwner", src);
+     try {
+       namenode.setOwner(src, username, groupname);
+     } catch(RemoteException re) {
+@@ -2470,7 +2464,7 @@ public void setOwner(String src, String username, String groupname)
+ 
+   private long[] callGetStats() throws IOException {
+     checkOpen();
+-    TraceScope scope = Trace.startSpan("getStats", traceSampler);
++    TraceScope scope = tracer.newScope("getStats");
+     try {
+       return namenode.getStats();
+     } finally {
+@@ -2529,7 +2523,7 @@ public CorruptFileBlocks listCorruptFileBlocks(String path,
+                                                  String cookie)
+         throws IOException {
+     checkOpen();
+-    TraceScope scope = getPathTraceScope("listCorruptFileBlocks", path);
++    TraceScope scope = newPathTraceScope("listCorruptFileBlocks", path);
+     try {
+       return namenode.listCorruptFileBlocks(path, cookie);
+     } finally {
+@@ -2540,7 +2534,7 @@ public CorruptFileBlocks listCorruptFileBlocks(String path,
+   public DatanodeInfo[] datanodeReport(DatanodeReportType type)
+       throws IOException {
+     checkOpen();
+-    TraceScope scope = Trace.startSpan("datanodeReport", traceSampler);
++    TraceScope scope = tracer.newScope("datanodeReport");
+     try {
+       return namenode.getDatanodeReport(type);
+     } finally {
+@@ -2552,7 +2546,7 @@ public CorruptFileBlocks listCorruptFileBlocks(String path,
+       DatanodeReportType type) throws IOException {
+     checkOpen();
+     TraceScope scope =
+-        Trace.startSpan("datanodeStorageReport", traceSampler);
++        tracer.newScope("datanodeStorageReport");
+     try {
+       return namenode.getDatanodeStorageReport(type);
+     } finally {
+@@ -2582,7 +2576,7 @@ public boolean setSafeMode(SafeModeAction action) throws IOException {
+    */
+   public boolean setSafeMode(SafeModeAction action, boolean isChecked) throws IOException{
+     TraceScope scope =
+-        Trace.startSpan("setSafeMode", traceSampler);
++        tracer.newScope("setSafeMode");
+     try {
+       return namenode.setSafeMode(action, isChecked);
+     } finally {
+@@ -2601,7 +2595,7 @@ public boolean setSafeMode(SafeModeAction action, boolean isChecked) throws IOEx
+   public String createSnapshot(String snapshotRoot, String snapshotName)
+       throws IOException {
+     checkOpen();
+-    TraceScope scope = Trace.startSpan("createSnapshot", traceSampler);
++    TraceScope scope = tracer.newScope("createSnapshot");
+     try {
+       return namenode.createSnapshot(snapshotRoot, snapshotName);
+     } catch(RemoteException re) {
+@@ -2623,7 +2617,7 @@ public String createSnapshot(String snapshotRoot, String snapshotName)
+   public void deleteSnapshot(String snapshotRoot, String snapshotName)
+       throws IOException {
+     checkOpen();
+-    TraceScope scope = Trace.startSpan("deleteSnapshot", traceSampler);
++    TraceScope scope = tracer.newScope("deleteSnapshot");
+     try {
+       namenode.deleteSnapshot(snapshotRoot, snapshotName);
+     } catch(RemoteException re) {
+@@ -2644,7 +2638,7 @@ public void deleteSnapshot(String snapshotRoot, String snapshotName)
+   public void renameSnapshot(String snapshotDir, String snapshotOldName,
+       String snapshotNewName) throws IOException {
+     checkOpen();
+-    TraceScope scope = Trace.startSpan("renameSnapshot", traceSampler);
++    TraceScope scope = tracer.newScope("renameSnapshot");
+     try {
+       namenode.renameSnapshot(snapshotDir, snapshotOldName, snapshotNewName);
+     } catch(RemoteException re) {
+@@ -2663,8 +2657,7 @@ public void renameSnapshot(String snapshotDir, String snapshotOldName,
+   public SnapshottableDirectoryStatus[] getSnapshottableDirListing()
+       throws IOException {
+     checkOpen();
+-    TraceScope scope = Trace.startSpan("getSnapshottableDirListing",
+-        traceSampler);
++    TraceScope scope = tracer.newScope("getSnapshottableDirListing");
+     try {
+       return namenode.getSnapshottableDirListing();
+     } catch(RemoteException re) {
+@@ -2681,7 +2674,7 @@ public void renameSnapshot(String snapshotDir, String snapshotOldName,
+    */
+   public void allowSnapshot(String snapshotRoot) throws IOException {
+     checkOpen();
+-    TraceScope scope = Trace.startSpan("allowSnapshot", traceSampler);
++    TraceScope scope = tracer.newScope("allowSnapshot");
+     try {
+       namenode.allowSnapshot(snapshotRoot);
+     } catch (RemoteException re) {
+@@ -2698,7 +2691,7 @@ public void allowSnapshot(String snapshotRoot) throws IOException {
+    */
+   public void disallowSnapshot(String snapshotRoot) throws IOException {
+     checkOpen();
+-    TraceScope scope = Trace.startSpan("disallowSnapshot", traceSampler);
++    TraceScope scope = tracer.newScope("disallowSnapshot");
+     try {
+       namenode.disallowSnapshot(snapshotRoot);
+     } catch (RemoteException re) {
+@@ -2716,7 +2709,7 @@ public void disallowSnapshot(String snapshotRoot) throws IOException {
+   public SnapshotDiffReport getSnapshotDiffReport(String snapshotDir,
+       String fromSnapshot, String toSnapshot) throws IOException {
+     checkOpen();
+-    TraceScope scope = Trace.startSpan("getSnapshotDiffReport", traceSampler);
++    TraceScope scope = tracer.newScope("getSnapshotDiffReport");
+     try {
+       return namenode.getSnapshotDiffReport(snapshotDir,
+           fromSnapshot, toSnapshot);
+@@ -2730,7 +2723,7 @@ public SnapshotDiffReport getSnapshotDiffReport(String snapshotDir,
+   public long addCacheDirective(
+       CacheDirectiveInfo info, EnumSet<CacheFlag> flags) throws IOException {
+     checkOpen();
+-    TraceScope scope = Trace.startSpan("addCacheDirective", traceSampler);
++    TraceScope scope = tracer.newScope("addCacheDirective");
+     try {
+       return namenode.addCacheDirective(info, flags);
+     } catch (RemoteException re) {
+@@ -2743,7 +2736,7 @@ public long addCacheDirective(
+   public void modifyCacheDirective(
+       CacheDirectiveInfo info, EnumSet<CacheFlag> flags) throws IOException {
+     checkOpen();
+-    TraceScope scope = Trace.startSpan("modifyCacheDirective", traceSampler);
++    TraceScope scope = tracer.newScope("modifyCacheDirective");
+     try {
+       namenode.modifyCacheDirective(info, flags);
+     } catch (RemoteException re) {
+@@ -2756,7 +2749,7 @@ public void modifyCacheDirective(
+   public void removeCacheDirective(long id)
+       throws IOException {
+     checkOpen();
+-    TraceScope scope = Trace.startSpan("removeCacheDirective", traceSampler);
++    TraceScope scope = tracer.newScope("removeCacheDirective");
+     try {
+       namenode.removeCacheDirective(id);
+     } catch (RemoteException re) {
+@@ -2768,12 +2761,12 @@ public void removeCacheDirective(long id)
+   
+   public RemoteIterator<CacheDirectiveEntry> listCacheDirectives(
+       CacheDirectiveInfo filter) throws IOException {
+-    return new CacheDirectiveIterator(namenode, filter, traceSampler);
++    return new CacheDirectiveIterator(namenode, filter, tracer);
+   }
+ 
+   public void addCachePool(CachePoolInfo info) throws IOException {
+     checkOpen();
+-    TraceScope scope = Trace.startSpan("addCachePool", traceSampler);
++    TraceScope scope = tracer.newScope("addCachePool");
+     try {
+       namenode.addCachePool(info);
+     } catch (RemoteException re) {
+@@ -2785,7 +2778,7 @@ public void addCachePool(CachePoolInfo info) throws IOException {
+ 
+   public void modifyCachePool(CachePoolInfo info) throws IOException {
+     checkOpen();
+-    TraceScope scope = Trace.startSpan("modifyCachePool", traceSampler);
++    TraceScope scope = tracer.newScope("modifyCachePool");
+     try {
+       namenode.modifyCachePool(info);
+     } catch (RemoteException re) {
+@@ -2797,7 +2790,7 @@ public void modifyCachePool(CachePoolInfo info) throws IOException {
+ 
+   public void removeCachePool(String poolName) throws IOException {
+     checkOpen();
+-    TraceScope scope = Trace.startSpan("removeCachePool", traceSampler);
++    TraceScope scope = tracer.newScope("removeCachePool");
+     try {
+       namenode.removeCachePool(poolName);
+     } catch (RemoteException re) {
+@@ -2808,7 +2801,7 @@ public void removeCachePool(String poolName) throws IOException {
+   }
+ 
+   public RemoteIterator<CachePoolEntry> listCachePools() throws IOException {
+-    return new CachePoolIterator(namenode, traceSampler);
++    return new CachePoolIterator(namenode, tracer);
+   }
+ 
+   /**
+@@ -2817,7 +2810,7 @@ public void removeCachePool(String poolName) throws IOException {
+    * @see ClientProtocol#saveNamespace()
+    */
+   void saveNamespace() throws AccessControlException, IOException {
+-    TraceScope scope = Trace.startSpan("saveNamespace", traceSampler);
++    TraceScope scope = tracer.newScope("saveNamespace");
+     try {
+       namenode.saveNamespace();
+     } catch(RemoteException re) {
+@@ -2834,7 +2827,7 @@ void saveNamespace() throws AccessControlException, IOException {
+    * @see ClientProtocol#rollEdits()
+    */
+   long rollEdits() throws AccessControlException, IOException {
+-    TraceScope scope = Trace.startSpan("rollEdits", traceSampler);
++    TraceScope scope = tracer.newScope("rollEdits");
+     try {
+       return namenode.rollEdits();
+     } catch(RemoteException re) {
+@@ -2856,7 +2849,7 @@ ExtendedBlock getPreviousBlock(long fileId) {
+    */
+   boolean restoreFailedStorage(String arg)
+       throws AccessControlException, IOException{
+-    TraceScope scope = Trace.startSpan("restoreFailedStorage", traceSampler);
++    TraceScope scope = tracer.newScope("restoreFailedStorage");
+     try {
+       return namenode.restoreFailedStorage(arg);
+     } finally {
+@@ -2872,7 +2865,7 @@ boolean restoreFailedStorage(String arg)
+    * @see ClientProtocol#refreshNodes()
+    */
+   public void refreshNodes() throws IOException {
+-    TraceScope scope = Trace.startSpan("refreshNodes", traceSampler);
++    TraceScope scope = tracer.newScope("refreshNodes");
+     try {
+       namenode.refreshNodes();
+     } finally {
+@@ -2886,7 +2879,7 @@ public void refreshNodes() throws IOException {
+    * @see ClientProtocol#metaSave(String)
+    */
+   public void metaSave(String pathname) throws IOException {
+-    TraceScope scope = Trace.startSpan("metaSave", traceSampler);
++    TraceScope scope = tracer.newScope("metaSave");
+     try {
+       namenode.metaSave(pathname);
+     } finally {
+@@ -2903,7 +2896,7 @@ public void metaSave(String pathname) throws IOException {
+    * @see ClientProtocol#setBalancerBandwidth(long)
+    */
+   public void setBalancerBandwidth(long bandwidth) throws IOException {
+-    TraceScope scope = Trace.startSpan("setBalancerBandwidth", traceSampler);
++    TraceScope scope = tracer.newScope("setBalancerBandwidth");
+     try {
+       namenode.setBalancerBandwidth(bandwidth);
+     } finally {
+@@ -2915,7 +2908,7 @@ public void setBalancerBandwidth(long bandwidth) throws IOException {
+    * @see ClientProtocol#finalizeUpgrade()
+    */
+   public void finalizeUpgrade() throws IOException {
+-    TraceScope scope = Trace.startSpan("finalizeUpgrade", traceSampler);
++    TraceScope scope = tracer.newScope("finalizeUpgrade");
+     try {
+       namenode.finalizeUpgrade();
+     } finally {
+@@ -2924,7 +2917,7 @@ public void finalizeUpgrade() throws IOException {
+   }
+ 
+   RollingUpgradeInfo rollingUpgrade(RollingUpgradeAction action) throws IOException {
+-    TraceScope scope = Trace.startSpan("rollingUpgrade", traceSampler);
++    TraceScope scope = tracer.newScope("rollingUpgrade");
+     try {
+       return namenode.rollingUpgrade(action);
+     } finally {
+@@ -2986,7 +2979,7 @@ public boolean primitiveMkdir(String src, FsPermission absPermission,
+     if(LOG.isDebugEnabled()) {
+       LOG.debug(src + ": masked=" + absPermission);
+     }
+-    TraceScope scope = Trace.startSpan("mkdir", traceSampler);
++    TraceScope scope = tracer.newScope("mkdir");
+     try {
+       return namenode.mkdirs(src, absPermission, createParent);
+     } catch(RemoteException re) {
+@@ -3012,7 +3005,7 @@ public boolean primitiveMkdir(String src, FsPermission absPermission,
+    * @see ClientProtocol#getContentSummary(String)
+    */
+   ContentSummary getContentSummary(String src) throws IOException {
+-    TraceScope scope = getPathTraceScope("getContentSummary", src);
++    TraceScope scope = newPathTraceScope("getContentSummary", src);
+     try {
+       return namenode.getContentSummary(src);
+     } catch(RemoteException re) {
+@@ -3040,7 +3033,7 @@ void setQuota(String src, long namespaceQuota, long diskspaceQuota)
+                                          diskspaceQuota);
+                                          
+     }
+-    TraceScope scope = getPathTraceScope("setQuota", src);
++    TraceScope scope = newPathTraceScope("setQuota", src);
+     try {
+       namenode.setQuota(src, namespaceQuota, diskspaceQuota);
+     } catch(RemoteException re) {
+@@ -3062,7 +3055,7 @@ void setQuota(String src, long namespaceQuota, long diskspaceQuota)
+    */
+   public void setTimes(String src, long mtime, long atime) throws IOException {
+     checkOpen();
+-    TraceScope scope = getPathTraceScope("setTimes", src);
++    TraceScope scope = newPathTraceScope("setTimes", src);
+     try {
+       namenode.setTimes(src, mtime, atime);
+     } catch(RemoteException re) {
+@@ -3123,7 +3116,7 @@ public ClientContext getClientContext() {
+   public void modifyAclEntries(String src, List<AclEntry> aclSpec)
+       throws IOException {
+     checkOpen();
+-    TraceScope scope = getPathTraceScope("modifyAclEntries", src);
++    TraceScope scope = newPathTraceScope("modifyAclEntries", src);
+     try {
+       namenode.modifyAclEntries(src, aclSpec);
+     } catch(RemoteException re) {
+@@ -3142,7 +3135,7 @@ public void modifyAclEntries(String src, List<AclEntry> aclSpec)
+   public void removeAclEntries(String src, List<AclEntry> aclSpec)
+       throws IOException {
+     checkOpen();
+-    TraceScope scope = Trace.startSpan("removeAclEntries", traceSampler);
++    TraceScope scope = tracer.newScope("removeAclEntries");
+     try {
+       namenode.removeAclEntries(src, aclSpec);
+     } catch(RemoteException re) {
+@@ -3160,7 +3153,7 @@ public void removeAclEntries(String src, List<AclEntry> aclSpec)
+ 
+   public void removeDefaultAcl(String src) throws IOException {
+     checkOpen();
+-    TraceScope scope = Trace.startSpan("removeDefaultAcl", traceSampler);
++    TraceScope scope = tracer.newScope("removeDefaultAcl");
+     try {
+       namenode.removeDefaultAcl(src);
+     } catch(RemoteException re) {
+@@ -3178,7 +3171,7 @@ public void removeDefaultAcl(String src) throws IOException {
+ 
+   public void removeAcl(String src) throws IOException {
+     checkOpen();
+-    TraceScope scope = Trace.startSpan("removeAcl", traceSampler);
++    TraceScope scope = tracer.newScope("removeAcl");
+     try {
+       namenode.removeAcl(src);
+     } catch(RemoteException re) {
+@@ -3196,7 +3189,7 @@ public void removeAcl(String src) throws IOException {
+ 
+   public void setAcl(String src, List<AclEntry> aclSpec) throws IOException {
+     checkOpen();
+-    TraceScope scope = Trace.startSpan("setAcl", traceSampler);
++    TraceScope scope = tracer.newScope("setAcl");
+     try {
+       namenode.setAcl(src, aclSpec);
+     } catch(RemoteException re) {
+@@ -3214,7 +3207,7 @@ public void setAcl(String src, List<AclEntry> aclSpec) throws IOException {
+ 
+   public AclStatus getAclStatus(String src) throws IOException {
+     checkOpen();
+-    TraceScope scope = getPathTraceScope("getAclStatus", src);
++    TraceScope scope = newPathTraceScope("getAclStatus", src);
+     try {
+       return namenode.getAclStatus(src);
+     } catch(RemoteException re) {
+@@ -3230,7 +3223,7 @@ public AclStatus getAclStatus(String src) throws IOException {
+   public void createEncryptionZone(String src, String keyName)
+     throws IOException {
+     checkOpen();
+-    TraceScope scope = getPathTraceScope("createEncryptionZone", src);
++    TraceScope scope = newPathTraceScope("createEncryptionZone", src);
+     try {
+       namenode.createEncryptionZone(src, keyName);
+     } catch (RemoteException re) {
+@@ -3245,7 +3238,7 @@ public void createEncryptionZone(String src, String keyName)
+   public EncryptionZone getEZForPath(String src)
+           throws IOException {
+     checkOpen();
+-    TraceScope scope = getPathTraceScope("getEZForPath", src);
++    TraceScope scope = newPathTraceScope("getEZForPath", src);
+     try {
+       return namenode.getEZForPath(src);
+     } catch (RemoteException re) {
+@@ -3259,13 +3252,13 @@ public EncryptionZone getEZForPath(String src)
+   public RemoteIterator<EncryptionZone> listEncryptionZones()
+       throws IOException {
+     checkOpen();
+-    return new EncryptionZoneIterator(namenode, traceSampler);
++    return new EncryptionZoneIterator(namenode, tracer);
+   }
+ 
+   public void setXAttr(String src, String name, byte[] value, 
+       EnumSet<XAttrSetFlag> flag) throws IOException {
+     checkOpen();
+-    TraceScope scope = getPathTraceScope("setXAttr", src);
++    TraceScope scope = newPathTraceScope("setXAttr", src);
+     try {
+       namenode.setXAttr(src, XAttrHelper.buildXAttr(name, value), flag);
+     } catch (RemoteException re) {
+@@ -3282,7 +3275,7 @@ public void setXAttr(String src, String name, byte[] value,
+   
+   public byte[] getXAttr(String src, String name) throws IOException {
+     checkOpen();
+-    TraceScope scope = getPathTraceScope("getXAttr", src);
++    TraceScope scope = newPathTraceScope("getXAttr", src);
+     try {
+       final List<XAttr> xAttrs = XAttrHelper.buildXAttrAsList(name);
+       final List<XAttr> result = namenode.getXAttrs(src, xAttrs);
+@@ -3298,7 +3291,7 @@ public void setXAttr(String src, String name, byte[] value,
+   
+   public Map<String, byte[]> getXAttrs(String src) throws IOException {
+     checkOpen();
+-    TraceScope scope = getPathTraceScope("getXAttrs", src);
++    TraceScope scope = newPathTraceScope("getXAttrs", src);
+     try {
+       return XAttrHelper.buildXAttrMap(namenode.getXAttrs(src, null));
+     } catch(RemoteException re) {
+@@ -3313,7 +3306,7 @@ public void setXAttr(String src, String name, byte[] value,
+   public Map<String, byte[]> getXAttrs(String src, List<String> names) 
+       throws IOException {
+     checkOpen();
+-    TraceScope scope = getPathTraceScope("getXAttrs", src);
++    TraceScope scope = newPathTraceScope("getXAttrs", src);
+     try {
+       return XAttrHelper.buildXAttrMap(namenode.getXAttrs(
+           src, XAttrHelper.buildXAttrs(names)));
+@@ -3329,7 +3322,7 @@ public void setXAttr(String src, String name, byte[] value,
+   public List<String> listXAttrs(String src)
+           throws IOException {
+     checkOpen();
+-    TraceScope scope = getPathTraceScope("listXAttrs", src);
++    TraceScope scope = newPathTraceScope("listXAttrs", src);
+     try {
+       final Map<String, byte[]> xattrs =
+         XAttrHelper.buildXAttrMap(namenode.listXAttrs(src));
+@@ -3345,7 +3338,7 @@ public void setXAttr(String src, String name, byte[] value,
+ 
+   public void removeXAttr(String src, String name) throws IOException {
+     checkOpen();
+-    TraceScope scope = getPathTraceScope("removeXAttr", src);
++    TraceScope scope = newPathTraceScope("removeXAttr", src);
+     try {
+       namenode.removeXAttr(src, XAttrHelper.buildXAttr(name));
+     } catch(RemoteException re) {
+@@ -3362,7 +3355,7 @@ public void removeXAttr(String src, String name) throws IOException {
+ 
+   public void checkAccess(String src, FsAction mode) throws IOException {
+     checkOpen();
+-    TraceScope scope = getPathTraceScope("checkAccess", src);
++    TraceScope scope = newPathTraceScope("checkAccess", src);
+     try {
+       namenode.checkAccess(src, mode);
+     } catch (RemoteException re) {
+@@ -3375,12 +3368,13 @@ public void checkAccess(String src, FsAction mode) throws IOException {
+   }
+ 
+   public DFSInotifyEventInputStream getInotifyEventStream() throws IOException {
+-    return new DFSInotifyEventInputStream(traceSampler, namenode);
++    return new DFSInotifyEventInputStream(namenode, tracer);
+   }
+ 
+   public DFSInotifyEventInputStream getInotifyEventStream(long lastReadTxid)
+       throws IOException {
+-    return new DFSInotifyEventInputStream(traceSampler, namenode, lastReadTxid);
++    return new DFSInotifyEventInputStream(namenode, tracer,
++          lastReadTxid);
+   }
+ 
+   @Override // RemotePeerFactory
+@@ -3500,28 +3494,26 @@ public SaslDataTransferClient getSaslDataTransferClient() {
+     return saslClient;
+   }
+ 
+-  TraceScope getPathTraceScope(String description, String path) {
+-    TraceScope scope = Trace.startSpan(description, traceSampler);
+-    Span span = scope.getSpan();
+-    if (span != null) {
+-      if (path != null) {
+-        span.addKVAnnotation("path", path);
+-      }
++  TraceScope newPathTraceScope(String description, String path) {
++    TraceScope scope = tracer.newScope(description);
++    if (path != null) {
++      scope.addKVAnnotation("path", path);
+     }
+     return scope;
+   }
+ 
+-  TraceScope getSrcDstTraceScope(String description, String src, String dst) {
+-    TraceScope scope = Trace.startSpan(description, traceSampler);
+-    Span span = scope.getSpan();
+-    if (span != null) {
+-      if (src != null) {
+-        span.addKVAnnotation("src", src);
+-      }
+-      if (dst != null) {
+-        span.addKVAnnotation("dst", dst);
+-      }
++  TraceScope newSrcDstTraceScope(String description, String src, String dst) {
++    TraceScope scope = tracer.newScope(description);
++    if (src != null) {
++      scope.addKVAnnotation("src", src);
++    }
++    if (dst != null) {
++      scope.addKVAnnotation("dst", dst);
+     }
+     return scope;
+   }
++
++  Tracer getTracer() {
++    return tracer;
++  }
+ }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSConfigKeys.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSConfigKeys.java
+index 28bcd5a..48d0659 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSConfigKeys.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSConfigKeys.java
+@@ -101,13 +101,6 @@
+   public static final String DFS_WEBHDFS_ACL_PERMISSION_PATTERN_DEFAULT =
+       "^(default:)?(user|group|mask|other):[[A-Za-z_][A-Za-z0-9._-]]*:([rwx-]{3})?(,(default:)?(user|group|mask|other):[[A-Za-z_][A-Za-z0-9._-]]*:([rwx-]{3})?)*$";
+ 
+-  // HDFS HTrace configuration is controlled by dfs.htrace.spanreceiver.classes,
+-  // etc.
+-  public static final String  DFS_SERVER_HTRACE_PREFIX = "dfs.htrace.";
+-
+-  // HDFS client HTrace configuration.
+-  public static final String  DFS_CLIENT_HTRACE_PREFIX = "dfs.client.htrace.";
+-
+   // HA related configuration
+   public static final String  DFS_CLIENT_FAILOVER_PROXY_PROVIDER_KEY_PREFIX = "dfs.client.failover.proxy.provider";
+   public static final String  DFS_CLIENT_FAILOVER_MAX_ATTEMPTS_KEY = "dfs.client.failover.max.attempts";
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSInotifyEventInputStream.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSInotifyEventInputStream.java
+index 1f9e3e9..b84a514 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSInotifyEventInputStream.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSInotifyEventInputStream.java
+@@ -26,9 +26,8 @@
+ import org.apache.hadoop.hdfs.inotify.MissingEventsException;
+ import org.apache.hadoop.hdfs.protocol.ClientProtocol;
+ import org.apache.hadoop.util.Time;
+-import org.apache.htrace.Sampler;
+-import org.apache.htrace.Trace;
+-import org.apache.htrace.TraceScope;
++import org.apache.htrace.core.TraceScope;
++import org.apache.htrace.core.Tracer;
+ import org.slf4j.Logger;
+ import org.slf4j.LoggerFactory;
+ 
+@@ -47,11 +46,6 @@
+   public static Logger LOG = LoggerFactory.getLogger(DFSInotifyEventInputStream
+       .class);
+ 
+-  /**
+-   * The trace sampler to use when making RPCs to the NameNode.
+-   */
+-  private final Sampler<?> traceSampler;
+-
+   private final ClientProtocol namenode;
+   private Iterator<EventBatch> it;
+   private long lastReadTxid;
+@@ -65,20 +59,22 @@
+    */
+   private Random rng = new Random();
+ 
++  private final Tracer tracer;
++
+   private static final int INITIAL_WAIT_MS = 10;
+ 
+-  DFSInotifyEventInputStream(Sampler<?> traceSampler, ClientProtocol namenode)
++  DFSInotifyEventInputStream(ClientProtocol namenode, Tracer tracer)
+         throws IOException {
+     // Only consider new transaction IDs.
+-    this(traceSampler, namenode, namenode.getCurrentEditLogTxid());
++    this(namenode, tracer, namenode.getCurrentEditLogTxid());
+   }
+ 
+-  DFSInotifyEventInputStream(Sampler traceSampler, ClientProtocol namenode,
+-        long lastReadTxid) throws IOException {
+-    this.traceSampler = traceSampler;
++  DFSInotifyEventInputStream(ClientProtocol namenode,
++        Tracer tracer, long lastReadTxid) throws IOException {
+     this.namenode = namenode;
+     this.it = Iterators.emptyIterator();
+     this.lastReadTxid = lastReadTxid;
++    this.tracer = tracer;
+   }
+ 
+   /**
+@@ -98,8 +94,7 @@
+    * The next available batch of events will be returned.
+    */
+   public EventBatch poll() throws IOException, MissingEventsException {
+-    TraceScope scope =
+-        Trace.startSpan("inotifyPoll", traceSampler);
++    TraceScope scope = tracer.newScope("inotifyPoll");
+     try {
+       // need to keep retrying until the NN sends us the latest committed txid
+       if (lastReadTxid == -1) {
+@@ -180,7 +175,7 @@ public long getTxidsBehindEstimate() {
+    */
+   public EventBatch poll(long time, TimeUnit tu) throws IOException,
+       InterruptedException, MissingEventsException {
+-    TraceScope scope = Trace.startSpan("inotifyPollWithTimeout", traceSampler);
++    TraceScope scope = tracer.newScope("inotifyPollWithTimeout");
+     EventBatch next = null;
+     try {
+       long initialTime = Time.monotonicNow();
+@@ -217,7 +212,7 @@ public EventBatch poll(long time, TimeUnit tu) throws IOException,
+    */
+   public EventBatch take() throws IOException, InterruptedException,
+       MissingEventsException {
+-    TraceScope scope = Trace.startSpan("inotifyTake", traceSampler);
++    TraceScope scope = tracer.newScope("inotifyTake");
+     EventBatch next = null;
+     try {
+       int nextWaitMin = INITIAL_WAIT_MS;
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSInputStream.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSInputStream.java
+index 625a1df..7135d46 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSInputStream.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSInputStream.java
+@@ -74,9 +74,9 @@
+ import org.apache.hadoop.security.token.SecretManager.InvalidToken;
+ import org.apache.hadoop.security.token.Token;
+ import org.apache.hadoop.util.IdentityHashStore;
+-import org.apache.htrace.Span;
+-import org.apache.htrace.Trace;
+-import org.apache.htrace.TraceScope;
++import org.apache.htrace.core.SpanId;
++import org.apache.htrace.core.TraceScope;
++import org.apache.htrace.core.Tracer;
+ 
+ import com.google.common.annotations.VisibleForTesting;
+ 
+@@ -638,6 +638,7 @@ private synchronized DatanodeInfo blockSeekTo(long target) throws IOException {
+             setClientCacheContext(dfsClient.getClientContext()).
+             setUserGroupInformation(dfsClient.ugi).
+             setConfiguration(dfsClient.getConfiguration()).
++            setTracer(dfsClient.getTracer()).
+             build();
+         if(connectFailedOnce) {
+           DFSClient.LOG.info("Successfully connected to " + targetAddr +
+@@ -897,7 +898,7 @@ private synchronized int readWithStrategy(ReaderStrategy strategy, int off, int
+   public synchronized int read(final byte buf[], int off, int len) throws IOException {
+     ReaderStrategy byteArrayReader = new ByteArrayStrategy(buf);
+     TraceScope scope =
+-        dfsClient.getPathTraceScope("DFSInputStream#byteArrayRead", src);
++        dfsClient.newPathTraceScope("DFSInputStream#byteArrayRead", src);
+     try {
+       return readWithStrategy(byteArrayReader, off, len);
+     } finally {
+@@ -909,7 +910,7 @@ public synchronized int read(final byte buf[], int off, int len) throws IOExcept
+   public synchronized int read(final ByteBuffer buf) throws IOException {
+     ReaderStrategy byteBufferReader = new ByteBufferStrategy(buf);
+     TraceScope scope =
+-        dfsClient.getPathTraceScope("DFSInputStream#byteBufferRead", src);
++        dfsClient.newPathTraceScope("DFSInputStream#byteBufferRead", src);
+     try {
+       return readWithStrategy(byteBufferReader, 0, buf.remaining());
+     } finally {
+@@ -1074,14 +1075,14 @@ private void fetchBlockByteRange(LocatedBlock block, long start, long end,
+       final ByteBuffer bb,
+       final Map<ExtendedBlock, Set<DatanodeInfo>> corruptedBlockMap,
+       final int hedgedReadId) {
+-    final Span parentSpan = Trace.currentSpan();
++    final SpanId parentSpanId = Tracer.getCurrentSpanId();
+     return new Callable<ByteBuffer>() {
+       @Override
+       public ByteBuffer call() throws Exception {
+         byte[] buf = bb.array();
+         int offset = bb.position();
+-        TraceScope scope =
+-            Trace.startSpan("hedgedRead" + hedgedReadId, parentSpan);
++        TraceScope scope = dfsClient.getTracer().
++            newScope("hedgedRead" + hedgedReadId, parentSpanId);
+         try {
+           actualGetFromOneDataNode(datanode, block, start, end, buf, offset,
+               corruptedBlockMap);
+@@ -1138,6 +1139,7 @@ private void actualGetFromOneDataNode(final DNAddrPair datanode,
+             setClientCacheContext(dfsClient.getClientContext()).
+             setUserGroupInformation(dfsClient.ugi).
+             setConfiguration(dfsClient.getConfiguration()).
++            setTracer(dfsClient.getTracer()).
+             build();
+         int nread = reader.readAll(buf, offset, len);
+         updateReadStatistics(readStatistics, nread, reader);
+@@ -1374,8 +1376,8 @@ private static boolean tokenRefetchNeeded(IOException ex,
+   @Override
+   public int read(long position, byte[] buffer, int offset, int length)
+       throws IOException {
+-    TraceScope scope =
+-        dfsClient.getPathTraceScope("DFSInputStream#byteArrayPread", src);
++    TraceScope scope = dfsClient.
++        newPathTraceScope("DFSInputStream#byteArrayPread", src);
+     try {
+       return pread(position, buffer, offset, length);
+     } finally {
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSOutputStream.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSOutputStream.java
+index 632c5a1..4264659 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSOutputStream.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/DFSOutputStream.java
+@@ -49,6 +49,7 @@
+ import org.apache.hadoop.fs.FSOutputSummer;
+ import org.apache.hadoop.fs.FileAlreadyExistsException;
+ import org.apache.hadoop.fs.FileEncryptionInfo;
++import org.apache.hadoop.fs.FileSystem;
+ import org.apache.hadoop.fs.ParentNotDirectoryException;
+ import org.apache.hadoop.fs.Syncable;
+ import org.apache.hadoop.fs.permission.FsPermission;
+@@ -94,12 +95,10 @@
+ import org.apache.hadoop.util.DataChecksum.Type;
+ import org.apache.hadoop.util.Progressable;
+ import org.apache.hadoop.util.Time;
+-import org.apache.htrace.NullScope;
+-import org.apache.htrace.Sampler;
+-import org.apache.htrace.Span;
+-import org.apache.htrace.Trace;
+-import org.apache.htrace.TraceInfo;
+-import org.apache.htrace.TraceScope;
++import org.apache.htrace.core.Span;
++import org.apache.htrace.core.SpanId;
++import org.apache.htrace.core.TraceScope;
++import org.apache.htrace.core.Tracer;
+ 
+ import com.google.common.annotations.VisibleForTesting;
+ import com.google.common.base.Preconditions;
+@@ -215,7 +214,7 @@ private Packet createHeartbeatPacket() throws InterruptedIOException {
+ 
+   static class Packet {
+     private static final long HEART_BEAT_SEQNO = -1L;
+-    private static long[] EMPTY = new long[0];
++    private static SpanId[] EMPTY = new SpanId[0];
+     long seqno; // sequencenumber of buffer in block
+     final long offsetInBlock; // offset in block
+     boolean syncBlock; // this packet forces the current block to disk
+@@ -223,9 +222,9 @@ private Packet createHeartbeatPacket() throws InterruptedIOException {
+     final int maxChunks; // max chunks in packet
+     private byte[] buf;
+     private boolean lastPacketInBlock; // is this the last packet in block?
+-    private long[] traceParents = EMPTY;
++    private SpanId[] traceParents = EMPTY;
+     private int traceParentsUsed;
+-    private Span span;
++    private TraceScope scope;
+ 
+     /**
+      * buf is pointed into like follows:
+@@ -381,14 +380,10 @@ public String toString() {
+      *
+      * Protected by the DFSOutputStream dataQueue lock.
+      */
+-    public void addTraceParent(Span span) {
+-      if (span == null) {
++    public void addTraceParent(SpanId id) {
++      if (!id.isValid()) {
+         return;
+       }
+-      addTraceParent(span.getSpanId());
+-    }
+-
+-    public void addTraceParent(long id) {
+       if (traceParentsUsed == traceParents.length) {
+         int newLength = (traceParents.length == 0) ? 8 :
+             traceParents.length * 2;
+@@ -405,18 +400,18 @@ public void addTraceParent(long id) {
+      *
+      * Protected by the DFSOutputStream dataQueue lock.
+      */
+-    public long[] getTraceParents() {
++    public SpanId[] getTraceParents() {
+       // Remove duplicates from the array.
+       int len = traceParentsUsed;
+       Arrays.sort(traceParents, 0, len);
+       int i = 0, j = 0;
+-      long prevVal = 0; // 0 is not a valid span id
++      SpanId prevVal = SpanId.INVALID;
+       while (true) {
+         if (i == len) {
+           break;
+         }
+-        long val = traceParents[i];
+-        if (val != prevVal) {
++        SpanId val = traceParents[i];
++        if (!val.equals(prevVal)) {
+           traceParents[j] = val;
+           j++;
+           prevVal = val;
+@@ -430,12 +425,12 @@ public void addTraceParent(long id) {
+       return traceParents;
+     }
+ 
+-    public void setTraceSpan(Span span) {
+-      this.span = span;
++    public void setTraceScope(TraceScope scope) {
++      this.scope = scope;
+     }
+ 
+-    public Span getTraceSpan() {
+-      return span;
++    public TraceScope getTraceScope() {
++      return scope;
+     }
+   }
+ 
+@@ -605,7 +600,7 @@ private void endBlock() {
+     @Override
+     public void run() {
+       long lastPacket = Time.now();
+-      TraceScope scope = NullScope.INSTANCE;
++      TraceScope scope = null;
+       while (!streamerClosed && dfsClient.clientRunning) {
+ 
+         // if the Responder encountered an error, shutdown Responder
+@@ -656,12 +651,11 @@ public void run() {
+               assert one != null;
+             } else {
+               one = dataQueue.getFirst(); // regular data packet
+-              long parents[] = one.getTraceParents();
++              SpanId parents[] = one.getTraceParents();
+               if (parents.length > 0) {
+-                scope = Trace.startSpan("dataStreamer", new TraceInfo(0, parents[0]));
+-                // TODO: use setParents API once it's available from HTrace 3.2
+-                //                scope = Trace.startSpan("dataStreamer", Sampler.ALWAYS);
+-                //                scope.getSpan().setParents(parents);
++                scope = dfsClient.getTracer().
++                    newScope("dataStreamer", parents[0]);
++                scope.getSpan().setParents(parents);
+               }
+             }
+           }
+@@ -713,12 +707,16 @@ public void run() {
+           }
+           
+           // send the packet
+-          Span span = null;
++          SpanId spanId = SpanId.INVALID;
+           synchronized (dataQueue) {
+             // move packet from dataQueue to ackQueue
+             if (!one.isHeartbeatPacket()) {
+-              span = scope.detach();
+-              one.setTraceSpan(span);
++              if (scope != null) {
++                spanId = scope.getSpanId();
++                scope.detach();
++                one.setTraceScope(scope);
++              }
++              scope = null;
+               dataQueue.removeFirst();
+               ackQueue.addLast(one);
+               dataQueue.notifyAll();
+@@ -731,7 +729,8 @@ public void run() {
+           }
+ 
+           // write out data to remote datanode
+-          TraceScope writeScope = Trace.startSpan("writeTo", span);
++          TraceScope writeScope = dfsClient.getTracer().
++              newScope("DataStreamer#writeTo", spanId);
+           try {
+             one.writeTo(blockStream);
+             blockStream.flush();   
+@@ -803,7 +802,10 @@ public void run() {
+             streamerClosed = true;
+           }
+         } finally {
+-          scope.close();
++          if (scope != null) {
++            scope.close();
++            scope = null;
++          }
+         }
+       }
+       closeInternal();
+@@ -960,7 +962,7 @@ public void run() {
+         setName("ResponseProcessor for block " + block);
+         PipelineAck ack = new PipelineAck();
+ 
+-        TraceScope scope = NullScope.INSTANCE;
++        TraceScope scope = null;
+         while (!responderClosed && dfsClient.clientRunning && !isLastPacketInBlock) {
+           // process responses from datanodes.
+           try {
+@@ -1035,8 +1037,11 @@ public void run() {
+             block.setNumBytes(one.getLastByteOffsetBlock());
+ 
+             synchronized (dataQueue) {
+-              scope = Trace.continueSpan(one.getTraceSpan());
+-              one.setTraceSpan(null);
++              scope = one.getTraceScope();
++              if (scope != null) {
++                scope.reattach();
++                one.setTraceScope(null);
++              }
+               lastAckedSeqno = seqno;
+               ackQueue.removeFirst();
+               dataQueue.notifyAll();
+@@ -1062,7 +1067,10 @@ public void run() {
+               responderClosed = true;
+             }
+           } finally {
+-            scope.close();
++            if (scope != null) {
++              scope.close();
++            }
++            scope = null;
+           }
+         }
+       }
+@@ -1123,11 +1131,12 @@ private boolean processDatanodeError() throws IOException {
+           // a client waiting on close() will be aware that the flush finished.
+           synchronized (dataQueue) {
+             Packet endOfBlockPacket = dataQueue.remove();  // remove the end of block packet
+-            Span span = endOfBlockPacket.getTraceSpan();
+-            if (span != null) {
+-              // Close any trace span associated with this Packet
+-              TraceScope scope = Trace.continueSpan(span);
++            // Close any trace span associated with this Packet
++            TraceScope scope = endOfBlockPacket.getTraceScope();
++            if (scope != null) {
++              scope.reattach();
+               scope.close();
++              endOfBlockPacket.setTraceScope(null);
+             }
+             assert endOfBlockPacket.lastPacketInBlock;
+             assert lastAckedSeqno == endOfBlockPacket.seqno - 1;
+@@ -1813,10 +1822,6 @@ private DFSOutputStream(DFSClient dfsClient, String src, HdfsFileStatus stat,
+ 
+     computePacketChunkSize(dfsClient.getConf().writePacketSize, bytesPerChecksum);
+ 
+-    Span traceSpan = null;
+-    if (Trace.isTracing()) {
+-      traceSpan = Trace.startSpan(this.getClass().getSimpleName()).detach();
+-    }
+     streamer = new DataStreamer(stat);
+     if (favoredNodes != null && favoredNodes.length != 0) {
+       streamer.setFavoredNodes(favoredNodes);
+@@ -1828,7 +1833,7 @@ static DFSOutputStream newStreamForCreate(DFSClient dfsClient, String src,
+       short replication, long blockSize, Progressable progress, int buffersize,
+       DataChecksum checksum, String[] favoredNodes) throws IOException {
+     TraceScope scope =
+-        dfsClient.getPathTraceScope("newStreamForCreate", src);
++        dfsClient.newPathTraceScope("newStreamForCreate", src);
+     try {
+       HdfsFileStatus stat = null;
+ 
+@@ -1902,7 +1907,7 @@ static DFSOutputStream newStreamForAppend(DFSClient dfsClient, String src,
+       int buffersize, Progressable progress, LocatedBlock lastBlock,
+       HdfsFileStatus stat, DataChecksum checksum) throws IOException {
+     TraceScope scope =
+-        dfsClient.getPathTraceScope("newStreamForAppend", src);
++        dfsClient.newPathTraceScope("newStreamForAppend", src);
+     try {
+       final DFSOutputStream out = new DFSOutputStream(dfsClient, src,
+           progress, lastBlock, stat, checksum);
+@@ -1934,7 +1939,7 @@ private void computePacketChunkSize(int psize, int csize) {
+   private void queueCurrentPacket() {
+     synchronized (dataQueue) {
+       if (currentPacket == null) return;
+-      currentPacket.addTraceParent(Trace.currentSpan());
++      currentPacket.addTraceParent(Tracer.getCurrentSpanId());
+       dataQueue.addLast(currentPacket);
+       lastQueuedSeqno = currentPacket.seqno;
+       if (DFSClient.LOG.isDebugEnabled()) {
+@@ -1954,7 +1959,7 @@ private void waitAndQueueCurrentPacket() throws IOException {
+           while (!isClosed() && dataQueue.size() + ackQueue.size() >
+               dfsClient.getConf().writeMaxPackets) {
+             if (firstWait) {
+-              Span span = Trace.currentSpan();
++              Span span = Tracer.getCurrentSpan();
+               if (span != null) {
+                 span.addTimelineAnnotation("dataQueue.wait");
+               }
+@@ -1975,7 +1980,7 @@ private void waitAndQueueCurrentPacket() throws IOException {
+             }
+           }
+         } finally {
+-          Span span = Trace.currentSpan();
++          Span span = Tracer.getCurrentSpan();
+           if ((span != null) && (!firstWait)) {
+             span.addTimelineAnnotation("end.wait");
+           }
+@@ -1988,7 +1993,7 @@ private void waitAndQueueCurrentPacket() throws IOException {
+   }
+ 
+   protected TraceScope createWriteTraceScope() {
+-    return dfsClient.getPathTraceScope("DFSOutputStream#write", src);
++    return dfsClient.newPathTraceScope("DFSOutputStream#write", src);
+   }
+ 
+   // @see FSOutputSummer#writeChunk()
+@@ -2086,7 +2091,7 @@ public void sync() throws IOException {
+   @Override
+   public void hflush() throws IOException {
+     TraceScope scope =
+-        dfsClient.getPathTraceScope("hflush", src);
++        dfsClient.newPathTraceScope("hflush", src);
+     try {
+       flushOrSync(false, EnumSet.noneOf(SyncFlag.class));
+     } finally {
+@@ -2097,7 +2102,7 @@ public void hflush() throws IOException {
+   @Override
+   public void hsync() throws IOException {
+     TraceScope scope =
+-        dfsClient.getPathTraceScope("hsync", src);
++        dfsClient.newPathTraceScope("hsync", src);
+     try {
+       flushOrSync(true, EnumSet.noneOf(SyncFlag.class));
+     } finally {
+@@ -2120,7 +2125,7 @@ public void hsync() throws IOException {
+    */
+   public void hsync(EnumSet<SyncFlag> syncFlags) throws IOException {
+     TraceScope scope =
+-        dfsClient.getPathTraceScope("hsync", src);
++        dfsClient.newPathTraceScope("hsync", src);
+     try {
+       flushOrSync(true, syncFlags);
+     } finally {
+@@ -2294,7 +2299,8 @@ private void flushInternal() throws IOException {
+   }
+ 
+   private void waitForAckedSeqno(long seqno) throws IOException {
+-    TraceScope scope = Trace.startSpan("waitForAckedSeqno", Sampler.NEVER);
++    TraceScope scope = dfsClient.getTracer().
++        newScope("waitForAckedSeqno");
+     try {
+       if (DFSClient.LOG.isDebugEnabled()) {
+         DFSClient.LOG.debug("Waiting for ack for: " + seqno);
+@@ -2391,7 +2397,7 @@ private void closeThreads(boolean force) throws IOException {
+   @Override
+   public synchronized void close() throws IOException {
+     TraceScope scope =
+-        dfsClient.getPathTraceScope("DFSOutputStream#close", src);
++        dfsClient.newPathTraceScope("DFSOutputStream#close", src);
+     try {
+       closeImpl();
+     } finally {
+@@ -2426,7 +2432,7 @@ private synchronized void closeImpl() throws IOException {
+       // get last block before destroying the streamer
+       ExtendedBlock lastBlock = streamer.getBlock();
+       closeThreads(false);
+-      TraceScope scope = Trace.startSpan("completeFile", Sampler.NEVER);
++      TraceScope scope = dfsClient.getTracer().newScope("completeFile");
+       try {
+         completeFile(lastBlock);
+       } finally {
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/RemoteBlockReader.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/RemoteBlockReader.java
+index 628c610..71917aa 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/RemoteBlockReader.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/RemoteBlockReader.java
+@@ -46,9 +46,8 @@
+ import org.apache.hadoop.net.NetUtils;
+ import org.apache.hadoop.security.token.Token;
+ import org.apache.hadoop.util.DataChecksum;
+-import org.apache.htrace.Sampler;
+-import org.apache.htrace.Trace;
+-import org.apache.htrace.TraceScope;
++import org.apache.htrace.core.TraceScope;
++import org.apache.htrace.core.Tracer;
+ 
+ 
+ /**
+@@ -102,6 +101,8 @@
+   int dataLeft = 0;
+   
+   private final PeerCache peerCache;
++
++  private final Tracer tracer;
+   
+   /* FSInputChecker interface */
+   
+@@ -213,9 +214,8 @@ private void adjustChecksumBytes(int dataLen) {
+   protected synchronized int readChunk(long pos, byte[] buf, int offset, 
+                                        int len, byte[] checksumBuf) 
+                                        throws IOException {
+-    TraceScope scope =
+-        Trace.startSpan("RemoteBlockReader#readChunk(" + blockId + ")",
+-            Sampler.NEVER);
++    TraceScope scope = tracer.
++        newScope("RemoteBlockReader#readChunk(" + blockId + ")");
+     try {
+       return readChunkImpl(pos, buf, offset, len, checksumBuf);
+     } finally {
+@@ -349,7 +349,7 @@ private synchronized int readChunkImpl(long pos, byte[] buf, int offset,
+   private RemoteBlockReader(String file, String bpid, long blockId,
+       DataInputStream in, DataChecksum checksum, boolean verifyChecksum,
+       long startOffset, long firstChunkOffset, long bytesToRead, Peer peer,
+-      DatanodeID datanodeID, PeerCache peerCache) {
++      DatanodeID datanodeID, PeerCache peerCache, Tracer tracer) {
+     // Path is used only for printing block and file information in debug
+     super(new Path("/blk_" + blockId + ":" + bpid + ":of:"+ file)/*too non path-like?*/,
+           1, verifyChecksum,
+@@ -380,6 +380,7 @@ private RemoteBlockReader(String file, String bpid, long blockId,
+     bytesPerChecksum = this.checksum.getBytesPerChecksum();
+     checksumSize = this.checksum.getChecksumSize();
+     this.peerCache = peerCache;
++    this.tracer = tracer;
+   }
+ 
+   /**
+@@ -404,7 +405,8 @@ public static RemoteBlockReader newBlockReader(String file,
+                                      String clientName, Peer peer,
+                                      DatanodeID datanodeID,
+                                      PeerCache peerCache,
+-                                     CachingStrategy cachingStrategy)
++                                     CachingStrategy cachingStrategy,
++                                     Tracer tracer)
+                                        throws IOException {
+     // in and out will be closed when sock is closed (by the caller)
+     final DataOutputStream out =
+@@ -440,7 +442,7 @@ public static RemoteBlockReader newBlockReader(String file,
+ 
+     return new RemoteBlockReader(file, block.getBlockPoolId(), block.getBlockId(),
+         in, checksum, verifyChecksum, startOffset, firstChunkOffset, len,
+-        peer, datanodeID, peerCache);
++        peer, datanodeID, peerCache, tracer);
+   }
+ 
+   @Override
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/RemoteBlockReader2.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/RemoteBlockReader2.java
+index d7159eb..5ac5298 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/RemoteBlockReader2.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/RemoteBlockReader2.java
+@@ -51,9 +51,8 @@
+ import org.apache.hadoop.net.NetUtils;
+ import org.apache.hadoop.security.token.Token;
+ import org.apache.hadoop.util.DataChecksum;
+-import org.apache.htrace.Sampler;
+-import org.apache.htrace.Trace;
+-import org.apache.htrace.TraceScope;
++import org.apache.htrace.core.TraceScope;
++import org.apache.htrace.core.Tracer;
+ 
+ import com.google.common.annotations.VisibleForTesting;
+ 
+@@ -124,6 +123,8 @@
+ 
+   private boolean sentStatusCode = false;
+   
++  private final Tracer tracer;
++
+   byte[] skipBuf = null;
+   ByteBuffer checksumBytes = null;
+   /** Amount of unread data in the current received packet */
+@@ -147,8 +148,8 @@ public synchronized int read(byte[] buf, int off, int len)
+     }
+ 
+     if (curDataSlice == null || curDataSlice.remaining() == 0 && bytesNeededToFinish > 0) {
+-      TraceScope scope = Trace.startSpan(
+-          "RemoteBlockReader2#readNextPacket(" + blockId + ")", Sampler.NEVER);
++      TraceScope scope = tracer.newScope(
++          "RemoteBlockReader2#readNextPacket(" + blockId + ")");
+       try {
+         readNextPacket();
+       } finally {
+@@ -175,8 +176,8 @@ public synchronized int read(byte[] buf, int off, int len)
+   @Override
+   public int read(ByteBuffer buf) throws IOException {
+     if (curDataSlice == null || curDataSlice.remaining() == 0 && bytesNeededToFinish > 0) {
+-      TraceScope scope = Trace.startSpan(
+-          "RemoteBlockReader2#readNextPacket(" + blockId + ")", Sampler.NEVER);
++      TraceScope scope = tracer.newScope(
++          "RemoteBlockReader2#readNextPacket(" + blockId + ")");
+       try {
+         readNextPacket();
+       } finally {
+@@ -293,7 +294,7 @@ private void readTrailingEmptyPacket() throws IOException {
+   protected RemoteBlockReader2(String file, String bpid, long blockId,
+       DataChecksum checksum, boolean verifyChecksum,
+       long startOffset, long firstChunkOffset, long bytesToRead, Peer peer,
+-      DatanodeID datanodeID, PeerCache peerCache) {
++      DatanodeID datanodeID, PeerCache peerCache, Tracer tracer) {
+     this.isLocal = DFSClient.isLocalAddress(NetUtils.
+         createSocketAddr(datanodeID.getXferAddr()));
+     // Path is used only for printing block and file information in debug
+@@ -314,6 +315,7 @@ protected RemoteBlockReader2(String file, String bpid, long blockId,
+     this.bytesNeededToFinish = bytesToRead + (startOffset - firstChunkOffset);
+     bytesPerChecksum = this.checksum.getBytesPerChecksum();
+     checksumSize = this.checksum.getChecksumSize();
++    this.tracer = tracer;
+   }
+ 
+ 
+@@ -408,7 +410,8 @@ public static BlockReader newBlockReader(String file,
+                                      String clientName,
+                                      Peer peer, DatanodeID datanodeID,
+                                      PeerCache peerCache,
+-                                     CachingStrategy cachingStrategy) throws IOException {
++                                     CachingStrategy cachingStrategy,
++                                     Tracer tracer) throws IOException {
+     // in and out will be closed when sock is closed (by the caller)
+     final DataOutputStream out = new DataOutputStream(new BufferedOutputStream(
+           peer.getOutputStream()));
+@@ -441,7 +444,7 @@ public static BlockReader newBlockReader(String file,
+ 
+     return new RemoteBlockReader2(file, block.getBlockPoolId(), block.getBlockId(),
+         checksum, verifyChecksum, startOffset, firstChunkOffset, len, peer,
+-        datanodeID, peerCache);
++        datanodeID, peerCache, tracer);
+   }
+ 
+   static void checkSuccess(
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/CacheDirectiveIterator.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/CacheDirectiveIterator.java
+index 923cdb4..f144a55 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/CacheDirectiveIterator.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/CacheDirectiveIterator.java
+@@ -25,11 +25,10 @@
+ import org.apache.hadoop.fs.BatchedRemoteIterator;
+ import org.apache.hadoop.fs.InvalidRequestException;
+ import org.apache.hadoop.ipc.RemoteException;
+-import org.apache.htrace.Sampler;
+-import org.apache.htrace.Trace;
+-import org.apache.htrace.TraceScope;
+ 
+ import com.google.common.base.Preconditions;
++import org.apache.htrace.core.TraceScope;
++import org.apache.htrace.core.Tracer;
+ 
+ /**
+  * CacheDirectiveIterator is a remote iterator that iterates cache directives.
+@@ -42,14 +41,14 @@
+ 
+   private CacheDirectiveInfo filter;
+   private final ClientProtocol namenode;
+-  private final Sampler<?> traceSampler;
++  private final Tracer tracer;
+ 
+   public CacheDirectiveIterator(ClientProtocol namenode,
+-      CacheDirectiveInfo filter, Sampler<?> traceSampler) {
++      CacheDirectiveInfo filter, Tracer tracer) {
+     super(0L);
+     this.namenode = namenode;
+     this.filter = filter;
+-    this.traceSampler = traceSampler;
++    this.tracer = tracer;
+   }
+ 
+   private static CacheDirectiveInfo removeIdFromFilter(CacheDirectiveInfo filter) {
+@@ -94,7 +93,7 @@ public boolean hasMore() {
+   public BatchedEntries<CacheDirectiveEntry> makeRequest(Long prevKey)
+       throws IOException {
+     BatchedEntries<CacheDirectiveEntry> entries = null;
+-    TraceScope scope = Trace.startSpan("listCacheDirectives", traceSampler);
++    TraceScope scope = tracer.newScope("listCacheDirectives");
+     try {
+       entries = namenode.listCacheDirectives(prevKey, filter);
+     } catch (IOException e) {
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/CachePoolIterator.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/CachePoolIterator.java
+index e9481f7..5e2bbf2 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/CachePoolIterator.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/CachePoolIterator.java
+@@ -23,9 +23,8 @@
+ import org.apache.hadoop.classification.InterfaceAudience;
+ import org.apache.hadoop.classification.InterfaceStability;
+ import org.apache.hadoop.fs.BatchedRemoteIterator;
+-import org.apache.htrace.Sampler;
+-import org.apache.htrace.Trace;
+-import org.apache.htrace.TraceScope;
++import org.apache.htrace.core.TraceScope;
++import org.apache.htrace.core.Tracer;
+ 
+ /**
+  * CachePoolIterator is a remote iterator that iterates cache pools.
+@@ -37,18 +36,18 @@
+     extends BatchedRemoteIterator<String, CachePoolEntry> {
+ 
+   private final ClientProtocol namenode;
+-  private final Sampler traceSampler;
++  private final Tracer tracer;
+ 
+-  public CachePoolIterator(ClientProtocol namenode, Sampler traceSampler) {
++  public CachePoolIterator(ClientProtocol namenode, Tracer tracer) {
+     super("");
+     this.namenode = namenode;
+-    this.traceSampler = traceSampler;
++    this.tracer = tracer;
+   }
+ 
+   @Override
+   public BatchedEntries<CachePoolEntry> makeRequest(String prevKey)
+       throws IOException {
+-    TraceScope scope = Trace.startSpan("listCachePools", traceSampler);
++    TraceScope scope = tracer.newScope("listCachePools");
+     try {
+       return namenode.listCachePools(prevKey);
+     } finally {
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/EncryptionZoneIterator.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/EncryptionZoneIterator.java
+index 0141215..a3cff82 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/EncryptionZoneIterator.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/EncryptionZoneIterator.java
+@@ -23,9 +23,8 @@
+ import org.apache.hadoop.classification.InterfaceAudience;
+ import org.apache.hadoop.classification.InterfaceStability;
+ import org.apache.hadoop.fs.BatchedRemoteIterator;
+-import org.apache.htrace.Sampler;
+-import org.apache.htrace.Trace;
+-import org.apache.htrace.TraceScope;
++import org.apache.htrace.core.TraceScope;
++import org.apache.htrace.core.Tracer;
+ 
+ /**
+  * EncryptionZoneIterator is a remote iterator that iterates over encryption
+@@ -37,19 +36,18 @@
+     extends BatchedRemoteIterator<Long, EncryptionZone> {
+ 
+   private final ClientProtocol namenode;
+-  private final Sampler<?> traceSampler;
++  private final Tracer tracer;
+ 
+-  public EncryptionZoneIterator(ClientProtocol namenode,
+-                                Sampler<?> traceSampler) {
++  public EncryptionZoneIterator(ClientProtocol namenode, Tracer tracer) {
+     super(Long.valueOf(0));
+     this.namenode = namenode;
+-    this.traceSampler = traceSampler;
++    this.tracer = tracer;
+   }
+ 
+   @Override
+   public BatchedEntries<EncryptionZone> makeRequest(Long prevId)
+       throws IOException {
+-    TraceScope scope = Trace.startSpan("listEncryptionZones", traceSampler);
++    TraceScope scope = tracer.newScope("listEncryptionZones");
+     try {
+       return namenode.listEncryptionZones(prevId);
+     } finally {
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/datatransfer/DataTransferProtoUtil.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/datatransfer/DataTransferProtoUtil.java
+index 2ef3c3f..6c6ce80 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/datatransfer/DataTransferProtoUtil.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/datatransfer/DataTransferProtoUtil.java
+@@ -31,10 +31,8 @@
+ import org.apache.hadoop.hdfs.security.token.block.BlockTokenIdentifier;
+ import org.apache.hadoop.security.token.Token;
+ import org.apache.hadoop.util.DataChecksum;
+-import org.apache.htrace.Span;
+-import org.apache.htrace.Trace;
+-import org.apache.htrace.TraceInfo;
+-import org.apache.htrace.TraceScope;
++import org.apache.htrace.core.SpanId;
++import org.apache.htrace.core.Tracer;
+ 
+ /**
+  * Static utilities for dealing with the protocol buffers used by the
+@@ -85,38 +83,20 @@ static BaseHeaderProto buildBaseHeader(ExtendedBlock blk,
+     BaseHeaderProto.Builder builder =  BaseHeaderProto.newBuilder()
+       .setBlock(PBHelper.convert(blk))
+       .setToken(PBHelper.convert(blockToken));
+-    if (Trace.isTracing()) {
+-      Span s = Trace.currentSpan();
++    SpanId spanId = Tracer.getCurrentSpanId();
++    if (spanId.isValid()) {
+       builder.setTraceInfo(DataTransferTraceInfoProto.newBuilder()
+-          .setTraceId(s.getTraceId())
+-          .setParentId(s.getSpanId()));
++          .setTraceId(spanId.getHigh())
++          .setParentId(spanId.getLow()));
+     }
+     return builder.build();
+   }
+ 
+-  public static TraceInfo fromProto(DataTransferTraceInfoProto proto) {
+-    if (proto == null) return null;
+-    if (!proto.hasTraceId()) return null;
+-    return new TraceInfo(proto.getTraceId(), proto.getParentId());
+-  }
+-
+-  public static TraceScope continueTraceSpan(ClientOperationHeaderProto header,
+-      String description) {
+-    return continueTraceSpan(header.getBaseHeader(), description);
+-  }
+-
+-  public static TraceScope continueTraceSpan(BaseHeaderProto header,
+-      String description) {
+-    return continueTraceSpan(header.getTraceInfo(), description);
+-  }
+-
+-  public static TraceScope continueTraceSpan(DataTransferTraceInfoProto proto,
+-      String description) {
+-    TraceScope scope = null;
+-    TraceInfo info = fromProto(proto);
+-    if (info != null) {
+-      scope = Trace.startSpan(description, info);
++  public static SpanId fromProto(DataTransferTraceInfoProto proto) {
++    if ((proto != null) && proto.hasTraceId() &&
++          proto.hasParentId()) {
++      return new SpanId(proto.getTraceId(), proto.getParentId());
+     }
+-    return scope;
++    return null;
+   }
+ }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/datatransfer/Receiver.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/datatransfer/Receiver.java
+index 24ef768..56e125b 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/datatransfer/Receiver.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/datatransfer/Receiver.java
+@@ -18,7 +18,6 @@
+ package org.apache.hadoop.hdfs.protocol.datatransfer;
+ 
+ import static org.apache.hadoop.hdfs.protocol.datatransfer.DataTransferProtoUtil.fromProto;
+-import static org.apache.hadoop.hdfs.protocol.datatransfer.DataTransferProtoUtil.continueTraceSpan;
+ import static org.apache.hadoop.hdfs.protocolPB.PBHelper.vintPrefixed;
+ 
+ import java.io.DataInputStream;
+@@ -27,7 +26,10 @@
+ import org.apache.hadoop.classification.InterfaceAudience;
+ import org.apache.hadoop.classification.InterfaceStability;
+ import org.apache.hadoop.hdfs.protocol.DatanodeInfo;
++import org.apache.hadoop.hdfs.protocol.proto.DataTransferProtos.BaseHeaderProto;
+ import org.apache.hadoop.hdfs.protocol.proto.DataTransferProtos.CachingStrategyProto;
++import org.apache.hadoop.hdfs.protocol.proto.DataTransferProtos.ClientOperationHeaderProto;
++import org.apache.hadoop.hdfs.protocol.proto.DataTransferProtos.DataTransferTraceInfoProto;
+ import org.apache.hadoop.hdfs.protocol.proto.DataTransferProtos.OpBlockChecksumProto;
+ import org.apache.hadoop.hdfs.protocol.proto.DataTransferProtos.OpCopyBlockProto;
+ import org.apache.hadoop.hdfs.protocol.proto.DataTransferProtos.OpCustomProto;
+@@ -41,14 +43,21 @@
+ import org.apache.hadoop.hdfs.protocolPB.PBHelper;
+ import org.apache.hadoop.hdfs.server.datanode.CachingStrategy;
+ import org.apache.hadoop.hdfs.shortcircuit.ShortCircuitShm.SlotId;
+-import org.apache.htrace.TraceScope;
++import org.apache.htrace.core.SpanId;
++import org.apache.htrace.core.TraceScope;
++import org.apache.htrace.core.Tracer;
+ 
+ /** Receiver */
+ @InterfaceAudience.Private
+ @InterfaceStability.Evolving
+ public abstract class Receiver implements DataTransferProtocol {
++  private final Tracer tracer;
+   protected DataInputStream in;
+-  
++
++  protected Receiver(Tracer tracer) {
++    this.tracer = tracer;
++  }
++
+   /** Initialize a receiver for DataTransferProtocol with a socket. */
+   protected void initialize(final DataInputStream in) {
+     this.in = in;
+@@ -65,6 +74,26 @@ protected final Op readOp() throws IOException {
+     return Op.read(in);
+   }
+ 
++  private TraceScope continueTraceSpan(DataTransferTraceInfoProto proto,
++                                       String description) {
++    TraceScope scope = null;
++    SpanId spanId = fromProto(proto);
++    if (spanId != null) {
++      scope = tracer.newScope(description, spanId);
++    }
++    return scope;
++  }
++
++  private TraceScope continueTraceSpan(ClientOperationHeaderProto header,
++                                             String description) {
++    return continueTraceSpan(header.getBaseHeader(), description);
++  }
++
++  private TraceScope continueTraceSpan(BaseHeaderProto header,
++                                             String description) {
++    return continueTraceSpan(header.getTraceInfo(), description);
++  }
++
+   /** Process op by the corresponding method. */
+   protected final void processOp(Op op) throws IOException {
+     switch(op) {
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/datatransfer/Sender.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/datatransfer/Sender.java
+index d5402ac..95b3446 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/datatransfer/Sender.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/protocol/datatransfer/Sender.java
+@@ -48,8 +48,8 @@
+ import org.apache.hadoop.security.token.Token;
+ import org.apache.hadoop.util.DataChecksum;
+ 
+-import org.apache.htrace.Trace;
+-import org.apache.htrace.Span;
++import org.apache.htrace.core.SpanId;
++import org.apache.htrace.core.Tracer;
+ 
+ import com.google.protobuf.Message;
+ 
+@@ -196,10 +196,11 @@ public void releaseShortCircuitFds(SlotId slotId) throws IOException {
+     ReleaseShortCircuitAccessRequestProto.Builder builder =
+         ReleaseShortCircuitAccessRequestProto.newBuilder().
+         setSlotId(PBHelper.convert(slotId));
+-    if (Trace.isTracing()) {
+-      Span s = Trace.currentSpan();
+-      builder.setTraceInfo(DataTransferTraceInfoProto.newBuilder()
+-          .setTraceId(s.getTraceId()).setParentId(s.getSpanId()));
++    SpanId spanId = Tracer.getCurrentSpanId();
++    if (spanId.isValid()) {
++      builder.setTraceInfo(DataTransferTraceInfoProto.newBuilder().
++          setTraceId(spanId.getHigh()).
++          setParentId(spanId.getLow()));
+     }
+     ReleaseShortCircuitAccessRequestProto proto = builder.build();
+     send(out, Op.RELEASE_SHORT_CIRCUIT_FDS, proto);
+@@ -210,10 +211,11 @@ public void requestShortCircuitShm(String clientName) throws IOException {
+     ShortCircuitShmRequestProto.Builder builder =
+         ShortCircuitShmRequestProto.newBuilder().
+         setClientName(clientName);
+-    if (Trace.isTracing()) {
+-      Span s = Trace.currentSpan();
+-      builder.setTraceInfo(DataTransferTraceInfoProto.newBuilder()
+-          .setTraceId(s.getTraceId()).setParentId(s.getSpanId()));
++    SpanId spanId = Tracer.getCurrentSpanId();
++    if (spanId.isValid()) {
++      builder.setTraceInfo(DataTransferTraceInfoProto.newBuilder().
++          setTraceId(spanId.getHigh()).
++          setParentId(spanId.getLow()));
+     }
+     ShortCircuitShmRequestProto proto = builder.build();
+     send(out, Op.REQUEST_SHORT_CIRCUIT_SHM, proto);
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/qjournal/server/JournalNode.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/qjournal/server/JournalNode.java
+index 091613c..ee7618f 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/qjournal/server/JournalNode.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/qjournal/server/JournalNode.java
+@@ -43,10 +43,12 @@
+ import org.apache.hadoop.metrics2.source.JvmMetrics;
+ import org.apache.hadoop.metrics2.util.MBeans;
+ import org.apache.hadoop.security.SecurityUtil;
++import org.apache.hadoop.tracing.TraceUtils;
+ import org.apache.hadoop.util.DiskChecker;
+ import org.apache.hadoop.util.StringUtils;
+ import org.apache.hadoop.util.Tool;
+ import org.apache.hadoop.util.ToolRunner;
++import org.apache.htrace.core.Tracer;
+ import org.mortbay.util.ajax.JSON;
+ 
+ import com.google.common.base.Preconditions;
+@@ -69,6 +71,7 @@
+   private ObjectName journalNodeInfoBeanName;
+   private String httpServerURI;
+   private File localDir;
++  Tracer tracer;
+ 
+   static {
+     HdfsConfiguration.init();
+@@ -105,6 +108,11 @@ public void setConf(Configuration conf) {
+     this.localDir = new File(
+         conf.get(DFSConfigKeys.DFS_JOURNALNODE_EDITS_DIR_KEY,
+         DFSConfigKeys.DFS_JOURNALNODE_EDITS_DIR_DEFAULT).trim());
++    if (this.tracer == null) {
++      this.tracer = new Tracer.Builder("JournalNode").
++          conf(TraceUtils.wrapHadoopConf("journalnode.htrace", conf)).
++          build();
++    }
+   }
+ 
+   private static void validateAndCreateJournalDir(File dir) throws IOException {
+@@ -203,6 +211,10 @@ public void stop(int rc) {
+       MBeans.unregister(journalNodeInfoBeanName);
+       journalNodeInfoBeanName = null;
+     }
++    if (tracer != null) {
++      tracer.close();
++      tracer = null;
++    }
+   }
+ 
+   /**
+@@ -325,5 +337,4 @@ public void doRollback(String journalId) throws IOException {
+   public Long getJournalCTime(String journalId) throws IOException {
+     return getOrCreateJournal(journalId).getJournalCTime();
+   }
+-
+ }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/qjournal/server/JournalNodeRpcServer.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/qjournal/server/JournalNodeRpcServer.java
+index 0665f3d..37dd4af 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/qjournal/server/JournalNodeRpcServer.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/qjournal/server/JournalNodeRpcServer.java
+@@ -85,6 +85,7 @@
+       CommonConfigurationKeys.HADOOP_SECURITY_AUTHORIZATION, false)) {
+           server.refreshServiceAcl(confCopy, new HDFSPolicyProvider());
+     }
++    this.server.setTracer(jn.tracer);
+   }
+ 
+   void start() {
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BlockSender.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BlockSender.java
+index e76b93a..cf4cc29 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BlockSender.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/BlockSender.java
+@@ -46,9 +46,8 @@
+ import org.apache.hadoop.io.nativeio.NativeIO;
+ import org.apache.hadoop.net.SocketOutputStream;
+ import org.apache.hadoop.util.DataChecksum;
+-import org.apache.htrace.Sampler;
+-import org.apache.htrace.Trace;
+-import org.apache.htrace.TraceScope;
++import org.apache.htrace.core.Sampler;
++import org.apache.htrace.core.TraceScope;
+ 
+ import com.google.common.annotations.VisibleForTesting;
+ import com.google.common.base.Preconditions;
+@@ -700,8 +699,8 @@ public void verifyChecksum(final byte[] buf, final int dataOffset,
+    */
+   long sendBlock(DataOutputStream out, OutputStream baseStream, 
+                  DataTransferThrottler throttler) throws IOException {
+-    TraceScope scope =
+-        Trace.startSpan("sendBlock_" + block.getBlockId(), Sampler.NEVER);
++    TraceScope scope = datanode.tracer.
++        newScope("sendBlock_" + block.getBlockId());
+     try {
+       return doSendBlock(out, baseStream, throttler);
+     } finally {
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java
+index 91ecb03..1a6a5be 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataNode.java
+@@ -186,9 +186,6 @@
+ import org.apache.hadoop.security.UserGroupInformation.AuthenticationMethod;
+ import org.apache.hadoop.security.token.Token;
+ import org.apache.hadoop.security.token.TokenIdentifier;
+-import org.apache.hadoop.tracing.TraceAdminPB.TraceAdminService;
+-import org.apache.hadoop.tracing.TraceAdminProtocolPB;
+-import org.apache.hadoop.tracing.TraceAdminProtocolServerSideTranslatorPB;
+ import org.apache.hadoop.util.Daemon;
+ import org.apache.hadoop.util.DiskChecker;
+ import org.apache.hadoop.util.DiskChecker.DiskErrorException;
+@@ -198,9 +195,14 @@
+ import org.apache.hadoop.util.StringUtils;
+ import org.apache.hadoop.util.Time;
+ import org.apache.hadoop.util.VersionInfo;
+-import org.apache.hadoop.tracing.SpanReceiverHost;
+ import org.apache.hadoop.tracing.SpanReceiverInfo;
++import org.apache.hadoop.tracing.TraceAdminPB.TraceAdminService;
+ import org.apache.hadoop.tracing.TraceAdminProtocol;
++import org.apache.hadoop.tracing.TraceAdminProtocolPB;
++import org.apache.hadoop.tracing.TraceAdminProtocolServerSideTranslatorPB;
++import org.apache.hadoop.tracing.TraceUtils;
++import org.apache.hadoop.tracing.TracerConfigurationManager;
++import org.apache.htrace.core.Tracer;
+ import org.mortbay.util.ajax.JSON;
+ 
+ import com.google.common.annotations.VisibleForTesting;
+@@ -279,6 +281,8 @@
+       Collections.unmodifiableList(
+           Arrays.asList(DFS_DATANODE_DATA_DIR_KEY));
+ 
++  private static final String DATANODE_HTRACE_PREFIX = "datanode.htrace.";
++
+   /**
+    * Use {@link NetUtils#createSocketAddr(String)} instead.
+    */
+@@ -359,7 +363,14 @@ public static InetSocketAddress createSocketAddr(String target) {
+   private boolean isPermissionEnabled;
+   private String dnUserName = null;
+ 
+-  private SpanReceiverHost spanReceiverHost;
++  final Tracer tracer;
++  private final TracerConfigurationManager tracerConfigurationManager;
++
++  private static Tracer createTracer(Configuration conf) {
++    return new Tracer.Builder("DataNode").
++        conf(TraceUtils.wrapHadoopConf(DATANODE_HTRACE_PREFIX , conf)).
++        build();
++  }
+ 
+   /**
+    * Creates a dummy DataNode for testing purpose.
+@@ -369,6 +380,9 @@ public static InetSocketAddress createSocketAddr(String target) {
+   DataNode(final Configuration conf) {
+     super(conf);
+     this.blockScanner = new BlockScanner(this, conf);
++    this.tracer = createTracer(conf);
++    this.tracerConfigurationManager =
++        new TracerConfigurationManager(DATANODE_HTRACE_PREFIX, conf);
+     this.fileDescriptorPassingDisabledReason = null;
+     this.maxNumberOfBlocksToLog = 0;
+     this.confVersion = null;
+@@ -386,6 +400,9 @@ public static InetSocketAddress createSocketAddr(String target) {
+            final List<StorageLocation> dataDirs,
+            final SecureResources resources) throws IOException {
+     super(conf);
++    this.tracer = createTracer(conf);
++    this.tracerConfigurationManager =
++        new TracerConfigurationManager(DATANODE_HTRACE_PREFIX, conf);
+     this.blockScanner = new BlockScanner(this, conf);
+     this.lastDiskErrorCheck = 0;
+     this.maxNumberOfBlocksToLog = conf.getLong(DFS_MAX_NUM_BLOCKS_TO_LOG_KEY,
+@@ -1095,9 +1112,6 @@ void startDataNode(Configuration conf,
+     this.dnConf = new DNConf(conf);
+     checkSecureConfig(dnConf, conf, resources);
+ 
+-    this.spanReceiverHost =
+-      SpanReceiverHost.get(conf, DFSConfigKeys.DFS_SERVER_HTRACE_PREFIX);
+-
+     if (dnConf.maxLockedMemory > 0) {
+       if (!NativeIO.POSIX.getCacheManipulator().verifyCanMlock()) {
+         throw new RuntimeException(String.format(
+@@ -1785,9 +1799,6 @@ public void shutdown() {
+       MBeans.unregister(dataNodeInfoBeanName);
+       dataNodeInfoBeanName = null;
+     }
+-    if (this.spanReceiverHost != null) {
+-      this.spanReceiverHost.closeReceivers();
+-    }
+     if (shortCircuitRegistry != null) shortCircuitRegistry.shutdown();
+     LOG.info("Shutdown complete.");
+     synchronized(this) {
+@@ -1796,6 +1807,7 @@ public void shutdown() {
+       // Notify the main thread.
+       notifyAll();
+     }
++    tracer.close();
+   }
+   
+   
+@@ -2226,6 +2238,7 @@ public void runDatanodeDaemon() throws IOException {
+     if (localDataXceiverServer != null) {
+       localDataXceiverServer.start();
+     }
++    ipcServer.setTracer(tracer);
+     ipcServer.start();
+     startPlugins(conf);
+   }
+@@ -3203,18 +3216,18 @@ public long getLastDiskErrorCheck() {
+   @Override
+   public SpanReceiverInfo[] listSpanReceivers() throws IOException {
+     checkSuperuserPrivilege();
+-    return spanReceiverHost.listSpanReceivers();
++    return tracerConfigurationManager.listSpanReceivers();
+   }
+ 
+   @Override
+   public long addSpanReceiver(SpanReceiverInfo info) throws IOException {
+     checkSuperuserPrivilege();
+-    return spanReceiverHost.addSpanReceiver(info);
++    return tracerConfigurationManager.addSpanReceiver(info);
+   }
+ 
+   @Override
+   public void removeSpanReceiver(long id) throws IOException {
+     checkSuperuserPrivilege();
+-    spanReceiverHost.removeSpanReceiver(id);
++    tracerConfigurationManager.removeSpanReceiver(id);
+   }
+ }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataXceiver.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataXceiver.java
+index d2f9b4f..e9309b8 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataXceiver.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/datanode/DataXceiver.java
+@@ -124,7 +124,7 @@ public static DataXceiver create(Peer peer, DataNode dn,
+   
+   private DataXceiver(Peer peer, DataNode datanode,
+       DataXceiverServer dataXceiverServer) throws IOException {
+-
++    super(datanode.tracer);
+     this.peer = peer;
+     this.dnConf = datanode.getDnConf();
+     this.socketIn = peer.getInputStream();
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNode.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNode.java
+index 1b199f1..ce53a67 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNode.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNode.java
+@@ -66,12 +66,14 @@
+ import org.apache.hadoop.security.UserGroupInformation;
+ import org.apache.hadoop.security.authorize.RefreshAuthorizationPolicyProtocol;
+ import org.apache.hadoop.tools.GetUserMappingsProtocol;
+-import org.apache.hadoop.tracing.SpanReceiverHost;
+ import org.apache.hadoop.tracing.TraceAdminProtocol;
++import org.apache.hadoop.tracing.TraceUtils;
++import org.apache.hadoop.tracing.TracerConfigurationManager;
+ import org.apache.hadoop.util.ExitUtil.ExitException;
+ import org.apache.hadoop.util.JvmPauseMonitor;
+ import org.apache.hadoop.util.ServicePlugin;
+ import org.apache.hadoop.util.StringUtils;
++import org.apache.htrace.core.Tracer;
+ import org.apache.log4j.LogManager;
+ import org.slf4j.Logger;
+ import org.slf4j.LoggerFactory;
+@@ -304,6 +306,8 @@ public long getProtocolVersion(String protocol,
+   public static final HAState ACTIVE_STATE = new ActiveState();
+   public static final HAState STANDBY_STATE = new StandbyState();
+   
++  private static final String NAMENODE_HTRACE_PREFIX = "namenode.htrace.";
++
+   protected FSNamesystem namesystem; 
+   protected final Configuration conf;
+   protected final NamenodeRole role;
+@@ -328,7 +332,8 @@ public long getProtocolVersion(String protocol,
+ 
+   private JvmPauseMonitor pauseMonitor;
+   private ObjectName nameNodeStatusBeanName;
+-  SpanReceiverHost spanReceiverHost;
++  protected final Tracer tracer;
++  protected final TracerConfigurationManager tracerConfigurationManager;
+   /**
+    * The namenode address that clients will use to access this namenode
+    * or the name service. For HA configurations using logical URI, it
+@@ -638,9 +643,6 @@ protected void initialize(Configuration conf) throws IOException {
+       startHttpServer(conf);
+     }
+ 
+-    this.spanReceiverHost =
+-      SpanReceiverHost.get(conf, DFSConfigKeys.DFS_SERVER_HTRACE_PREFIX);
+-
+     loadNamesystem(conf);
+ 
+     rpcServer = createRpcServer(conf);
+@@ -795,8 +797,13 @@ public NameNode(Configuration conf) throws IOException {
+     this(conf, NamenodeRole.NAMENODE);
+   }
+ 
+-  protected NameNode(Configuration conf, NamenodeRole role) 
+-      throws IOException { 
++  protected NameNode(Configuration conf, NamenodeRole role)
++      throws IOException {
++    this.tracer = new Tracer.Builder("NameNode").
++        conf(TraceUtils.wrapHadoopConf(NAMENODE_HTRACE_PREFIX, conf)).
++        build();
++    this.tracerConfigurationManager =
++        new TracerConfigurationManager(NAMENODE_HTRACE_PREFIX, conf);
+     this.conf = conf;
+     this.role = role;
+     setClientNamenodeAddress(conf);
+@@ -878,10 +885,8 @@ public void stop() {
+         MBeans.unregister(nameNodeStatusBeanName);
+         nameNodeStatusBeanName = null;
+       }
+-      if (this.spanReceiverHost != null) {
+-        this.spanReceiverHost.closeReceivers();
+-      }
+     }
++    tracer.close();
+   }
+ 
+   synchronized boolean isStopRequested() {
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNodeRpcServer.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNodeRpcServer.java
+index 914acee..8bd47f5 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNodeRpcServer.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NameNodeRpcServer.java
+@@ -405,6 +405,10 @@ public NameNodeRpcServer(Configuration conf, NameNode nn)
+         FSLimitException.PathComponentTooLongException.class,
+         FSLimitException.MaxDirectoryItemsExceededException.class,
+         UnresolvedPathException.class);
++    clientRpcServer.setTracer(nn.tracer);
++    if (serviceRpcServer != null) {
++      clientRpcServer.setTracer(nn.tracer);
++    }
+  }
+ 
+   /** Allow access to the client RPC server for testing */
+@@ -1769,20 +1773,20 @@ public EventBatchList getEditsFromTxid(long txid) throws IOException {
+   public SpanReceiverInfo[] listSpanReceivers() throws IOException {
+     checkNNStartup();
+     namesystem.checkSuperuserPrivilege();
+-    return nn.spanReceiverHost.listSpanReceivers();
++    return nn.tracerConfigurationManager.listSpanReceivers();
+   }
+ 
+   @Override // TraceAdminProtocol
+   public long addSpanReceiver(SpanReceiverInfo info) throws IOException {
+     checkNNStartup();
+     namesystem.checkSuperuserPrivilege();
+-    return nn.spanReceiverHost.addSpanReceiver(info);
++    return nn.tracerConfigurationManager.addSpanReceiver(info);
+   }
+ 
+   @Override // TraceAdminProtocol
+   public void removeSpanReceiver(long id) throws IOException {
+     checkNNStartup();
+     namesystem.checkSuperuserPrivilege();
+-    nn.spanReceiverHost.removeSpanReceiver(id);
++    nn.tracerConfigurationManager.removeSpanReceiver(id);
+   }
+ }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NamenodeFsck.java b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NamenodeFsck.java
+index cbb51a9..e2b5760 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NamenodeFsck.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/java/org/apache/hadoop/hdfs/server/namenode/NamenodeFsck.java
+@@ -39,6 +39,7 @@
+ import org.apache.hadoop.conf.Configuration;
+ import org.apache.hadoop.fs.Path;
+ import org.apache.hadoop.fs.UnresolvedLinkException;
++import org.apache.hadoop.tracing.TraceUtils;
+ import org.apache.hadoop.hdfs.BlockReader;
+ import org.apache.hadoop.hdfs.BlockReaderFactory;
+ import org.apache.hadoop.hdfs.DFSClient;
+@@ -71,6 +72,7 @@
+ import org.apache.hadoop.security.UserGroupInformation;
+ import org.apache.hadoop.security.token.Token;
+ import org.apache.hadoop.util.Time;
++import org.apache.htrace.core.Tracer;
+ 
+ import com.google.common.annotations.VisibleForTesting;
+ 
+@@ -155,6 +157,8 @@
+ 
+   private final BlockPlacementPolicy bpPolicy;
+ 
++  private final Tracer tracer;
++
+   /**
+    * Filesystem checker.
+    * @param conf configuration (namenode config)
+@@ -180,6 +184,9 @@
+         networktopology,
+         namenode.getNamesystem().getBlockManager().getDatanodeManager()
+         .getHost2DatanodeMap());
++    this.tracer = new Tracer.Builder("NamenodeFsck").
++        conf(TraceUtils.wrapHadoopConf("namenode.htrace.", conf)).
++        build();
+     
+     for (Iterator<String> it = pmap.keySet().iterator(); it.hasNext();) {
+       String key = it.next();
+@@ -619,6 +626,7 @@ private void copyBlock(final DFSClient dfs, LocatedBlock lblock,
+             setCachingStrategy(CachingStrategy.newDropBehind()).
+             setClientCacheContext(dfs.getClientContext()).
+             setConfiguration(namenode.conf).
++            setTracer(tracer).
+             setRemotePeerFactory(new RemotePeerFactory() {
+               @Override
+               public Peer newConnectedPeer(InetSocketAddress addr,
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/main/resources/hdfs-default.xml b/hadoop-hdfs-project/hadoop-hdfs/src/main/resources/hdfs-default.xml
+index 75a92e7..af2e8b7 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/main/resources/hdfs-default.xml
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/main/resources/hdfs-default.xml
+@@ -2302,19 +2302,10 @@
+ </property>
+ 
+ <property>
+-  <name>dfs.htrace.spanreceiver.classes</name>
++  <name>dfs.client.htrace.sampler.classes</name>
+   <value></value>
+   <description>
+-    The class name of the HTrace SpanReceiver for the NameNode and DataNode.
+-  </description>
+-</property>
+-
+-<property>
+-  <name>dfs.client.htrace.spanreceiver.classes</name>
+-  <value></value>
+-  <description>
+-    The class name of the HTrace SpanReceiver for the HDFS client. You do not
+-    need to enable this if your client program has been modified to use HTrace.
++    The class names of the HTrace Samplers to use for the HDFS client.
+   </description>
+ </property>
+ 
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/BlockReaderTestUtil.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/BlockReaderTestUtil.java
+index 88b7f37..7f833b9 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/BlockReaderTestUtil.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/BlockReaderTestUtil.java
+@@ -30,6 +30,7 @@
+ 
+ import org.apache.commons.io.IOUtils;
+ import org.apache.hadoop.fs.FileSystem;
++import org.apache.hadoop.fs.FsTracer;
+ import org.apache.hadoop.fs.Path;
+ import org.apache.hadoop.hdfs.net.Peer;
+ import org.apache.hadoop.hdfs.net.TcpPeerServer;
+@@ -193,6 +194,7 @@ public static BlockReader getBlockReader(MiniDFSCluster cluster,
+       setCachingStrategy(CachingStrategy.newDefaultStrategy()).
+       setConfiguration(fs.getConf()).
+       setAllowShortCircuitLocalReads(true).
++      setTracer(FsTracer.get(fs.getConf())).
+       setRemotePeerFactory(new RemotePeerFactory() {
+         @Override
+         public Peer newConnectedPeer(InetSocketAddress addr,
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestBlockReaderLocal.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestBlockReaderLocal.java
+index 29c32f5..68d9a9f 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestBlockReaderLocal.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestBlockReaderLocal.java
+@@ -39,6 +39,7 @@
+ import org.apache.hadoop.hdfs.shortcircuit.ShortCircuitReplica;
+ import org.apache.hadoop.hdfs.shortcircuit.ShortCircuitShm;
+ import org.apache.hadoop.hdfs.shortcircuit.ShortCircuitShm.ShmId;
++import org.apache.hadoop.fs.FsTracer;
+ import org.apache.hadoop.io.IOUtils;
+ import org.apache.hadoop.net.unix.DomainSocket;
+ import org.apache.hadoop.net.unix.TemporarySocketDirectory;
+@@ -193,6 +194,7 @@ public void runBlockReaderLocalTest(BlockReaderLocalTest test,
+           setShortCircuitReplica(replica).
+           setCachingStrategy(new CachingStrategy(false, readahead)).
+           setVerifyChecksum(checksum).
++          setTracer(FsTracer.get(conf)).
+           build();
+       dataIn = null;
+       metaIn = null;
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDFSOutputStream.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDFSOutputStream.java
+index 678a3b8..fe6ec80 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDFSOutputStream.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDFSOutputStream.java
+@@ -22,6 +22,7 @@
+ 
+ import org.apache.hadoop.conf.Configuration;
+ import org.apache.hadoop.fs.FSDataOutputStream;
++import org.apache.hadoop.fs.FsTracer;
+ import org.apache.hadoop.fs.Path;
+ import org.junit.AfterClass;
+ import org.junit.Assert;
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDFSPacket.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDFSPacket.java
+index 74c4012..cb1cc1b 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDFSPacket.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestDFSPacket.java
+@@ -20,6 +20,7 @@
+ import org.junit.Assert;
+ import org.junit.Test;
+ import org.apache.hadoop.hdfs.DFSOutputStream.Packet;
++import org.apache.htrace.core.SpanId;
+ 
+ public class TestDFSPacket {
+   private static final int checksumSize = 4;
+@@ -29,24 +30,24 @@
+   public void testAddParentsGetParents() throws Exception {
+     Packet p = new Packet(null, maxChunksPerPacket,
+                                 0, 0, checksumSize);
+-    long parents[] = p.getTraceParents();
++    SpanId parents[] = p.getTraceParents();
+     Assert.assertEquals(0, parents.length);
+-    p.addTraceParent(123);
+-    p.addTraceParent(123);
++    p.addTraceParent(new SpanId(0, 123));
++    p.addTraceParent(new SpanId(0, 123));
+     parents = p.getTraceParents();
+     Assert.assertEquals(1, parents.length);
+-    Assert.assertEquals(123, parents[0]);
++    Assert.assertEquals(new SpanId(0, 123), parents[0]);
+     parents = p.getTraceParents(); // test calling 'get' again.
+     Assert.assertEquals(1, parents.length);
+-    Assert.assertEquals(123, parents[0]);
+-    p.addTraceParent(1);
+-    p.addTraceParent(456);
+-    p.addTraceParent(789);
++    Assert.assertEquals(new SpanId(0, 123), parents[0]);
++    p.addTraceParent(new SpanId(0, 1));
++    p.addTraceParent(new SpanId(0, 456));
++    p.addTraceParent(new SpanId(0, 789));
+     parents = p.getTraceParents();
+     Assert.assertEquals(4, parents.length);
+-    Assert.assertEquals(1, parents[0]);
+-    Assert.assertEquals(123, parents[1]);
+-    Assert.assertEquals(456, parents[2]);
+-    Assert.assertEquals(789, parents[3]);
++    Assert.assertEquals(new SpanId(0, 1), parents[0]);
++    Assert.assertEquals(new SpanId(0, 123), parents[1]);
++    Assert.assertEquals(new SpanId(0, 456), parents[2]);
++    Assert.assertEquals(new SpanId(0, 789), parents[3]);
+   }
+ }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestCacheDirectives.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestCacheDirectives.java
+index e569293..e2267c6 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestCacheDirectives.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestCacheDirectives.java
+@@ -50,6 +50,7 @@
+ import org.apache.hadoop.fs.FileStatus;
+ import org.apache.hadoop.fs.FileSystem;
+ import org.apache.hadoop.fs.FileSystemTestHelper;
++import org.apache.hadoop.fs.FsTracer;
+ import org.apache.hadoop.fs.InvalidRequestException;
+ import org.apache.hadoop.fs.Path;
+ import org.apache.hadoop.fs.RemoteIterator;
+@@ -89,7 +90,6 @@
+ import org.apache.log4j.Level;
+ import org.apache.log4j.LogManager;
+ import org.apache.log4j.Logger;
+-import org.apache.htrace.Sampler;
+ import org.junit.After;
+ import org.junit.Assert;
+ import org.junit.Before;
+@@ -910,7 +910,7 @@ public Boolean get() {
+ 
+     // Uncache and check each path in sequence
+     RemoteIterator<CacheDirectiveEntry> entries =
+-      new CacheDirectiveIterator(nnRpc, null, Sampler.NEVER);
++      new CacheDirectiveIterator(nnRpc, null, FsTracer.get(conf));
+     for (int i=0; i<numFiles; i++) {
+       CacheDirectiveEntry entry = entries.next();
+       nnRpc.removeCacheDirective(entry.getInfo().getId());
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestFsck.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestFsck.java
+index 3979e54..db9393f 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestFsck.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/server/namenode/TestFsck.java
+@@ -368,6 +368,7 @@ public void testFsckMove() throws Exception {
+ 
+       // Copy the non-corrupt blocks of corruptFileName to lost+found.
+       outStr = runFsck(conf, 1, false, "/", "-move");
++      FSImage.LOG.info("WATERMELON: outStr = " + outStr);
+       assertTrue(outStr.contains(NamenodeFsck.CORRUPT_STATUS));
+ 
+       // Make sure that we properly copied the block files from the DataNodes
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTraceAdmin.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTraceAdmin.java
+index acd0dbb..b08866b 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTraceAdmin.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTraceAdmin.java
+@@ -21,6 +21,7 @@
+ import org.apache.hadoop.hdfs.DFSConfigKeys;
+ import org.apache.hadoop.hdfs.MiniDFSCluster;
+ import org.apache.hadoop.net.unix.TemporarySocketDirectory;
++import org.apache.htrace.core.Tracer;
+ import org.junit.Assert;
+ import org.junit.Test;
+ 
+@@ -58,8 +59,8 @@ private String getHostPortForNN(MiniDFSCluster cluster) {
+   public void testCreateAndDestroySpanReceiver() throws Exception {
+     Configuration conf = new Configuration();
+     conf = new Configuration();
+-    conf.set(DFSConfigKeys.DFS_SERVER_HTRACE_PREFIX  +
+-        SpanReceiverHost.SPAN_RECEIVERS_CONF_SUFFIX, "");
++    conf.set(TraceUtils.DEFAULT_HADOOP_PREFIX +
++        Tracer.SPAN_RECEIVER_CLASSES_KEY, "");
+     MiniDFSCluster cluster =
+         new MiniDFSCluster.Builder(conf).numDataNodes(3).build();
+     cluster.waitActive();
+@@ -74,12 +75,12 @@ public void testCreateAndDestroySpanReceiver() throws Exception {
+       Assert.assertEquals("ret:0, Added trace span receiver 1 with " +
+           "configuration dfs.htrace.local-file-span-receiver.path = " + tracePath + NEWLINE,
+           runTraceCommand(trace, "-add", "-host", getHostPortForNN(cluster),
+-              "-class", "org.apache.htrace.impl.LocalFileSpanReceiver",
++              "-class", "org.apache.htrace.core.LocalFileSpanReceiver",
+               "-Cdfs.htrace.local-file-span-receiver.path=" + tracePath));
+       String list =
+           runTraceCommand(trace, "-list", "-host", getHostPortForNN(cluster));
+       Assert.assertTrue(list.startsWith("ret:0"));
+-      Assert.assertTrue(list.contains("1   org.apache.htrace.impl.LocalFileSpanReceiver"));
++      Assert.assertTrue(list.contains("1   org.apache.htrace.core.LocalFileSpanReceiver"));
+       Assert.assertEquals("ret:0, Removed trace span receiver 1" + NEWLINE,
+           runTraceCommand(trace, "-remove", "1", "-host",
+               getHostPortForNN(cluster)));
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracing.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracing.java
+index c3d2c73..076b9cc 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracing.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracing.java
+@@ -17,50 +17,73 @@
+  */
+ package org.apache.hadoop.tracing;
+ 
++import java.io.IOException;
++import java.nio.ByteBuffer;
++import java.util.List;
++import java.util.Map;
+ import org.apache.commons.lang.RandomStringUtils;
+ import org.apache.hadoop.conf.Configuration;
++import org.apache.hadoop.fs.CommonConfigurationKeys;
+ import org.apache.hadoop.fs.FSDataInputStream;
+ import org.apache.hadoop.fs.FSDataOutputStream;
++import org.apache.hadoop.fs.FileSystem;
++import org.apache.hadoop.fs.FsTracer;
+ import org.apache.hadoop.fs.Path;
+ import org.apache.hadoop.hdfs.DFSConfigKeys;
+ import org.apache.hadoop.hdfs.DistributedFileSystem;
+ import org.apache.hadoop.hdfs.MiniDFSCluster;
+-import org.apache.htrace.Sampler;
+-import org.apache.htrace.Span;
+-import org.apache.htrace.Trace;
+-import org.apache.htrace.TraceScope;
++import org.apache.htrace.core.Sampler;
++import org.apache.htrace.core.Span;
++import org.apache.htrace.core.TraceScope;
++import org.apache.htrace.core.Tracer;
+ import org.junit.After;
+ import org.junit.Assert;
+ import org.junit.Before;
+ import org.junit.BeforeClass;
+ import org.junit.Test;
+-import java.io.IOException;
+-import java.nio.ByteBuffer;
+-import java.util.List;
+-import java.util.Map;
+ 
+ public class TestTracing {
+ 
+-  private static Configuration conf;
+   private static MiniDFSCluster cluster;
+   private static DistributedFileSystem dfs;
+ 
++  private Tracer prevTracer;
++
++  private final static Configuration TRACING_CONF;
++  private final static Configuration NO_TRACING_CONF;
++
++  static {
++    NO_TRACING_CONF = new Configuration();
++    NO_TRACING_CONF.setLong("dfs.blocksize", 100 * 1024);
++
++    TRACING_CONF = new Configuration(NO_TRACING_CONF);
++    TRACING_CONF.set(CommonConfigurationKeys.FS_CLIENT_HTRACE_PREFIX +
++        Tracer.SPAN_RECEIVER_CLASSES_KEY,
++        SetSpanReceiver.class.getName());
++    TRACING_CONF.set(CommonConfigurationKeys.FS_CLIENT_HTRACE_PREFIX +
++        Tracer.SAMPLER_CLASSES_KEY, "AlwaysSampler");
++  }
++
+   @Test
+   public void testTracing() throws Exception {
+     // write and read without tracing started
+     String fileName = "testTracingDisabled.dat";
+     writeTestFile(fileName);
+-    Assert.assertTrue(SetSpanReceiver.size() == 0);
++    Assert.assertEquals(0, SetSpanReceiver.size());
+     readTestFile(fileName);
+-    Assert.assertTrue(SetSpanReceiver.size() == 0);
++    Assert.assertEquals(0, SetSpanReceiver.size());
++
++    writeTestFile("testReadTraceHooks.dat");
+ 
+-    writeWithTracing();
+-    readWithTracing();
++    FsTracer.clear();
++    Tracer tracer = FsTracer.get(TRACING_CONF);
++    writeWithTracing(tracer);
++    readWithTracing(tracer);
+   }
+ 
+-  public void writeWithTracing() throws Exception {
++  private void writeWithTracing(Tracer tracer) throws Exception {
+     long startTime = System.currentTimeMillis();
+-    TraceScope ts = Trace.startSpan("testWriteTraceHooks", Sampler.ALWAYS);
++    TraceScope ts = tracer.newScope("testWriteTraceHooks");
+     writeTestFile("testWriteTraceHooks.dat");
+     long endTime = System.currentTimeMillis();
+     ts.close();
+@@ -107,7 +130,8 @@ public void writeWithTracing() throws Exception {
+     };
+     for (String desc : spansInTopTrace) {
+       for (Span span : map.get(desc)) {
+-        Assert.assertEquals(ts.getSpan().getTraceId(), span.getTraceId());
++        Assert.assertEquals(ts.getSpan().getSpanId().getHigh(),
++                            span.getSpanId().getHigh());
+       }
+     }
+ 
+@@ -120,12 +144,10 @@ public void writeWithTracing() throws Exception {
+     SetSpanReceiver.clear();
+   }
+ 
+-  public void readWithTracing() throws Exception {
+-    String fileName = "testReadTraceHooks.dat";
+-    writeTestFile(fileName);
++  private void readWithTracing(Tracer tracer) throws Exception {
+     long startTime = System.currentTimeMillis();
+-    TraceScope ts = Trace.startSpan("testReadTraceHooks", Sampler.ALWAYS);
+-    readTestFile(fileName);
++    TraceScope ts = tracer.newScope("testReadTraceHooks");
++    readTestFile("testReadTraceHooks.dat");
+     ts.close();
+     long endTime = System.currentTimeMillis();
+ 
+@@ -150,7 +172,11 @@ public void readWithTracing() throws Exception {
+     // There should only be one trace id as it should all be homed in the
+     // top trace.
+     for (Span span : SetSpanReceiver.getSpans()) {
+-      Assert.assertEquals(ts.getSpan().getTraceId(), span.getTraceId());
++      System.out.println(span.toJson());
++    }
++    for (Span span : SetSpanReceiver.getSpans()) {
++      Assert.assertEquals(ts.getSpan().getSpanId().getHigh(),
++                          span.getSpanId().getHigh());
+     }
+     SetSpanReceiver.clear();
+   }
+@@ -185,18 +211,9 @@ private void readTestFile(String testFileName) throws Exception {
+     }
+   }
+ 
+-  @BeforeClass
+-  public static void setup() throws IOException {
+-    conf = new Configuration();
+-    conf.setLong("dfs.blocksize", 100 * 1024);
+-    conf.set(DFSConfigKeys.DFS_CLIENT_HTRACE_PREFIX +
+-        SpanReceiverHost.SPAN_RECEIVERS_CONF_SUFFIX,
+-        SetSpanReceiver.class.getName());
+-  }
+-
+   @Before
+   public void startCluster() throws IOException {
+-    cluster = new MiniDFSCluster.Builder(conf)
++    cluster = new MiniDFSCluster.Builder(NO_TRACING_CONF)
+         .numDataNodes(3)
+         .build();
+     cluster.waitActive();
+@@ -207,6 +224,6 @@ public void startCluster() throws IOException {
+   @After
+   public void shutDown() throws IOException {
+     cluster.shutdown();
++    FsTracer.clear();
+   }
+-
+ }
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracingShortCircuitLocalRead.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracingShortCircuitLocalRead.java
+index 1498886..dfd29ce 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracingShortCircuitLocalRead.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/tracing/TestTracingShortCircuitLocalRead.java
+@@ -21,6 +21,8 @@
+ 
+ import org.apache.hadoop.conf.Configuration;
+ import org.apache.hadoop.fs.FSDataInputStream;
++import org.apache.hadoop.fs.FileSystem;
++import org.apache.hadoop.fs.FsTracer;
+ import org.apache.hadoop.fs.Path;
+ import org.apache.hadoop.hdfs.DFSConfigKeys;
+ import org.apache.hadoop.hdfs.DFSTestUtil;
+@@ -30,10 +32,8 @@
+ import org.apache.hadoop.net.unix.DomainSocket;
+ import org.apache.hadoop.net.unix.TemporarySocketDirectory;
+ import org.apache.hadoop.util.NativeCodeLoader;
+-import org.apache.htrace.Sampler;
+-import org.apache.htrace.Span;
+-import org.apache.htrace.Trace;
+-import org.apache.htrace.TraceScope;
++import org.apache.htrace.core.TraceScope;
++import org.apache.htrace.core.Tracer;
+ import org.junit.AfterClass;
+ import org.junit.Assert;
+ import org.junit.BeforeClass;
+@@ -44,7 +44,6 @@
+   private static Configuration conf;
+   private static MiniDFSCluster cluster;
+   private static DistributedFileSystem dfs;
+-  private static SpanReceiverHost spanReceiverHost;
+   private static TemporarySocketDirectory sockDir;
+   static final Path TEST_PATH = new Path("testShortCircuitTraceHooks");
+   static final int TEST_LENGTH = 1234;
+@@ -64,9 +63,12 @@ public static void shutdown() throws IOException {
+   public void testShortCircuitTraceHooks() throws IOException {
+     assumeTrue(NativeCodeLoader.isNativeCodeLoaded() && !Path.WINDOWS);
+     conf = new Configuration();
+-    conf.set(DFSConfigKeys.DFS_CLIENT_HTRACE_PREFIX +
+-        SpanReceiverHost.SPAN_RECEIVERS_CONF_SUFFIX,
++    conf.set(TraceUtils.DEFAULT_HADOOP_PREFIX +
++            Tracer.SPAN_RECEIVER_CLASSES_KEY,
+         SetSpanReceiver.class.getName());
++    conf.set(TraceUtils.DEFAULT_HADOOP_PREFIX +
++            Tracer.SAMPLER_CLASSES_KEY,
++        "AlwaysSampler");
+     conf.setLong("dfs.blocksize", 100 * 1024);
+     conf.setBoolean(DFSConfigKeys.DFS_CLIENT_READ_SHORTCIRCUIT_KEY, true);
+     conf.setBoolean(DFSConfigKeys.DFS_CLIENT_READ_SHORTCIRCUIT_SKIP_CHECKSUM_KEY, false);
+@@ -81,7 +83,8 @@ public void testShortCircuitTraceHooks() throws IOException {
+     try {
+       DFSTestUtil.createFile(dfs, TEST_PATH, TEST_LENGTH, (short)1, 5678L);
+ 
+-      TraceScope ts = Trace.startSpan("testShortCircuitTraceHooks", Sampler.ALWAYS);
++      TraceScope ts = FsTracer.get(conf).
++          newScope("testShortCircuitTraceHooks");
+       FSDataInputStream stream = dfs.open(TEST_PATH);
+       byte buf[] = new byte[TEST_LENGTH];
+       IOUtils.readFully(stream, buf, 0, TEST_LENGTH);
+diff --git a/hadoop-project/pom.xml b/hadoop-project/pom.xml
+index 461c866..9a1ada1 100644
+--- a/hadoop-project/pom.xml
++++ b/hadoop-project/pom.xml
+@@ -804,8 +804,8 @@
+       </dependency>
+       <dependency>
+         <groupId>org.apache.htrace</groupId>
+-        <artifactId>htrace-core</artifactId>
+-        <version>3.2.0-incubating</version>
++        <artifactId>htrace-core4</artifactId>
++        <version>4.0.1-incubating</version>
+       </dependency>
+       <dependency>
+         <groupId>org.jdom</groupId>
+-- 
+1.7.9.5
+

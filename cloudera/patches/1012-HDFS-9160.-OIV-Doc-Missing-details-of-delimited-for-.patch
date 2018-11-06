@@ -1,0 +1,32 @@
+From e4f9b7b67db6e7a961e2efddfac5e5a757cbdbf0 Mon Sep 17 00:00:00 2001
+From: Wei-Chiu Chuang <weichiu@cloudera.com>
+Date: Tue, 5 Jan 2016 11:47:04 -0800
+Subject: [PATCH 1012/1023] HDFS-9160. [OIV-Doc] : Missing details of
+ 'delimited' for processor options (Contributed by
+ nijel)
+
+(cherry picked from commit caa711b660ce73c0f6bf97e3499d157a3a2daaea)
+(cherry picked from commit b01eaa3b4679f9c66687073f04cbf9d80c2c08cf)
+
+Change-Id: Iba0272b944b87a07d3d877c747ca9caac4a937fa
+(cherry picked from commit 30be8f3b1d9a352ac54cc966e5256dc166b9cf0c)
+---
+ .../src/site/apt/HdfsImageViewer.apt.vm            |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/site/apt/HdfsImageViewer.apt.vm b/hadoop-hdfs-project/hadoop-hdfs/src/site/apt/HdfsImageViewer.apt.vm
+index 3b84226..e837638 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/site/apt/HdfsImageViewer.apt.vm
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/site/apt/HdfsImageViewer.apt.vm
+@@ -164,7 +164,7 @@ Offline Image Viewer Guide
+ *-----------------------:-----------------------------------+
+ | <<<-p>>>\|<<<--processor>>> <processor> | Specify the image processor to
+ |                       | apply against the image file. Currently valid options
+-|                       | are Web (default), XML and FileDistribution.
++|                       | are Web (default), XML, Delimited and FileDistribution.
+ *-----------------------:-----------------------------------+
+ | <<<-addr>>> <address> | Specify the address(host:port) to listen.
+ |                       | (localhost:5978 by default). This option is used with
+-- 
+1.7.9.5
+

@@ -1,0 +1,44 @@
+From b18ff04be0b47078d6c38e121ba287af20ad4db7 Mon Sep 17 00:00:00 2001
+From: Andrew Wang <wang@apache.org>
+Date: Tue, 30 Jun 2015 15:04:18 -0700
+Subject: [PATCH 0618/1023] HADOOP-12158. Improve error message in
+ TestCryptoStreamsWithOpensslAesCtrCryptoCodec
+ when OpenSSL is not installed.
+
+(cherry picked from commit 9ee7b6e6c4ab6bee6304fa7904993c7cbd9a6cd2)
+---
+ ...tCryptoStreamsWithOpensslAesCtrCryptoCodec.java |    9 +++++++--
+ 1 file changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/crypto/TestCryptoStreamsWithOpensslAesCtrCryptoCodec.java b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/crypto/TestCryptoStreamsWithOpensslAesCtrCryptoCodec.java
+index 4f90a0c..684ec09 100644
+--- a/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/crypto/TestCryptoStreamsWithOpensslAesCtrCryptoCodec.java
++++ b/hadoop-common-project/hadoop-common/src/test/java/org/apache/hadoop/crypto/TestCryptoStreamsWithOpensslAesCtrCryptoCodec.java
+@@ -19,9 +19,11 @@
+ 
+ import org.apache.hadoop.conf.Configuration;
+ import org.apache.hadoop.fs.CommonConfigurationKeysPublic;
+-import org.junit.Assert;
+ import org.junit.BeforeClass;
+ 
++import static org.junit.Assert.assertEquals;
++import static org.junit.Assert.assertNotNull;
++
+ public class TestCryptoStreamsWithOpensslAesCtrCryptoCodec 
+     extends TestCryptoStreams {
+   
+@@ -32,7 +34,10 @@ public static void init() throws Exception {
+         CommonConfigurationKeysPublic.HADOOP_SECURITY_CRYPTO_CODEC_CLASSES_AES_CTR_NOPADDING_KEY,
+         OpensslAesCtrCryptoCodec.class.getName());
+     codec = CryptoCodec.getInstance(conf);
+-    Assert.assertEquals(OpensslAesCtrCryptoCodec.class.getCanonicalName(), 
++    assertNotNull("Unable to instantiate codec " +
++        OpensslAesCtrCryptoCodec.class.getName() + ", is the required "
++        + "version of OpenSSL installed?", codec);
++    assertEquals(OpensslAesCtrCryptoCodec.class.getCanonicalName(),
+         codec.getClass().getCanonicalName());
+   }
+ }
+-- 
+1.7.9.5
+

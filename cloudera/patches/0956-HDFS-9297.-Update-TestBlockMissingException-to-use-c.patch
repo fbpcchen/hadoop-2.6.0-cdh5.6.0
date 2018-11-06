@@ -1,0 +1,49 @@
+From 998e0a67e534153854f1e663e408abfce2d7bdc2 Mon Sep 17 00:00:00 2001
+From: Lei Xu <lei@apache.org>
+Date: Fri, 23 Oct 2015 17:42:23 -0700
+Subject: [PATCH 0956/1023] HDFS-9297. Update TestBlockMissingException to use
+ corruptBlockOnDataNodesByDeletingBlockFile().
+ (Tony Wu via lei)
+
+(cherry picked from commit 5679e46b7f867f8f7f8195c86c37e3db7b23d7d7)
+(cherry picked from commit 509185c2242d6ef7af292e123d39ba3327836a72)
+
+Change-Id: I093360bf2107f8c0bc54e94a0aea26be0f42a77c
+---
+ .../hadoop/hdfs/TestBlockMissingException.java     |   15 ++-------------
+ 1 file changed, 2 insertions(+), 13 deletions(-)
+
+diff --git a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestBlockMissingException.java b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestBlockMissingException.java
+index 7510cfb..e784eb5 100644
+--- a/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestBlockMissingException.java
++++ b/hadoop-hdfs-project/hadoop-hdfs/src/test/java/org/apache/hadoop/hdfs/TestBlockMissingException.java
+@@ -66,7 +66,8 @@ public void testBlockMissingException() throws Exception {
+           0, numBlocks * blockSize);
+       // remove block of file
+       LOG.info("Remove first block of file");
+-      corruptBlock(file1, locations.get(0).getBlock());
++      dfs.corruptBlockOnDataNodesByDeletingBlockFile(
++          locations.get(0).getBlock());
+ 
+       // validate that the system throws BlockMissingException
+       validateFile(fileSys, file1);
+@@ -117,16 +118,4 @@ private void validateFile(FileSystem fileSys, Path name)
+     stm.close();
+     assertTrue("Expected BlockMissingException ", gotException);
+   }
+-
+-  //
+-  // Corrupt specified block of file
+-  //
+-  void corruptBlock(Path file, ExtendedBlock blk) {
+-    // Now deliberately remove/truncate data blocks from the file.
+-    File[] blockFiles = dfs.getAllBlockFiles(blk);
+-    for (File f : blockFiles) {
+-      f.delete();
+-      LOG.info("Deleted block " + f);
+-    }
+-  }
+ }
+-- 
+1.7.9.5
+

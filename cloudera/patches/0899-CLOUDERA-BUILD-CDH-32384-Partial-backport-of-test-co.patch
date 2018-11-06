@@ -1,0 +1,589 @@
+From 1b1ed79a0b6fc87134fb7b30bbb98183a6043c34 Mon Sep 17 00:00:00 2001
+From: Anubhav Dhoot <adhoot@cloudera.com>
+Date: Fri, 2 Oct 2015 10:38:55 -0700
+Subject: [PATCH 0899/1023] CLOUDERA-BUILD CDH-32384 Partial backport of test
+ code changes in multipte YARN patches to avoid
+ failures because of missing mock data
+
+Change-Id: I68d5a1b2c30a19fc762b6c2683d04df9d0e2a9d5
+(cherry picked from commit 6cf4a0aee849551413a741270ab58d1413fd27e0)
+---
+ .../hadoop-yarn/dev-support/findbugs-exclude.xml   |    1 +
+ .../TestAMRMRPCNodeUpdates.java                    |    1 +
+ .../TestCapacitySchedulerPlanFollower.java         |    1 +
+ .../scheduler/capacity/TestApplicationLimits.java  |   87 ++++++++++++--------
+ .../scheduler/capacity/TestLeafQueue.java          |   42 ++--------
+ .../scheduler/capacity/TestReservations.java       |   45 ++++++----
+ .../webapp/TestRMWebServicesCapacitySched.java     |   12 ---
+ 7 files changed, 90 insertions(+), 99 deletions(-)
+
+diff --git a/hadoop-yarn-project/hadoop-yarn/dev-support/findbugs-exclude.xml b/hadoop-yarn-project/hadoop-yarn/dev-support/findbugs-exclude.xml
+index c7be862..f504e22 100644
+--- a/hadoop-yarn-project/hadoop-yarn/dev-support/findbugs-exclude.xml
++++ b/hadoop-yarn-project/hadoop-yarn/dev-support/findbugs-exclude.xml
+@@ -173,6 +173,7 @@
+       <Field name="userLimit" />
+       <Field name="userLimitFactor" />
+       <Field name="maxAMResourcePerQueuePercent" />
++      <Field name="lastClusterResource" />
+     </Or>
+     <Bug pattern="IS2_INCONSISTENT_SYNC" />
+   </Match>
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/applicationsmanager/TestAMRMRPCNodeUpdates.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/applicationsmanager/TestAMRMRPCNodeUpdates.java
+index e93d351..e6b912e 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/applicationsmanager/TestAMRMRPCNodeUpdates.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/applicationsmanager/TestAMRMRPCNodeUpdates.java
+@@ -23,6 +23,7 @@
+ 
+ import org.junit.Assert;
+ 
++import org.apache.hadoop.conf.Configuration;
+ import org.apache.hadoop.security.UserGroupInformation;
+ import org.apache.hadoop.security.token.Token;
+ import org.apache.hadoop.yarn.api.protocolrecords.AllocateRequest;
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/reservation/TestCapacitySchedulerPlanFollower.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/reservation/TestCapacitySchedulerPlanFollower.java
+index 4eedd42..f2840b0 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/reservation/TestCapacitySchedulerPlanFollower.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/reservation/TestCapacitySchedulerPlanFollower.java
+@@ -95,6 +95,7 @@ public void setUp() throws Exception {
+         .thenReturn(null);
+     Mockito.doReturn(rmApp).when(spyApps).get((ApplicationId) Matchers.any());
+     when(spyRMContext.getRMApps()).thenReturn(spyApps);
++    when(spyRMContext.getScheduler()).thenReturn(scheduler);
+ 
+     CapacitySchedulerConfiguration csConf =
+         new CapacitySchedulerConfiguration();
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/capacity/TestApplicationLimits.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/capacity/TestApplicationLimits.java
+index 0cd74d0..c586573 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/capacity/TestApplicationLimits.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/capacity/TestApplicationLimits.java
+@@ -28,16 +28,21 @@
+ import static org.mockito.Mockito.times;
+ import static org.mockito.Mockito.verify;
+ import static org.mockito.Mockito.when;
++import org.mockito.Matchers;
++import org.mockito.Mockito;
+ 
+ import java.io.IOException;
+ import java.util.ArrayList;
+ import java.util.HashMap;
+ import java.util.List;
+ import java.util.Map;
++import java.util.concurrent.ConcurrentHashMap;
++import java.util.concurrent.ConcurrentMap;
+ 
+ import org.apache.commons.logging.Log;
+ import org.apache.commons.logging.LogFactory;
+ import org.apache.hadoop.security.UserGroupInformation;
++import org.apache.hadoop.yarn.api.records.ApplicationId;
+ import org.apache.hadoop.yarn.api.records.ApplicationAttemptId;
+ import org.apache.hadoop.yarn.api.records.Priority;
+ import org.apache.hadoop.yarn.api.records.QueueACL;
+@@ -47,6 +52,7 @@
+ import org.apache.hadoop.yarn.factories.RecordFactory;
+ import org.apache.hadoop.yarn.factory.providers.RecordFactoryProvider;
+ import org.apache.hadoop.yarn.server.resourcemanager.RMContext;
++import org.apache.hadoop.yarn.server.resourcemanager.rmapp.RMApp;
+ import org.apache.hadoop.yarn.server.resourcemanager.scheduler.common.fica.FiCaSchedulerApp;
+ import org.apache.hadoop.yarn.server.resourcemanager.scheduler.common.fica.FiCaSchedulerNode;
+ import org.apache.hadoop.yarn.server.resourcemanager.security.RMContainerTokenSecretManager;
+@@ -135,7 +141,7 @@ private void setupQueueConfiguration(CapacitySchedulerConfiguration conf) {
+     
+     final String Q_B = CapacitySchedulerConfiguration.ROOT + "." + B;
+     conf.setCapacity(Q_B, 90);
+-    
++
+     LOG.info("Setup top-level queues a and b");
+   }
+ 
+@@ -183,27 +189,27 @@ public void testLimitsComputation() throws Exception {
+     LeafQueue queue = (LeafQueue)queues.get(A);
+     
+     LOG.info("Queue 'A' -" +
+-    		" maxActiveApplications=" + queue.getMaximumActiveApplications() + 
+-    		" maxActiveApplicationsPerUser=" + 
++		" maxActiveApplications=" + queue.getMaximumActiveApplications() +
++		" maxActiveApplicationsPerUser=" +
+     		queue.getMaximumActiveApplicationsPerUser());
+-    int expectedMaxActiveApps = 
+-        Math.max(1, 
+-            (int)Math.ceil(((float)clusterResource.getMemory() / (1*GB)) * 
++    int expectedMaxActiveApps =
++        Math.max(1,
++            (int)Math.ceil(((float)clusterResource.getMemory() / (1*GB)) *
+                    csConf.
+                      getMaximumApplicationMasterResourcePerQueuePercent(
+                                                         queue.getQueuePath()) *
+                    queue.getAbsoluteMaximumCapacity()));
+-    assertEquals(expectedMaxActiveApps, 
++    assertEquals(expectedMaxActiveApps,
+                  queue.getMaximumActiveApplications());
+-    int expectedMaxActiveAppsUsingAbsCap = 
+-            Math.max(1, 
+-                (int)Math.ceil(((float)clusterResource.getMemory() / (1*GB)) * 
++    int expectedMaxActiveAppsUsingAbsCap =
++            Math.max(1,
++                (int)Math.ceil(((float)clusterResource.getMemory() / (1*GB)) *
+                        csConf.getMaximumApplicationMasterResourcePercent() *
+                        queue.getAbsoluteCapacity()));
+     assertEquals(
+         (int)Math.ceil(
+-        		expectedMaxActiveAppsUsingAbsCap * (queue.getUserLimit() / 100.0f) * 
+-            queue.getUserLimitFactor()), 
++			expectedMaxActiveAppsUsingAbsCap * (queue.getUserLimit() / 100.0f) *
++            queue.getUserLimitFactor()),
+         queue.getMaximumActiveApplicationsPerUser());
+     assertEquals(
+         (int)(clusterResource.getMemory() * queue.getAbsoluteCapacity()),
+@@ -213,23 +219,23 @@ public void testLimitsComputation() throws Exception {
+     // Add some nodes to the cluster & test new limits
+     clusterResource = Resources.createResource(120 * 16 * GB);
+     root.updateClusterResource(clusterResource);
+-    expectedMaxActiveApps = 
+-        Math.max(1, 
+-            (int)Math.ceil(((float)clusterResource.getMemory() / (1*GB)) * 
++    expectedMaxActiveApps =
++        Math.max(1,
++            (int)Math.ceil(((float)clusterResource.getMemory() / (1*GB)) *
+                    csConf.
+                      getMaximumApplicationMasterResourcePerQueuePercent(
+                                                         queue.getQueuePath()) *
+                    queue.getAbsoluteMaximumCapacity()));
+-    assertEquals(expectedMaxActiveApps, 
++    assertEquals(expectedMaxActiveApps,
+                  queue.getMaximumActiveApplications());
+-    expectedMaxActiveAppsUsingAbsCap = 
+-            Math.max(1, 
+-                (int)Math.ceil(((float)clusterResource.getMemory() / (1*GB)) * 
++    expectedMaxActiveAppsUsingAbsCap =
++            Math.max(1,
++                (int)Math.ceil(((float)clusterResource.getMemory() / (1*GB)) *
+                        csConf.getMaximumApplicationMasterResourcePercent() *
+                        queue.getAbsoluteCapacity()));
+     assertEquals(
+-        (int)Math.ceil(expectedMaxActiveAppsUsingAbsCap * 
+-            (queue.getUserLimit() / 100.0f) * queue.getUserLimitFactor()), 
++        (int)Math.ceil(expectedMaxActiveAppsUsingAbsCap *
++            (queue.getUserLimit() / 100.0f) * queue.getUserLimitFactor()),
+         queue.getMaximumActiveApplicationsPerUser());
+     assertEquals(
+         (int)(clusterResource.getMemory() * queue.getAbsoluteCapacity()),
+@@ -271,9 +277,9 @@ public void testLimitsComputation() throws Exception {
+     clusterResource = Resources.createResource(100 * 16 * GB);
+ 
+     queue = (LeafQueue)queues.get(A);
+-    expectedMaxActiveApps = 
+-        Math.max(1, 
+-            (int)Math.ceil(((float)clusterResource.getMemory() / (1*GB)) * 
++    expectedMaxActiveApps =
++        Math.max(1,
++            (int)Math.ceil(((float)clusterResource.getMemory() / (1*GB)) *
+                    csConf.
+                      getMaximumApplicationMasterResourcePerQueuePercent(
+                                                         queue.getQueuePath()) *
+@@ -281,7 +287,7 @@ public void testLimitsComputation() throws Exception {
+ 
+     assertEquals((long) 0.5, 
+         (long) csConf.getMaximumApplicationMasterResourcePerQueuePercent(queue.getQueuePath()));
+-    assertEquals(expectedMaxActiveApps, 
++    assertEquals(expectedMaxActiveApps,
+         queue.getMaximumActiveApplications());
+ 
+     // Change the per-queue max applications.
+@@ -351,7 +357,7 @@ public void testActiveApplicationLimits() throws Exception {
+     
+     // Change queue limit to be smaller so 2 users can fill it up
+     doReturn(3).when(queue).getMaximumActiveApplications();
+-    
++
+     // Submit first app for user_1
+     FiCaSchedulerApp app_4 = getMockApplication(APPLICATION_ID++, user_1);
+     queue.submitApplicationAttempt(app_4, user_1);
+@@ -506,6 +512,17 @@ public void testHeadroom() throws Exception {
+     RecordFactory recordFactory = 
+         RecordFactoryProvider.getRecordFactory(null);
+     RMContext rmContext = TestUtils.getMockRMContext();
++    RMContext spyRMContext = spy(rmContext);
++
++    ConcurrentMap<ApplicationId, RMApp> spyApps =
++        spy(new ConcurrentHashMap<ApplicationId, RMApp>());
++    RMApp rmApp = mock(RMApp.class);
++    ResourceRequest amResourceRequest = mock(ResourceRequest.class);
++    Resource amResource = Resources.createResource(0, 0);
++    when(amResourceRequest.getCapability()).thenReturn(amResource);
++    Mockito.doReturn(rmApp).when(spyApps).get((ApplicationId)Matchers.any());
++    when(spyRMContext.getRMApps()).thenReturn(spyApps);
++
+ 
+     Priority priority_1 = TestUtils.createMockPriority(1);
+ 
+@@ -513,9 +530,9 @@ public void testHeadroom() throws Exception {
+     // and check headroom
+     final ApplicationAttemptId appAttemptId_0_0 = 
+         TestUtils.getMockApplicationAttemptId(0, 0); 
+-    FiCaSchedulerApp app_0_0 = 
+-        spy(new FiCaSchedulerApp(appAttemptId_0_0, user_0, queue, 
+-            queue.getActiveUsersManager(), rmContext));
++    FiCaSchedulerApp app_0_0 = new FiCaSchedulerApp(
++      appAttemptId_0_0, user_0, queue,
++            queue.getActiveUsersManager(), spyRMContext);
+     queue.submitApplicationAttempt(app_0_0, user_0);
+ 
+     List<ResourceRequest> app_0_0_requests = new ArrayList<ResourceRequest>();
+@@ -532,9 +549,9 @@ public void testHeadroom() throws Exception {
+     // Submit second application from user_0, check headroom
+     final ApplicationAttemptId appAttemptId_0_1 = 
+         TestUtils.getMockApplicationAttemptId(1, 0); 
+-    FiCaSchedulerApp app_0_1 = 
+-        spy(new FiCaSchedulerApp(appAttemptId_0_1, user_0, queue, 
+-            queue.getActiveUsersManager(), rmContext));
++    FiCaSchedulerApp app_0_1 = new FiCaSchedulerApp(
++      appAttemptId_0_1, user_0, queue,
++            queue.getActiveUsersManager(), spyRMContext);
+     queue.submitApplicationAttempt(app_0_1, user_0);
+     
+     List<ResourceRequest> app_0_1_requests = new ArrayList<ResourceRequest>();
+@@ -551,9 +568,9 @@ public void testHeadroom() throws Exception {
+     // Submit first application from user_1, check  for new headroom
+     final ApplicationAttemptId appAttemptId_1_0 = 
+         TestUtils.getMockApplicationAttemptId(2, 0); 
+-    FiCaSchedulerApp app_1_0 = 
+-        spy(new FiCaSchedulerApp(appAttemptId_1_0, user_1, queue, 
+-            queue.getActiveUsersManager(), rmContext));
++    FiCaSchedulerApp app_1_0 = new FiCaSchedulerApp(
++      appAttemptId_1_0, user_1, queue,
++            queue.getActiveUsersManager(), spyRMContext);
+     queue.submitApplicationAttempt(app_1_0, user_1);
+ 
+     List<ResourceRequest> app_1_0_requests = new ArrayList<ResourceRequest>();
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/capacity/TestLeafQueue.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/capacity/TestLeafQueue.java
+index 642363e..3731bb0 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/capacity/TestLeafQueue.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/capacity/TestLeafQueue.java
+@@ -259,30 +259,6 @@ public Container answer(InvocationOnMock invocation)
+     
+     return queue;
+   }
+-  
+-  @Test
+-  public void testInitializeQueue() throws Exception {
+-	  final float epsilon = 1e-5f;
+-	  //can add more sturdy test with 3-layer queues 
+-	  //once MAPREDUCE:3410 is resolved
+-	  LeafQueue a = stubLeafQueue((LeafQueue)queues.get(A));
+-	  assertEquals(0.085, a.getCapacity(), epsilon);
+-	  assertEquals(0.085, a.getAbsoluteCapacity(), epsilon);
+-	  assertEquals(0.2, a.getMaximumCapacity(), epsilon);
+-	  assertEquals(0.2, a.getAbsoluteMaximumCapacity(), epsilon);
+-	  
+-	  LeafQueue b = stubLeafQueue((LeafQueue)queues.get(B));
+-	  assertEquals(0.80, b.getCapacity(), epsilon);
+-	  assertEquals(0.80, b.getAbsoluteCapacity(), epsilon);
+-	  assertEquals(0.99, b.getMaximumCapacity(), epsilon);
+-	  assertEquals(0.99, b.getAbsoluteMaximumCapacity(), epsilon);
+-
+-	  ParentQueue c = (ParentQueue)queues.get(C);
+-	  assertEquals(0.015, c.getCapacity(), epsilon);
+-	  assertEquals(0.015, c.getAbsoluteCapacity(), epsilon);
+-	  assertEquals(0.1, c.getMaximumCapacity(), epsilon);
+-	  assertEquals(0.1, c.getAbsoluteMaximumCapacity(), epsilon);
+-  }
+  
+   @Test
+   public void testSingleQueueOneUserMetrics() throws Exception {
+@@ -676,7 +652,7 @@ public void testComputeUserLimitAndSetHeadroom(){
+               TestUtils.getMockApplicationAttemptId(0, 0);
+     FiCaSchedulerApp app_0 =
+         new FiCaSchedulerApp(appAttemptId_0, user_0, qb,
+-            qb.getActiveUsersManager(), rmContext);
++            qb.getActiveUsersManager(), spyRMContext);
+     qb.submitApplicationAttempt(app_0, user_0);
+     Priority u0Priority = TestUtils.createMockPriority(1);
+     app_0.updateResourceRequests(Collections.singletonList(
+@@ -699,7 +675,7 @@ public void testComputeUserLimitAndSetHeadroom(){
+         TestUtils.getMockApplicationAttemptId(2, 0);
+     FiCaSchedulerApp app_2 =
+         new FiCaSchedulerApp(appAttemptId_2, user_1, qb,
+-            qb.getActiveUsersManager(), rmContext);
++            qb.getActiveUsersManager(), spyRMContext);
+     Priority u1Priority = TestUtils.createMockPriority(2);
+     app_2.updateResourceRequests(Collections.singletonList(
+         TestUtils.createResourceRequest(ResourceRequest.ANY, 4*GB, 1, true,
+@@ -733,12 +709,12 @@ public void testComputeUserLimitAndSetHeadroom(){
+         TestUtils.getMockApplicationAttemptId(1, 0);
+     FiCaSchedulerApp app_1 =
+         new FiCaSchedulerApp(appAttemptId_1, user_0, qb,
+-            qb.getActiveUsersManager(), rmContext);
++            qb.getActiveUsersManager(), spyRMContext);
+     final ApplicationAttemptId appAttemptId_3 =
+         TestUtils.getMockApplicationAttemptId(3, 0);
+     FiCaSchedulerApp app_3 =
+         new FiCaSchedulerApp(appAttemptId_3, user_1, qb,
+-            qb.getActiveUsersManager(), rmContext);
++            qb.getActiveUsersManager(), spyRMContext);
+     app_1.updateResourceRequests(Collections.singletonList(
+         TestUtils.createResourceRequest(ResourceRequest.ANY, 2*GB, 1, true,
+             u0Priority, recordFactory)));
+@@ -761,7 +737,7 @@ public void testComputeUserLimitAndSetHeadroom(){
+               TestUtils.getMockApplicationAttemptId(4, 0);
+     FiCaSchedulerApp app_4 =
+               new FiCaSchedulerApp(appAttemptId_4, user_0, qb,
+-                      qb.getActiveUsersManager(), rmContext);
++                      qb.getActiveUsersManager(), spyRMContext);
+     qb.submitApplicationAttempt(app_4, user_0);
+     app_4.updateResourceRequests(Collections.singletonList(
+               TestUtils.createResourceRequest(ResourceRequest.ANY, 6*GB, 1, true,
+@@ -977,7 +953,6 @@ public void testHeadroomWithMaxCap() throws Exception {
+     assertEquals(0*GB, app_1.getHeadroom().getMemory());
+     
+     // Check headroom for app_2 
+-    LOG.info("here");
+     app_1.updateResourceRequests(Collections.singletonList(     // unset
+         TestUtils.createResourceRequest(ResourceRequest.ANY, 1*GB, 0, true,
+             priority, recordFactory)));
+@@ -1939,7 +1914,7 @@ public void testActivateApplicationAfterQueueRefresh() throws Exception {
+             newQueues, queues,
+             TestUtils.spyHook);
+     queues = newQueues;
+-    root.reinitialize(newRoot, cs.getClusterResource());
++    root.reinitialize(newRoot, csContext.getClusterResource());
+ 
+     // after reinitialization
+     assertEquals(3, e.activeApplications.size());
+@@ -2288,20 +2263,17 @@ public void testMaxAMResourcePerQueuePercentAfterQueueRefresh()
+     csConf.setCapacity(CapacitySchedulerConfiguration.ROOT + "." + A, 80);
+     LeafQueue a = new LeafQueue(csContext, A, root, null);
+     assertEquals(0.1f, a.getMaxAMResourcePerQueuePercent(), 1e-3f);
+-    assertEquals(160, a.getMaximumActiveApplications());
+-    
++
+     csConf.setFloat(CapacitySchedulerConfiguration.
+         MAXIMUM_APPLICATION_MASTERS_RESOURCE_PERCENT, 0.2f);
+     LeafQueue newA = new LeafQueue(csContext, A, root, null);
+     a.reinitialize(newA, clusterResource);
+     assertEquals(0.2f, a.getMaxAMResourcePerQueuePercent(), 1e-3f);
+-    assertEquals(320, a.getMaximumActiveApplications());
+ 
+     Resource newClusterResource = Resources.createResource(100 * 20 * GB,
+         100 * 32);
+     a.updateClusterResource(newClusterResource);
+     //  100 * 20 * 0.2 = 400
+-    assertEquals(400, a.getMaximumActiveApplications());
+   }
+   
+   @Test
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/capacity/TestReservations.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/capacity/TestReservations.java
+index 2a49545..b100b6a 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/capacity/TestReservations.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/scheduler/capacity/TestReservations.java
+@@ -52,6 +52,7 @@
+ import org.apache.hadoop.yarn.server.resourcemanager.RMContext;
+ import org.apache.hadoop.yarn.server.resourcemanager.ahs.RMApplicationHistoryWriter;
+ import org.apache.hadoop.yarn.server.resourcemanager.metrics.SystemMetricsPublisher;
++import org.apache.hadoop.yarn.server.resourcemanager.rmapp.RMApp;
+ import org.apache.hadoop.yarn.server.resourcemanager.rmcontainer.ContainerAllocationExpirer;
+ import org.apache.hadoop.yarn.server.resourcemanager.rmcontainer.RMContainer;
+ import org.apache.hadoop.yarn.server.resourcemanager.rmcontainer.RMContainerEventType;
+@@ -77,6 +78,7 @@
+       .getRecordFactory(null);
+ 
+   RMContext rmContext;
++  RMContext spyRMContext;
+   CapacityScheduler cs;
+   // CapacitySchedulerConfiguration csConf;
+   CapacitySchedulerContext csContext;
+@@ -132,7 +134,10 @@ private void setup(CapacitySchedulerConfiguration csConf) throws Exception {
+     root = CapacityScheduler.parseQueue(csContext, csConf, null,
+         CapacitySchedulerConfiguration.ROOT, queues, queues, TestUtils.spyHook);
+ 
+-    cs.setRMContext(rmContext);
++    spyRMContext = spy(rmContext);
++    when(spyRMContext.getScheduler()).thenReturn(cs);
++
++    cs.setRMContext(spyRMContext);
+     cs.init(csConf);
+     cs.start();
+   }
+@@ -212,14 +217,15 @@ public void testReservation() throws Exception {
+     final ApplicationAttemptId appAttemptId_0 = TestUtils
+         .getMockApplicationAttemptId(0, 0);
+     FiCaSchedulerApp app_0 = new FiCaSchedulerApp(appAttemptId_0, user_0, a,
+-        mock(ActiveUsersManager.class), rmContext);
++        mock(ActiveUsersManager.class), spyRMContext);
++    rmContext.getRMApps().put(app_0.getApplicationId(), mock(RMApp.class));
+ 
+     a.submitApplicationAttempt(app_0, user_0); 
+ 
+     final ApplicationAttemptId appAttemptId_1 = TestUtils
+         .getMockApplicationAttemptId(1, 0);
+     FiCaSchedulerApp app_1 = new FiCaSchedulerApp(appAttemptId_1, user_0, a,
+-        mock(ActiveUsersManager.class), rmContext);
++        mock(ActiveUsersManager.class), spyRMContext);
+     a.submitApplicationAttempt(app_1, user_0); 
+ 
+     // Setup some nodes
+@@ -361,14 +367,16 @@ public void testReservationNoContinueLook() throws Exception {
+     final ApplicationAttemptId appAttemptId_0 = TestUtils
+         .getMockApplicationAttemptId(0, 0);
+     FiCaSchedulerApp app_0 = new FiCaSchedulerApp(appAttemptId_0, user_0, a,
+-        mock(ActiveUsersManager.class), rmContext);
++        mock(ActiveUsersManager.class), spyRMContext);
++    rmContext.getRMApps().put(app_0.getApplicationId(), mock(RMApp.class));
+ 
+     a.submitApplicationAttempt(app_0, user_0); 
+ 
+     final ApplicationAttemptId appAttemptId_1 = TestUtils
+         .getMockApplicationAttemptId(1, 0);
+     FiCaSchedulerApp app_1 = new FiCaSchedulerApp(appAttemptId_1, user_0, a,
+-        mock(ActiveUsersManager.class), rmContext);
++        mock(ActiveUsersManager.class), spyRMContext);
++    rmContext.getRMApps().put(app_1.getApplicationId(), mock(RMApp.class));
+     a.submitApplicationAttempt(app_1, user_0); 
+ 
+     // Setup some nodes
+@@ -506,14 +514,15 @@ public void testAssignContainersNeedToUnreserve() throws Exception {
+     final ApplicationAttemptId appAttemptId_0 = TestUtils
+         .getMockApplicationAttemptId(0, 0);
+     FiCaSchedulerApp app_0 = new FiCaSchedulerApp(appAttemptId_0, user_0, a,
+-        mock(ActiveUsersManager.class), rmContext);
++        mock(ActiveUsersManager.class), spyRMContext);
++    rmContext.getRMApps().put(app_0.getApplicationId(), mock(RMApp.class));
+ 
+     a.submitApplicationAttempt(app_0, user_0); 
+ 
+     final ApplicationAttemptId appAttemptId_1 = TestUtils
+         .getMockApplicationAttemptId(1, 0);
+     FiCaSchedulerApp app_1 = new FiCaSchedulerApp(appAttemptId_1, user_0, a,
+-        mock(ActiveUsersManager.class), rmContext);
++        mock(ActiveUsersManager.class), spyRMContext);
+     a.submitApplicationAttempt(app_1, user_0); 
+ 
+     // Setup some nodes
+@@ -618,7 +627,7 @@ public void testGetAppToUnreserve() throws Exception {
+         .getMockApplicationAttemptId(0, 0);
+     LeafQueue a = stubLeafQueue((LeafQueue) queues.get(A));
+     FiCaSchedulerApp app_0 = new FiCaSchedulerApp(appAttemptId_0, user_0, a,
+-        mock(ActiveUsersManager.class), rmContext);
++        mock(ActiveUsersManager.class), spyRMContext);
+ 
+     String host_0 = "host_0";
+     FiCaSchedulerNode node_0 = TestUtils.getMockNode(host_0, DEFAULT_RACK, 0,
+@@ -685,7 +694,7 @@ public void testFindNodeToUnreserve() throws Exception {
+         .getMockApplicationAttemptId(0, 0);
+     LeafQueue a = stubLeafQueue((LeafQueue) queues.get(A));
+     FiCaSchedulerApp app_0 = new FiCaSchedulerApp(appAttemptId_0, user_0, a,
+-        mock(ActiveUsersManager.class), rmContext);
++        mock(ActiveUsersManager.class), spyRMContext);
+ 
+     String host_1 = "host_1";
+     FiCaSchedulerNode node_1 = TestUtils.getMockNode(host_1, DEFAULT_RACK, 0,
+@@ -742,14 +751,15 @@ public void testAssignToQueue() throws Exception {
+     final ApplicationAttemptId appAttemptId_0 = TestUtils
+         .getMockApplicationAttemptId(0, 0);
+     FiCaSchedulerApp app_0 = new FiCaSchedulerApp(appAttemptId_0, user_0, a,
+-        mock(ActiveUsersManager.class), rmContext);
++        mock(ActiveUsersManager.class), spyRMContext);
++    rmContext.getRMApps().put(app_0.getApplicationId(), mock(RMApp.class));
+ 
+     a.submitApplicationAttempt(app_0, user_0); 
+ 
+     final ApplicationAttemptId appAttemptId_1 = TestUtils
+         .getMockApplicationAttemptId(1, 0);
+     FiCaSchedulerApp app_1 = new FiCaSchedulerApp(appAttemptId_1, user_0, a,
+-        mock(ActiveUsersManager.class), rmContext);
++        mock(ActiveUsersManager.class), spyRMContext);
+     a.submitApplicationAttempt(app_1, user_0); 
+ 
+     // Setup some nodes
+@@ -902,7 +912,6 @@ public void testContinueLookingReservationsAfterQueueRefresh()
+ 
+   @Test
+   public void testAssignToUser() throws Exception {
+-
+     CapacitySchedulerConfiguration csConf = new CapacitySchedulerConfiguration();
+     setup(csConf);
+ 
+@@ -916,14 +925,14 @@ public void testAssignToUser() throws Exception {
+     final ApplicationAttemptId appAttemptId_0 = TestUtils
+         .getMockApplicationAttemptId(0, 0);
+     FiCaSchedulerApp app_0 = new FiCaSchedulerApp(appAttemptId_0, user_0, a,
+-        mock(ActiveUsersManager.class), rmContext);
+-
++        mock(ActiveUsersManager.class), spyRMContext);
++    rmContext.getRMApps().put(app_0.getApplicationId(), mock(RMApp.class));
+     a.submitApplicationAttempt(app_0, user_0); 
+ 
+     final ApplicationAttemptId appAttemptId_1 = TestUtils
+         .getMockApplicationAttemptId(1, 0);
+     FiCaSchedulerApp app_1 = new FiCaSchedulerApp(appAttemptId_1, user_0, a,
+-        mock(ActiveUsersManager.class), rmContext);
++        mock(ActiveUsersManager.class), spyRMContext);
+     a.submitApplicationAttempt(app_1, user_0); 
+ 
+     // Setup some nodes
+@@ -1042,14 +1051,16 @@ public void testReservationsNoneAvailable() throws Exception {
+     final ApplicationAttemptId appAttemptId_0 = TestUtils
+         .getMockApplicationAttemptId(0, 0);
+     FiCaSchedulerApp app_0 = new FiCaSchedulerApp(appAttemptId_0, user_0, a,
+-        mock(ActiveUsersManager.class), rmContext);
++        mock(ActiveUsersManager.class), spyRMContext);
++    rmContext.getRMApps().put(app_0.getApplicationId(), mock(RMApp.class));
+ 
+     a.submitApplicationAttempt(app_0, user_0); 
+ 
+     final ApplicationAttemptId appAttemptId_1 = TestUtils
+         .getMockApplicationAttemptId(1, 0);
+     FiCaSchedulerApp app_1 = new FiCaSchedulerApp(appAttemptId_1, user_0, a,
+-        mock(ActiveUsersManager.class), rmContext);
++        mock(ActiveUsersManager.class), spyRMContext);
++    rmContext.getRMApps().put(app_1.getApplicationId(), mock(RMApp.class));
+     a.submitApplicationAttempt(app_1, user_0); 
+ 
+     // Setup some nodes
+diff --git a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/webapp/TestRMWebServicesCapacitySched.java b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/webapp/TestRMWebServicesCapacitySched.java
+index c95ceb7..62a9786 100644
+--- a/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/webapp/TestRMWebServicesCapacitySched.java
++++ b/hadoop-yarn-project/hadoop-yarn/hadoop-yarn-server/hadoop-yarn-server-resourcemanager/src/test/java/org/apache/hadoop/yarn/server/resourcemanager/webapp/TestRMWebServicesCapacitySched.java
+@@ -85,8 +85,6 @@
+     int numContainers;
+     int maxApplications;
+     int maxApplicationsPerUser;
+-    int maxActiveApplications;
+-    int maxActiveApplicationsPerUser;
+     int userLimit;
+     float userLimitFactor;
+   }
+@@ -310,10 +308,6 @@ public void verifySubQueueXML(Element qElem, String q,
+           WebServicesTestUtils.getXmlInt(qElem, "maxApplications");
+       lqi.maxApplicationsPerUser =
+           WebServicesTestUtils.getXmlInt(qElem, "maxApplicationsPerUser");
+-      lqi.maxActiveApplications =
+-          WebServicesTestUtils.getXmlInt(qElem, "maxActiveApplications");
+-      lqi.maxActiveApplicationsPerUser =
+-          WebServicesTestUtils.getXmlInt(qElem, "maxActiveApplicationsPerUser");
+       lqi.userLimit = WebServicesTestUtils.getXmlInt(qElem, "userLimit");
+       lqi.userLimitFactor =
+           WebServicesTestUtils.getXmlFloat(qElem, "userLimitFactor");
+@@ -393,8 +387,6 @@ private void verifySubQueue(JSONObject info, String q,
+       lqi.numContainers = info.getInt("numContainers");
+       lqi.maxApplications = info.getInt("maxApplications");
+       lqi.maxApplicationsPerUser = info.getInt("maxApplicationsPerUser");
+-      lqi.maxActiveApplications = info.getInt("maxActiveApplications");
+-      lqi.maxActiveApplicationsPerUser = info.getInt("maxActiveApplicationsPerUser");
+       lqi.userLimit = info.getInt("userLimit");
+       lqi.userLimitFactor = (float) info.getDouble("userLimitFactor");
+       verifyLeafQueueGeneric(q, lqi);
+@@ -456,10 +448,6 @@ private void verifyLeafQueueGeneric(String q, LeafQueueInfo info)
+         (float)expectedMaxAppsPerUser,
+         (float)info.maxApplicationsPerUser, info.userLimitFactor);
+ 
+-    assertTrue("maxActiveApplications doesn't match",
+-        info.maxActiveApplications > 0);
+-    assertTrue("maxActiveApplicationsPerUser doesn't match",
+-        info.maxActiveApplicationsPerUser > 0);
+     assertEquals("userLimit doesn't match", csConf.getUserLimit(q),
+         info.userLimit);
+     assertEquals("userLimitFactor doesn't match",
+-- 
+1.7.9.5
+

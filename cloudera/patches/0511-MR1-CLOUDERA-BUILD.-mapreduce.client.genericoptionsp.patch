@@ -1,0 +1,27 @@
+From 852600eecc126ce1a34a7805782d358385e3d8c9 Mon Sep 17 00:00:00 2001
+From: Harsh J <harsh@cloudera.com>
+Date: Wed, 17 Dec 2014 15:56:06 +0530
+Subject: [PATCH 0511/1023] MR1: CLOUDERA-BUILD.
+ mapreduce.client.genericoptionsparser.used set
+ but not checked (CDH-9740)
+
+---
+ .../mapred/org/apache/hadoop/mapred/JobClient.java |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/hadoop-mapreduce1-project/src/mapred/org/apache/hadoop/mapred/JobClient.java b/hadoop-mapreduce1-project/src/mapred/org/apache/hadoop/mapred/JobClient.java
+index 593d31c..4f662b9 100644
+--- a/hadoop-mapreduce1-project/src/mapred/org/apache/hadoop/mapred/JobClient.java
++++ b/hadoop-mapreduce1-project/src/mapred/org/apache/hadoop/mapred/JobClient.java
+@@ -782,7 +782,7 @@ private void copyAndConfigureFiles(JobConf job, Path jobSubmitDir)
+   private void copyAndConfigureFiles(JobConf job, Path submitJobDir,
+       short replication) throws IOException, InterruptedException {
+ 
+-    if (!(job.getBoolean("mapred.used.genericoptionsparser", false))) {
++    if (!(job.getBoolean("mapreduce.client.genericoptionsparser.used", false))) {
+       LOG.warn("Use GenericOptionsParser for parsing the arguments. " +
+                "Applications should implement Tool for the same.");
+     }
+-- 
+1.7.9.5
+
