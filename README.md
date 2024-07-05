@@ -12,7 +12,7 @@ Zlib devel (if compiling native code)
 openssl devel ( if compiling native hadoop-pipes )
 
 进入项目根目录，按照BUILDING.txt文档中所述运行如下命令：  
-
+`
 `mvn package -Pdist,native,src -DskipTests -Dtar` 
 
 可能遇到的编译错误问题如下:

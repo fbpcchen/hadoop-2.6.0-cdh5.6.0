@@ -236,10 +236,11 @@ public class LdapGroupsMapping
   
   List<String> doGetGroups(String user) throws NamingException {
     List<String> groups = new ArrayList<String>();
-
+    // 初始化 ldap 服务连接 env(ldapUrl、useSsl、keystore、keystorePass、bindUser、bindPassword、baseDN)
     DirContext ctx = getDirContext();
 
     // Search for the user. We'll only ever need to look at the first result
+    // 请求 ldap 服务，获取用户的第一条搜寻结果
     NamingEnumeration<SearchResult> results = ctx.search(baseDN,
         userSearchFilter,
         new Object[]{user},

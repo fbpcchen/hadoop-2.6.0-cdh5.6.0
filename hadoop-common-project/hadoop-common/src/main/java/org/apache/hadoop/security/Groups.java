@@ -75,6 +75,8 @@ public class Groups {
   }
 
   public Groups(Configuration conf, final Timer timer) {
+    // 根据 hadoop.security.group.mapping 配置项来决定 GroupMapping 配置方式，
+    // 生产环境中一般使用：org.apache.hadoop.security.LdapGroupsMapping
     impl = 
       ReflectionUtils.newInstance(
           conf.getClass(CommonConfigurationKeys.HADOOP_SECURITY_GROUP_MAPPING, 
@@ -94,6 +96,9 @@ public class Groups {
     parseStaticMapping(conf);
 
     this.timer = timer;
+    // 生成 LocalCache.LocalLoadingCache<K1, V1>(CacheBuilder, CacheLoader) 对象，其中 CacheLoader 为 GroupCacheLoader。
+    // 用于 user -> groups 的 cache，获取 user 对应 groups 要么直接返回命中的缓存结果，要么调用 GroupCacheLoader load 方法获取对应 user 的 groups 并缓存
+    // 设置 cache 中 key 自动刷新时间和过期失效时间，生产环境一般 cacheTimeout 设置一个较大值，然后可周期调用 -refreshUserToGroupsMappings 来触发 GroupCacheLoader refresh 方法来进行 cache 的更新
     this.cache = CacheBuilder.newBuilder()
       .refreshAfterWrite(cacheTimeout, TimeUnit.MILLISECONDS)
       .ticker(new TimerToTickerAdapter(timer))
@@ -101,8 +106,10 @@ public class Groups {
       .build(new GroupCacheLoader());
 
     if(negativeCacheTimeout > 0) {
+      // 生成 LocalCache.LocalManualCache<K1, V1>(CacheBuilder) 对象，该缓存不会再请求 user 时自动触发 load groups
+      // 用于缓存无法获取到 groups 的 user，一般使用默认值 30s 作为 key 自动过期失效时间
       Cache<String, Boolean> tempMap = CacheBuilder.newBuilder()
-        .expireAfterWrite(negativeCacheTimeout, TimeUnit.MILLISECONDS)
+        .expireAfterWrite(negativeCacheTimeout, TimeUnit.MILLISECONDS)  // 默认 30s
         .ticker(new TimerToTickerAdapter(timer))
         .build();
       negativeCache = Collections.newSetFromMap(tempMap.asMap());
@@ -255,13 +262,13 @@ public class Groups {
   public void refresh() {
     LOG.info("clearing userToGroupsMap cache");
     try {
-      impl.cacheGroupsRefresh();
+      impl.cacheGroupsRefresh();  // 如果是 LdapGroupsMapping。则不做任何操作
     } catch (IOException e) {
       LOG.warn("Error refreshing groups cache", e);
     }
-    cache.invalidateAll();
+    cache.invalidateAll();  // 清空 cache 中所有 entry
     if(isNegativeCacheEnabled()) {
-      negativeCache.clear();
+      negativeCache.clear(); // 清空 negativeCache 缓存
     }
   }
 

@@ -60,6 +60,7 @@ public class HadoopKerberosName extends KerberosName {
       case KERBEROS:
       case KERBEROS_SSL:
         try {
+          // 利用 java 反射机制兼容不同 java 发型版本，例如 sun.security.krb5.Config 中 getDefaultRealm 方法获取 realm
           KerberosUtil.getDefaultRealm();
         } catch (Exception ke) {
           throw new IllegalArgumentException("Can't get Kerberos realm", ke);
@@ -71,6 +72,8 @@ public class HadoopKerberosName extends KerberosName {
         defaultRule = "RULE:[1:$1] RULE:[2:$1]";
         break; 
     }
+    // 配置项为：hadoop.security.auth_to_local，用于集群中进行用户身份验证(例如 kerberos principals)和用户名称转换的设置
+    // 默认规则(DEFAULT)将服务主体的名称转换为它们名字的第一个组成部分：username/full.qualified.domain.name@MYREALM.TLD to system user username if the default realm is MYREALM.TLD
     String ruleString = conf.get(HADOOP_SECURITY_AUTH_TO_LOCAL, defaultRule);
     setRules(ruleString);
   }

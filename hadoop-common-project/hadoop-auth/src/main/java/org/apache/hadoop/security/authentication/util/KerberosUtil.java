@@ -38,6 +38,7 @@ import org.apache.directory.server.kerberos.shared.keytab.KeytabEntry;
 import org.ietf.jgss.GSSException;
 import org.ietf.jgss.Oid;
 
+
 public class KerberosUtil {
 
   /* Return the Kerberos login module name */
