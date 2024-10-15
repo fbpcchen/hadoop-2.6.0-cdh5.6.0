@@ -165,6 +165,8 @@ public class UserGroupInformation {
       Principal user = null;
       // if we are using kerberos, try it out
       if (isAuthenticationMethodEnabled(AuthenticationMethod.KERBEROS)) {
+        // 从 subject 中获取 KerberosPrincipal 类型绑定的 Principals，返回第一个 KerberosPrincipal
+        // KerberosPrincipal.getName() 返回的为 KerberosPrincipal 对应的 fullName
         user = getCanonicalUser(KerberosPrincipal.class);
         if (LOG.isDebugEnabled()) {
           LOG.debug("using kerberos user:"+user);
@@ -173,6 +175,7 @@ public class UserGroupInformation {
       //If we don't have a kerberos user and security is disabled, check
       //if user is specified in the environment or properties
       if (!isSecurityEnabled() && (user == null)) {
+        // 没有开启认证，user 则尝试从环境变量 HADOOP_USER_NAME 或者属性中获取运行用户 
         String envUser = System.getenv(HADOOP_USER_NAME);
         if (envUser == null) {
           envUser = System.getProperty(HADOOP_USER_NAME);
@@ -181,6 +184,7 @@ public class UserGroupInformation {
       }
       // use the OS user
       if (user == null) {
+        // 判断系统类型和 java 版本获取系统用户，如果是 linux oracle 发行版则返回 com.sun.security.auth.UnixPrincipal 类型用户
         user = getCanonicalUser(OS_PRINCIPAL_CLASS);
         if (LOG.isDebugEnabled()) {
           LOG.debug("using local user:"+user);
@@ -194,6 +198,7 @@ public class UserGroupInformation {
 
         User userEntry = null;
         try {
+          // 根据上文发现的用户，构造 User 对象
           userEntry = new User(user.getName());
         } catch (Exception e) {
           throw (LoginException)(new LoginException(e.toString()).initCause(e));
@@ -201,7 +206,7 @@ public class UserGroupInformation {
         if (LOG.isDebugEnabled()) {
           LOG.debug("User entry: \"" + userEntry.toString() + "\"" );
         }
-
+        // 绑定 User 对象到 subject
         subject.getPrincipals().add(userEntry);
         return true;
       }
@@ -254,6 +259,7 @@ public class UserGroupInformation {
    * Must be called before useKerberos or groups is used.
    */
   private static void ensureInitialized() {
+    // double check，保证初始化唯一性
     if (conf == null) {
       synchronized(UserGroupInformation.class) {
         if (conf == null) { // someone might have beat us
@@ -269,9 +275,11 @@ public class UserGroupInformation {
    */
   private static synchronized void initialize(Configuration conf,
                                               boolean overrideNameRules) {
+    // core-site.xml 中配置项：hadoop.security.authentication，如果开启 kerberous 则配置项为 kerberos                                            
     authenticationMethod = SecurityUtil.getAuthenticationMethod(conf);
     if (overrideNameRules || !HadoopKerberosName.hasRulesBeenSet()) {
       try {
+        // 获取 krb 相关的配置信息，kerberos 认证下例如 realm 以及 kerberous principals 与 OS 用户的映射配置规则
         HadoopKerberosName.setConfiguration(conf);
       } catch (IOException ioe) {
         throw new RuntimeException(
@@ -280,6 +288,7 @@ public class UserGroupInformation {
     }
     // If we haven't set up testing groups, use the configuration to find it
     if (!(groups instanceof TestingGroups)) {
+      // 初始化 Groups: user-to-groups mapping service.
       groups = Groups.getUserToGroupsMappingService(conf);
     }
     UserGroupInformation.conf = conf;
@@ -533,6 +542,7 @@ public class UserGroupInformation {
 
     @Override
     public AppConfigurationEntry[] getAppConfigurationEntry(String appName) {
+      // appName 为初始化 LoginContext 时传入的 appName, 根据不同的 appName 返回不同的登录方式配置
       if (SIMPLE_CONFIG_NAME.equals(appName)) {
         return SIMPLE_CONF;
       } else if (USER_KERBEROS_CONFIG_NAME.equals(appName)) {
@@ -580,6 +590,25 @@ public class UserGroupInformation {
     // Temporarily switch the thread's ContextClassLoader to match this
     // class's classloader, so that we can properly load HadoopLoginModule
     // from the JAAS libraries.
+    /* 
+      1. 临时切换当前线程的 contextClassLoader 为 HadoopLoginModule class 类加载器，来完成在 JAAS 库中的 HadoopLoginModule 的加载
+      2. 使用上述 HadoopLoginModule class 类加载器完成 LoginContext 的初始化，并传入 subject 和 loginConf(HadoopConfiguration)
+        2.1. appName 根据 HadoopConfiguration 中定义一般分为：hadoop-simple, hadoop-user-kerberos, hadoop-keytab-kerberos，由上层不同 login 方式传入
+        2.2. subject 为初始化(或者已有传入)的 JAAS 安全认证实体对象
+        2.3. 使用默认的 JAAS 中 auth.login.defaultCallbackHandler
+        2.4. loginConf 为 HadoopConfiguration 中定义的配置项
+      3. LoginContext 初始化时会获取为此应用程序配置的 LoginModules
+        3.1. keytab 方式：AppConfigurationEntry[]{
+                            AppConfigurationEntry(
+                                KerberosUtil.getKrb5LoginModuleName(),
+                                LoginModuleControlFlag.REQUIRED,
+                                KEYTAB_KERBEROS_OPTIONS), 
+                            AppConfigurationEntry(
+                                HadoopLoginModule.class.getName(),
+                                LoginModuleControlFlag.REQUIRED,
+                                BASIC_JAAS_OPTIONS)
+                          }
+    */
     Thread t = Thread.currentThread();
     ClassLoader oldCCL = t.getContextClassLoader();
     t.setContextClassLoader(HadoopLoginModule.class.getClassLoader());
@@ -641,9 +670,13 @@ public class UserGroupInformation {
   @InterfaceStability.Evolving
   public synchronized
   static UserGroupInformation getCurrentUser() throws IOException {
+    // 获取当前线程执行上下文的资源访问控制 context，返回一个 AccessControlContext 对象
     AccessControlContext context = AccessController.getContext();
+    // 从 AccessControlContext 中获取可能绑定的 subject 相关 protectDomains 的 SubjectDomainCombiner 对象，
+    // 然后从 SubjectDomainCombiner 对象中获取 Subject 认证主体
     Subject subject = Subject.getSubject(context);
     if (subject == null || subject.getPrincipals(User.class).isEmpty()) {
+      // 如果没有找到 subject 或者 subject 中没有认证绑定过的 User 对象，则调用 getLoginUser()
       return getLoginUser();
     } else {
       return new UserGroupInformation(subject);
@@ -952,6 +985,8 @@ public class UserGroupInformation {
   static void loginUserFromKeytab(String user,
                                   String path
                                   ) throws IOException {
+    // loginUserFromKeytab 用户通过 kerberos keytab 登录方法入口
+    // 首先检查 UGI 是否使用了 Kerberos 认证模式，检查过程中会调用 ensureInitialized 来进行初始化
     if (!isSecurityEnabled())
       return;
 
@@ -961,11 +996,20 @@ public class UserGroupInformation {
     LoginContext login; 
     long start = 0;
     try {
+      // 初始化 hadoop-keytab-kerberos 配置类型的 JAAS 认证 LoginContext
       login = newLoginContext(HadoopConfiguration.KEYTAB_KERBEROS_CONFIG_NAME,
             subject, new HadoopConfiguration());
       start = Time.now();
+      // 认证的主要方法：反射调用 LoginContext 持有的 LoginModules 中的 login、commit 方法，keytab 认证模式下：
+      //  1. login 包括 Krb5LoginModule.login 与 HadoopLoginModule.login
+      //    1.1 Krb5LoginModule.login: 认证 user，完成 kerberos 初始化，获取进行安全通信和身份验证的所有凭证信息 credentials
+      //    1.2 HadoopLoginModule.login：不做任何事情
+      //  2. commit 包括 Krb5LoginModule.commit 与 HadoopLoginModule.commit
+      //    2.1 Krb5LoginModule.commit: 认证主体 subject 添加上一步认证成功的 kerbClientPrinc(KerberosPrincipal(principal.getName()))、TGT、ktab 等认证信息
+      //    2.2 HadoopLoginModule.commit: 获取 subject 中 kerbClientPrinc user，并初始化 User 用于后续获取该用户信息
       login.login();
       metrics.loginSuccess.add(Time.now() - start);
+      // 使用该 subject 并初始化 UGI 对象
       loginUser = new UserGroupInformation(subject);
       loginUser.setLogin(login);
       loginUser.setAuthenticationMethod(AuthenticationMethod.KERBEROS);
